@@ -446,37 +446,25 @@ struct StatusCluster: View {
     }
 
     var body: some View {
-        HStack(spacing: 10) {
-            if status.controllerConnected {
-                HStack(spacing: 3) {
-                    Image(systemName: "gamecontroller.fill")
-                    if let level = status.controllerBattery {
-                        Text("\(Int((level * 100).rounded()))%")
-                            .font(.system(size: 11, weight: .semibold))
-                            .monospacedDigit()
-                    }
-                }
-                .accessibilityLabel(status.controllerBattery.map { "Controller connected, \(Int(($0 * 100).rounded())) percent" } ?? "Controller connected")
-            }
-            Image(systemName: networkSymbol)
-                .accessibilityLabel(status.network == .none ? "No network" : "Network connected")
-            HStack(spacing: 3) {
-                if status.batteryLevel >= 0 {
-                    Text("\(Int((status.batteryLevel * 100).rounded()))%")
-                        .font(.system(size: 11, weight: .semibold))
-                        .monospacedDigit()
-                }
-                Image(systemName: batterySymbol)
-                    .foregroundStyle(!status.charging && status.batteryLevel >= 0 && status.batteryLevel < 0.2 ? Color.red : Color.white)
-            }
-            .accessibilityElement(children: .combine)
-            .accessibilityLabel("Battery \(Int((max(status.batteryLevel, 0) * 100).rounded())) percent")
+        // Same layout as console-style launchers: clock, then controller, network and battery icons
+        HStack(spacing: 12) {
             Text(timeText)
                 .font(.system(size: 15, weight: .semibold))
                 .monospacedDigit()
+            if status.controllerConnected {
+                Image(systemName: "gamecontroller.fill")
+                    .accessibilityLabel(status.controllerBattery.map { "Controller connected, battery \(Int(($0 * 100).rounded())) percent" } ?? "Controller connected")
+            }
+            Image(systemName: networkSymbol)
+                .accessibilityLabel(status.network == .none ? "No network" : "Network connected")
+            Image(systemName: batterySymbol)
+                .foregroundStyle(!status.charging && status.batteryLevel >= 0 && status.batteryLevel < 0.2 ? Color.red : Color.white)
+                .accessibilityLabel(status.batteryLevel >= 0 ? "Battery \(Int((status.batteryLevel * 100).rounded())) percent" : "Battery")
         }
-        .font(.system(size: 14, weight: .semibold))
+        .font(.system(size: 15, weight: .semibold))
         .foregroundStyle(.white)
+        .lineLimit(1)
+        .fixedSize()
         .padding(.horizontal, 6)
         .padding(.vertical, 2)
         .modifier(HostMenuBackground(inToolbar: true))
