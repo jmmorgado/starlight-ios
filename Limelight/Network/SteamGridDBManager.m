@@ -10,6 +10,7 @@ NSString* const SteamGridDBKindGrid = @"grid";
 NSString* const SteamGridDBKindHero = @"hero";
 NSString* const SteamGridDBKindLogo = @"logo";
 NSString* const SteamGridDBKindIcon = @"icon";
+NSString* const SteamGridDBKindWide = @"wide";
 
 static NSString* const kApiKeyDefaultsKey = @"StarlightSteamGridDBKey";
 static NSString* const kApiBase = @"https://www.steamgriddb.com/api/v2/";
@@ -125,6 +126,9 @@ static NSString* const kArtOverridesKey = @"StarlightSteamGridDBArtOverrides";  
     }
     if ([kind isEqualToString:SteamGridDBKindHero]) {
         return [NSString stringWithFormat:@"heroes/game/%@?types=static", gameId];
+    }
+    if ([kind isEqualToString:SteamGridDBKindWide]) {
+        return [NSString stringWithFormat:@"grids/game/%@?dimensions=460x215,920x430&types=static", gameId];
     }
     if ([kind isEqualToString:SteamGridDBKindLogo]) {
         return [NSString stringWithFormat:@"logos/game/%@?types=static&mimes=image/png", gameId];
@@ -263,11 +267,15 @@ typedef NS_ENUM(NSInteger, ArtworkFetchResult) {
 
     NSDictionary* chosen = [self artOverridesForName:name];
     BOOL gotAny = NO;
-    for (NSString* kind in @[SteamGridDBKindGrid, SteamGridDBKindHero, SteamGridDBKindLogo, SteamGridDBKindIcon]) {
+    for (NSString* kind in @[SteamGridDBKindGrid, SteamGridDBKindHero, SteamGridDBKindLogo, SteamGridDBKindIcon, SteamGridDBKindWide]) {
         NSString* path = [dir stringByAppendingPathComponent:kind];
         NSString* chosenURL = chosen[kind];
         if ([chosenURL isKindOfClass:[NSString class]] && [self downloadFirstOf:@[@{ @"url": chosenURL }] toPath:path]) {
             gotAny = YES;
+            continue;
+        }
+        if ([kind isEqualToString:SteamGridDBKindWide]) {
+            // Landscape grids usually have the logo baked in; only used when picked by hand
             continue;
         }
         NSArray* items = [self apiGet:[self endpointForKind:kind gameId:gameId] statusCode:NULL];

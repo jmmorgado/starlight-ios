@@ -117,6 +117,7 @@ struct GameItem: Identifiable, Equatable {
     let gridPath: String?
     let heroPath: String?
     let logoPath: String?
+    let widePath: String?
     let lastPlayed: Date?
     let artStamp: Double
 
@@ -141,6 +142,7 @@ struct GameItem: Identifiable, Equatable {
         gridPath = GameItem.nonEmpty(dict["gridPath"])
         heroPath = GameItem.nonEmpty(dict["heroPath"])
         logoPath = GameItem.nonEmpty(dict["logoPath"])
+        widePath = GameItem.nonEmpty(dict["widePath"])
         artStamp = (dict["artStamp"] as? NSNumber)?.doubleValue ?? 0
         if let seconds = dict["lastPlayed"] as? Double, seconds > 0 {
             lastPlayed = Date(timeIntervalSince1970: seconds)
@@ -545,10 +547,13 @@ struct HomeTab: View {
         ZStack {
             Color.black
             if let featured = model.featured, let hero = ArtworkCache.shared.image(featured.heroPath ?? featured.gridPath) {
-                Image(uiImage: hero)
-                    .resizable()
-                    .aspectRatio(contentMode: .fill)
-                    .frame(width: size.width, height: size.height)
+                // Fill the whole screen (edge to edge, behind the safe areas) by zooming, never stretching
+                Color.clear
+                    .overlay(
+                        Image(uiImage: hero)
+                            .resizable()
+                            .scaledToFill()
+                    )
                     .clipped()
                     .id(featured.id)
                     .transition(.opacity)
@@ -705,11 +710,12 @@ struct GameCard: View {
     var body: some View {
         let width = portrait ? height * 2 / 3 : height * 16 / 9
         ZStack(alignment: .bottomLeading) {
-            ArtworkImage(path: portrait ? game.gridPath : (game.heroPath ?? game.gridPath), fallbackText: game.name)
+            ArtworkImage(path: portrait ? game.gridPath : (game.widePath ?? game.heroPath ?? game.gridPath), fallbackText: game.name)
                 .frame(width: width, height: height)
                 .clipped()
 
-            if !portrait {
+            // A hand-picked landscape grid already shows the game's name
+            if !portrait && game.widePath == nil {
                 LinearGradient(colors: [.clear, .black.opacity(0.75)], startPoint: .center, endPoint: .bottom)
                 if let logo = ArtworkCache.shared.image(game.logoPath) {
                     Image(uiImage: logo)
@@ -1230,12 +1236,20 @@ struct ArtworkEditorView: View {
         let kind: String
         let title: String
         let aspect: CGFloat
+        let footer: String
     }
 
     private let kinds: [ArtKind] = [
-        ArtKind(kind: "hero", title: "Background", aspect: 16.0 / 9.0),
-        ArtKind(kind: "grid", title: "Cover", aspect: 2.0 / 3.0),
-        ArtKind(kind: "logo", title: "Logo", aspect: 2.0)
+        ArtKind(kind: "hero", title: "Background", aspect: 16.0 / 9.0,
+                footer: "Fills the Home screen and the loading screen. Also used for the game cards unless you pick a Landscape image."),
+        ArtKind(kind: "wide", title: "Landscape", aspect: 460.0 / 215.0,
+                footer: "Optional image for the game cards in Continue Playing and All Games."),
+        ArtKind(kind: "grid", title: "Cover", aspect: 2.0 / 3.0,
+                footer: "Used in Library."),
+        ArtKind(kind: "logo", title: "Logo", aspect: 2.0,
+                footer: "Shown over the background and on the game cards."),
+        ArtKind(kind: "icon", title: "Icon", aspect: 1.0,
+                footer: "Used for Save Icon to Photos and in the Shortcuts app.")
     ]
 
     var body: some View {
@@ -1304,8 +1318,12 @@ struct ArtworkEditorView: View {
                     }
 
                     ForEach(kinds) { item in
-                        Section(item.title) {
+                        Section {
                             imageStrip(kind: item.kind, aspect: item.aspect)
+                        } header: {
+                            Text(item.title)
+                        } footer: {
+                            Text(item.footer)
                         }
                     }
                 }
@@ -1324,7 +1342,7 @@ struct ArtworkEditorView: View {
 
     @ViewBuilder
     private func imageStrip(kind: String, aspect: CGFloat) -> some View {
-        let height: CGFloat = kind == "grid" ? 150 : 90
+        let height: CGFloat = kind == "grid" ? 150 : (kind == "icon" ? 80 : 90)
         let width = height * aspect
         if loadingKinds.contains(kind) {
             HStack {
@@ -1341,11 +1359,11 @@ struct ArtworkEditorView: View {
                             applyImage(kind: kind, option: option)
                         } label: {
                             ZStack {
-                                Color(white: kind == "logo" ? 0.18 : 0.12)
+                                Color(white: kind == "logo" || kind == "icon" ? 0.18 : 0.12)
                                 AsyncImage(url: URL(string: option.thumb)) { phase in
                                     if let image = phase.image {
                                         image.resizable()
-                                            .aspectRatio(contentMode: kind == "logo" ? .fit : .fill)
+                                            .aspectRatio(contentMode: kind == "logo" || kind == "icon" ? .fit : .fill)
                                     } else if phase.error != nil {
                                         Image(systemName: "exclamationmark.triangle")
                                             .foregroundStyle(.secondary)

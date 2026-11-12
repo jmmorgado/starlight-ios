@@ -1931,9 +1931,10 @@ static const NSUInteger kMaxQuickActions = 4;
             NSNumber* played = lastPlayed[[NSString stringWithFormat:@"%@|%@", current.uuid, app.id]];
             NSString* hero = [sgdb cachedPathForAppName:app.name kind:SteamGridDBKindHero] ?: @"";
             NSString* logo = [sgdb cachedPathForAppName:app.name kind:SteamGridDBKindLogo] ?: @"";
+            NSString* wide = [sgdb cachedPathForAppName:app.name kind:SteamGridDBKindWide] ?: @"";
             // Changes when artwork is replaced in place, so the UI reloads the images
             double artStamp = 0;
-            for (NSString* path in @[grid, hero, logo]) {
+            for (NSString* path in @[grid, hero, logo, wide]) {
                 if (path.length > 0) {
                     artStamp += [[[fm attributesOfItemAtPath:path error:nil] fileModificationDate] timeIntervalSince1970];
                 }
@@ -1948,6 +1949,7 @@ static const NSUInteger kMaxQuickActions = 4;
                                @"gridPath": grid,
                                @"heroPath": hero,
                                @"logoPath": logo,
+                               @"widePath": wide,
                                @"artStamp": @(artStamp),
                                @"lastPlayed": played ?: @0 }];
         }
