@@ -218,6 +218,16 @@ final class HomeModel: ObservableObject {
     @Published var gameMenu: GameItem?
     /// The game page that's open (zoom transition from the card it was opened from)
     @Published var detail: GameDetailRoute?
+    var lastControllerInput = Date.distantPast
+
+    /// Continue Playing: a card is selected (featured) rather than opened; Play at the top starts it
+    func feature(_ game: GameItem, row: String) {
+        guard featuredId != game.id || featuredRow != row else { return }
+        withAnimation(.easeInOut(duration: 0.25)) {
+            featuredId = game.id
+            featuredRow = row
+        }
+    }
     @Published var tabBarFocused = false
     @Published var tabBarFlash = false
     @Published var tabBarCollapsedByScroll = false
@@ -361,6 +371,7 @@ final class HomeModel: ObservableObject {
 
     /// Controller input on the Starlight screens
     func handlePad(_ event: GamepadInput.Event) {
+        lastControllerInput = Date()
         let focus = GameFocus.shared
         if editingGame != nil {
             if event == .back { editingGame = nil }
@@ -1665,6 +1676,18 @@ struct GameRow: View {
     var portrait: Bool = false
 
     private var prefix: String { "card-\(id)-" }
+    @State private var scrolledID: String?
+
+    /// Continue Playing only: tap / ✕ select the game; All Games opens its page
+    private var selectsOnSwipe: Bool { id == "continue" }
+
+    private func activate(_ game: GameItem) {
+        if selectsOnSwipe {
+            model.feature(game, row: id)
+        } else {
+            model.openDetail(game, source: prefix + game.id)
+        }
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -1681,9 +1704,9 @@ struct GameRow: View {
                                      portrait: portrait,
                                      height: portrait ? (compact ? 150 : 180) : (compact ? 84 : 110))
                                 .modifier(ZoomSource(id: prefix + game.id, zoom: zoom))
-                                .onTapGesture { model.openDetail(game, source: prefix + game.id) }
+                                .onTapGesture { activate(game) }
                                 .contextMenu { GameMenuItems(game: game, model: model) }
-                                .gameFocus(prefix + game.id) { model.openDetail(game, source: prefix + game.id) }
+                                .gameFocus(prefix + game.id) { activate(game) }
                         }
                     }
                     .padding(.vertical, 8)
@@ -1692,6 +1715,16 @@ struct GameRow: View {
                     .modifier(RowScrollTargetLayout())
                 }
                 .modifier(RowSnapping())
+                .modifier(LeadingCardTracker(enabled: selectsOnSwipe, position: $scrolledID))
+                .onChange(of: scrolledID) { cardID in
+                    // Swiping Continue Playing selects the card that ends up first on the left
+                    guard selectsOnSwipe, let cardID = cardID, cardID.hasPrefix(prefix),
+                          Date().timeIntervalSince(model.lastControllerInput) > 1 else { return }
+                    let gameId = String(cardID.dropFirst(prefix.count))
+                    if let game = games.first(where: { $0.id == gameId }) {
+                        model.feature(game, row: id)
+                    }
+                }
                 .onChange(of: focus.focusedID) { focused in
                     guard let focused = focused, focused.hasPrefix(prefix) else { return }
                     let gameId = String(focused.dropFirst(prefix.count))
@@ -1842,28 +1875,19 @@ struct GameDetailView: View {
                                 .tint(.red)
                                 .gameFocus("detail-quit", scope: "detail", corner: 24) { model.action("quit", game) }
                             }
+
+                            // Same native menu as on Home; with a controller, Options opens the navigable version
+                            Menu {
+                                GameMenuItems(game: game, model: model)
+                            } label: {
+                                Image(systemName: device.controllerConnected ? PadGlyph.options : "ellipsis")
+                                    .font(.system(size: device.controllerConnected ? 18 : 16, weight: .semibold))
+                                    .frame(width: 22, height: 26)
+                            }
+                            .secondaryGlassButton()
+                            .accessibilityLabel("Game options")
                         }
 
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text("Options")
-                                .font(.system(size: 15, weight: .bold))
-                                .padding(.bottom, 4)
-                            ForEach(options) { option in
-                                Button { run(option.id) } label: {
-                                    Label(option.title, systemImage: option.symbol)
-                                        .font(.system(size: 15, weight: .medium))
-                                        .foregroundStyle(option.destructive ? Color.red : Color.white)
-                                        .frame(maxWidth: 360, alignment: .leading)
-                                        .padding(.horizontal, 14)
-                                        .padding(.vertical, 11)
-                                        .contentShape(Rectangle())
-                                }
-                                .buttonStyle(.plain)
-                                .modifier(PanelGlass(corner: 14))
-                                .gameFocus("detail-\(option.id)", scope: "detail", corner: 14) { run(option.id) }
-                            }
-                        }
-                    }
                     .padding(.horizontal, geo.safeAreaInsets.leading + 24)
                     .padding(.bottom, 40)
                 }
@@ -1938,6 +1962,20 @@ struct RowScrollTargetLayout: ViewModifier {
     func body(content: Content) -> some View {
         if #available(iOS 17.0, *) {
             content.scrollTargetLayout()
+        } else {
+            content
+        }
+    }
+}
+
+/// iOS 17+: reports the card at the leading edge once a swipe settles
+struct LeadingCardTracker: ViewModifier {
+    let enabled: Bool
+    @Binding var position: String?
+
+    func body(content: Content) -> some View {
+        if #available(iOS 17.0, *), enabled {
+            content.scrollPosition(id: $position, anchor: .leading)
         } else {
             content
         }
