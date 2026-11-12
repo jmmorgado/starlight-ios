@@ -6,7 +6,7 @@ on:
     branches:
       - master
       - main
-      - deeplink-shortcuts
+      - starlight
   workflow_dispatch:
 
 concurrency:
@@ -54,12 +54,12 @@ jobs:
           mkdir -p dist/Payload
           cp -R "$APP_PATH" dist/Payload/
           cd dist
-          zip -qry Moonlight-Link.ipa Payload
-          ls -lh Moonlight-Link.ipa
+          zip -qry Starlight.ipa Payload
+          ls -lh Starlight.ipa
 
       - name: Upload IPA
         uses: actions/upload-artifact@v4
         with:
-          name: Moonlight-Link-ipa
-          path: dist/Moonlight-Link.ipa
+          name: Starlight-ipa
+          path: dist/Starlight.ipa
           retention-days: 30

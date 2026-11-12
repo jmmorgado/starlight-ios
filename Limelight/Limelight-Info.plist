@@ -9,7 +9,7 @@
 	<key>CFBundleDevelopmentRegion</key>
 	<string>en</string>
 	<key>CFBundleDisplayName</key>
-	<string>${PRODUCT_NAME}</string>
+	<string>Starlight</string>
 	<key>CFBundleExecutable</key>
 	<string>${EXECUTABLE_NAME}</string>
 	<key>CFBundleIdentifier</key>
@@ -28,10 +28,10 @@
 	<array>
 		<dict>
 			<key>CFBundleURLName</key>
-			<string>com.moonlight-stream.launch</string>
+			<string>com.starlight.launch</string>
 			<key>CFBundleURLSchemes</key>
 			<array>
-				<string>moonlightlink</string>
+				<string>starlight</string>
 			</array>
 		</dict>
 	</array>

@@ -831,7 +831,7 @@ static NSMutableSet* hostList;
     }
     
 #if !TARGET_OS_TV
-    // Copies a moonlightlink:// URL that launches this app directly (for the Shortcuts app)
+    // Copies a starlight:// URL that launches this app directly (for the Shortcuts app)
     [alertController addAction:[UIAlertAction actionWithTitle:@"Copy Shortcut Link" style:UIAlertActionStyleDefault handler:^(UIAlertAction* action) {
         NSString* link = [self launchLinkForApp:app];
         [UIPasteboard generalPasteboard].string = link;
@@ -1090,11 +1090,11 @@ static NSMutableSet* hostList;
     }
 }
 
-#pragma mark - Deep link launch (moonlightlink://launch?host=...&app=...)
+#pragma mark - Deep link launch (starlight://launch?host=...&app=...)
 
 - (NSString*)launchLinkForApp:(TemporaryApp*)app {
     NSURLComponents* components = [[NSURLComponents alloc] init];
-    components.scheme = @"moonlightlink";
+    components.scheme = @"starlight";
     components.host = @"launch";
     components.queryItems = @[[NSURLQueryItem queryItemWithName:@"host" value:app.host.uuid],
                               [NSURLQueryItem queryItemWithName:@"app" value:app.id],
@@ -1278,7 +1278,7 @@ static NSMutableSet* hostList;
 
     [[NSNotificationCenter defaultCenter] addObserver: self
                                              selector: @selector(handlePendingLaunchNotification)
-                                                 name: @"MoonlightPendingLaunch"
+                                                 name: @"StarlightPendingLaunch"
                                                object: nil];
 
     // Check for a pending deep link launch (cold start or returning from a stream)

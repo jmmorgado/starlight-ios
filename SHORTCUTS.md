@@ -1,13 +1,13 @@
-# Moonlight Link — atalhos para jogos específicos
+# Starlight — atalhos para jogos específicos
 
-Fork do Moonlight para iOS, igual ao original, com uma única funcionalidade acrescentada:
+**Starlight** é um fork do [Moonlight para iOS](https://github.com/moonlight-stream/moonlight-ios) (GPLv3), igual ao original, com uma única funcionalidade acrescentada:
 **abrir diretamente o stream de um jogo a partir de um link**, para usar na app Atalhos,
 no ecrã principal, em widgets ou com a Siri.
 
 ## Formato do link
 
 ```
-moonlightlink://launch?host=<PC>&app=<jogo>
+starlight://launch?host=<PC>&app=<jogo>
 ```
 
 | Parâmetro | Aceita | Exemplo |
@@ -36,12 +36,12 @@ Se algo falhar (PC não emparelhado, jogo não encontrado), aparece um aviso a e
 
 O workflow `.github/workflows/build-ipa.yml` compila automaticamente a cada push
 (ou manualmente em **Actions → Build unsigned IPA → Run workflow**) e gera o artefacto
-`Moonlight-Link-ipa` com o ficheiro `Moonlight-Link.ipa` (não assinado).
+`Starlight-ipa` com o ficheiro `Starlight.ipa` (não assinado).
 
 ## Instalar no iPhone a partir do Windows
 
 **Sideloadly** (Apple ID grátis):
-1. Descarrega o artefacto em Actions e extrai o `Moonlight-Link.ipa`.
+1. Descarrega o artefacto em Actions e extrai o `Starlight.ipa`.
 2. Liga o iPhone por cabo ao PC, abre o Sideloadly, arrasta o `.ipa`, mete o teu Apple ID.
 3. Em *Advanced options* podes mudar o **Bundle ID** (para conviver com o Moonlight oficial)
    e o **nome da app**.

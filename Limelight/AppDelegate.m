@@ -32,10 +32,10 @@ static NSString* DB_NAME = @"Limelight_iOS.sqlite";
     return YES;
 }
 
-// Handles moonlightlink://launch?host=<PC UUID or name>&app=<app ID or name>
+// Handles starlight://launch?host=<PC UUID or name>&app=<app ID or name>
 // The launch itself is performed by MainFrameViewController once the host list is available.
 - (BOOL)application:(UIApplication *)application openURL:(NSURL *)url options:(NSDictionary<UIApplicationOpenURLOptionsKey,id> *)options {
-    if (![[url.scheme lowercaseString] isEqualToString:@"moonlightlink"] ||
+    if (![[url.scheme lowercaseString] isEqualToString:@"starlight"] ||
         ![[url.host lowercaseString] isEqualToString:@"launch"]) {
         return NO;
     }
@@ -61,7 +61,7 @@ static NSString* DB_NAME = @"Limelight_iOS.sqlite";
     Log(LOG_I, @"Received launch URL for host '%@', app '%@'", hostParam, appParam);
     _pendingLaunchHost = hostParam;
     _pendingLaunchApp = appParam;
-    [[NSNotificationCenter defaultCenter] postNotificationName:@"MoonlightPendingLaunch" object:nil];
+    [[NSNotificationCenter defaultCenter] postNotificationName:@"StarlightPendingLaunch" object:nil];
     return YES;
 }
 
