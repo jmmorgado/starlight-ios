@@ -2,10 +2,10 @@
 //  StarlightHome.swift
 //  Starlight
 //
-//  The Starlight home screen: a SwiftUI layer on top of MainFrameViewController.
+//  The Starlight UI: a SwiftUI layer on top of MainFrameViewController.
 //  MainFrameViewController keeps doing the Moonlight work (discovery, pairing,
-//  app lists, streaming) and pushes plain dictionaries here; taps go back
-//  through the closures below.
+//  app lists, streaming) and pushes plain dictionaries here; user actions go
+//  back through the closures on StarlightHomeController.
 //
 //  Liquid Glass is used on iOS 26 (glassEffect, glass button styles, the system
 //  tab bar); older versions fall back to materials.
@@ -22,30 +22,46 @@ final class StarlightHomeController: NSObject {
     private lazy var hosting: UIHostingController<HomeRootView> = {
         let controller = UIHostingController(rootView: HomeRootView(model: model))
         controller.view.backgroundColor = .black
+        controller.overrideUserInterfaceStyle = .dark
         return controller
     }()
 
     @objc var viewController: UIViewController { hosting }
 
-    /// (hostUUID)
+    /// (hostUUID) – choose a PC (pairs it if needed)
     @objc var onSelectHost: ((String) -> Void)? {
         didSet { model.onSelectHost = onSelectHost }
     }
-    /// (hostUUID, appId)
+    /// (hostUUID, appId) – start or resume streaming
     @objc var onLaunchApp: ((String, String) -> Void)? {
         didSet { model.onLaunchApp = onLaunchApp }
     }
-    /// (action, hostUUID, appId): "pin", "copyLink", "saveIcon", "more"
+    /// (action, hostUUID, appId): "pin", "copyLink", "saveIcon", "hide", "quit"
     @objc var onAppAction: ((String, String, String) -> Void)? {
         didSet { model.onAppAction = onAppAction }
     }
-    /// (command): "addHost", "refreshHost", "hostOptions", "streamSettings", "artwork", "classicLayout"
+    /// (action, hostUUID): "refresh", "wake", "testNetwork", "remove", "pair", "toggleHidden"
+    @objc var onHostAction: ((String, String) -> Void)? {
+        didSet { model.onHostAction = onHostAction }
+    }
+    /// (command): "addHost"
     @objc var onCommand: ((String) -> Void)? {
         didSet { model.onCommand = onCommand }
     }
+    /// (command, apiKey): "save", "redownload", "remove"
+    @objc var onArtworkCommand: ((String, String) -> Void)? {
+        didSet { model.onArtworkCommand = onArtworkCommand }
+    }
+    /// Current stream settings (see StreamSettingsView for the keys)
+    @objc var settingsProvider: (() -> [String: Any])? {
+        didSet { model.settingsProvider = settingsProvider }
+    }
+    @objc var onSaveSettings: (([String: Any]) -> Void)? {
+        didSet { model.onSaveSettings = onSaveSettings }
+    }
 
-    @objc(updateWithHosts:selectedHost:apps:)
-    func update(hosts: [[String: Any]], selectedHost: String?, apps: [[String: Any]]) {
+    @objc(updateWithHosts:selectedHost:apps:artwork:)
+    func update(hosts: [[String: Any]], selectedHost: String?, apps: [[String: Any]], artwork: [String: Any]) {
         let hostItems = hosts.compactMap(HostItem.init)
         let gameItems = apps.compactMap(GameItem.init)
         if model.hosts != hostItems { model.hosts = hostItems }
@@ -54,6 +70,10 @@ final class StarlightHomeController: NSObject {
             model.games = gameItems
             ArtworkCache.shared.removeAll()
         }
+        let configured = artwork["configured"] as? Bool ?? false
+        let suffix = artwork["keySuffix"] as? String ?? ""
+        if model.artworkConfigured != configured { model.artworkConfigured = configured }
+        if model.artworkKeySuffix != suffix { model.artworkKeySuffix = suffix }
         if let featured = model.featuredId, !gameItems.contains(where: { $0.id == featured }) {
             model.featuredId = nil
         }
@@ -67,6 +87,8 @@ struct HostItem: Identifiable, Equatable {
     let name: String
     let online: Bool
     let paired: Bool
+    let showHidden: Bool
+    let address: String
 
     init?(_ dict: [String: Any]) {
         guard let uuid = dict["uuid"] as? String else { return nil }
@@ -74,6 +96,8 @@ struct HostItem: Identifiable, Equatable {
         name = dict["name"] as? String ?? "PC"
         online = dict["online"] as? Bool ?? false
         paired = dict["paired"] as? Bool ?? false
+        showHidden = dict["showHidden"] as? Bool ?? false
+        address = dict["address"] as? String ?? ""
     }
 }
 
@@ -84,11 +108,14 @@ struct GameItem: Identifiable, Equatable {
     let name: String
     let hostName: String
     let running: Bool
-    let pinned: Bool
+    let pinIndex: Int?
+    let hidden: Bool
     let gridPath: String?
     let heroPath: String?
     let logoPath: String?
     let lastPlayed: Date?
+
+    var pinned: Bool { pinIndex != nil }
 
     init?(_ dict: [String: Any]) {
         guard let host = dict["host"] as? String,
@@ -100,7 +127,12 @@ struct GameItem: Identifiable, Equatable {
         id = "\(host)|\(app)"
         hostName = dict["hostName"] as? String ?? ""
         running = dict["running"] as? Bool ?? false
-        pinned = dict["pinned"] as? Bool ?? false
+        hidden = dict["hidden"] as? Bool ?? false
+        if let index = dict["pinIndex"] as? Int, index >= 0 {
+            pinIndex = index
+        } else {
+            pinIndex = nil
+        }
         gridPath = GameItem.nonEmpty(dict["gridPath"])
         heroPath = GameItem.nonEmpty(dict["heroPath"])
         logoPath = GameItem.nonEmpty(dict["logoPath"])
@@ -122,17 +154,35 @@ final class HomeModel: ObservableObject {
     @Published var selectedHost: String?
     @Published var games: [GameItem] = []
     @Published var featuredId: String?
+    @Published var artworkConfigured = false
+    @Published var artworkKeySuffix = ""
 
     var onSelectHost: ((String) -> Void)?
     var onLaunchApp: ((String, String) -> Void)?
     var onAppAction: ((String, String, String) -> Void)?
+    var onHostAction: ((String, String) -> Void)?
     var onCommand: ((String) -> Void)?
+    var onArtworkCommand: ((String, String) -> Void)?
+    var settingsProvider: (() -> [String: Any])?
+    var onSaveSettings: (([String: Any]) -> Void)?
 
     var currentHost: HostItem? { hosts.first { $0.id == selectedHost } }
+    var pairedHosts: [HostItem] { hosts.filter { $0.paired } }
+    var networkHosts: [HostItem] { hosts.filter { !$0.paired } }
 
-    /// Running game first, then most recently played, then alphabetical
+    private func pinnedFirst(_ a: GameItem, _ b: GameItem) -> Bool? {
+        switch (a.pinIndex, b.pinIndex) {
+        case let (x?, y?): return x < y
+        case (_?, nil): return true
+        case (nil, _?): return false
+        default: return nil
+        }
+    }
+
+    /// Pinned games first (in pin order), then the running game, then most recently played
     var continueGames: [GameItem] {
-        games.sorted { a, b in
+        games.filter { !$0.hidden }.sorted { a, b in
+            if let pinned = pinnedFirst(a, b) { return pinned }
             if a.running != b.running { return a.running }
             switch (a.lastPlayed, b.lastPlayed) {
             case let (x?, y?): return x > y
@@ -143,17 +193,24 @@ final class HomeModel: ObservableObject {
         }
     }
 
-    var alphabeticalGames: [GameItem] {
-        games.sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+    /// Pinned games first, then alphabetical (hidden games only when the PC shows them)
+    var libraryGames: [GameItem] {
+        let showHidden = currentHost?.showHidden ?? false
+        return games.filter { showHidden || !$0.hidden }.sorted { a, b in
+            if let pinned = pinnedFirst(a, b) { return pinned }
+            return a.name.localizedCaseInsensitiveCompare(b.name) == .orderedAscending
+        }
     }
 
+    /// The game the user tapped, else the running game, else the first of Continue Playing
     var featured: GameItem? {
         if let id = featuredId, let game = games.first(where: { $0.id == id }) { return game }
-        return continueGames.first
+        return games.first(where: { $0.running }) ?? continueGames.first
     }
 
     func launch(_ game: GameItem) { onLaunchApp?(game.host, game.app) }
     func action(_ name: String, _ game: GameItem) { onAppAction?(name, game.host, game.app) }
+    func hostAction(_ name: String, _ host: HostItem) { onHostAction?(name, host.id) }
     func command(_ name: String) { onCommand?(name) }
 }
 
@@ -185,15 +242,6 @@ private extension View {
             self.glassEffect(.regular, in: Capsule())
         } else {
             self.background(.ultraThinMaterial, in: Capsule())
-        }
-    }
-
-    @ViewBuilder
-    func glassRounded(_ radius: CGFloat) -> some View {
-        if #available(iOS 26.0, *) {
-            self.glassEffect(.regular, in: RoundedRectangle(cornerRadius: radius, style: .continuous))
-        } else {
-            self.background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: radius, style: .continuous))
         }
     }
 
@@ -242,24 +290,38 @@ struct HostMenu: View {
 
     var body: some View {
         Menu {
-            if !model.hosts.isEmpty {
-                Section("PCs") {
-                    ForEach(model.hosts) { host in
+            if !model.pairedHosts.isEmpty {
+                Section("Your PCs") {
+                    ForEach(model.pairedHosts) { host in
                         Button {
                             model.onSelectHost?(host.id)
                         } label: {
-                            Label(host.name + (host.paired ? "" : " (not paired)"),
-                                  systemImage: host.id == model.selectedHost ? "checkmark" : (host.online ? "desktopcomputer" : "moon.zzz"))
+                            Label(host.name + (host.online ? "" : " · offline"),
+                                  systemImage: host.id == model.selectedHost ? "checkmark" : "desktopcomputer")
+                        }
+                    }
+                }
+            }
+            if !model.networkHosts.isEmpty {
+                Section("On Your Network") {
+                    ForEach(model.networkHosts) { host in
+                        Button {
+                            model.onSelectHost?(host.id)
+                        } label: {
+                            Label("\(host.name) · tap to pair", systemImage: "link")
                         }
                     }
                 }
             }
             Section {
-                if model.currentHost != nil {
-                    Button { model.command("refreshHost") } label: { Label("Refresh Games", systemImage: "arrow.clockwise") }
-                    Button { model.command("hostOptions") } label: { Label("PC Options…", systemImage: "ellipsis.circle") }
+                if let host = model.currentHost, host.paired {
+                    Button { model.hostAction("refresh", host) } label: {
+                        Label("Refresh Games", systemImage: "arrow.clockwise")
+                    }
                 }
-                Button { model.command("addHost") } label: { Label("Add PC…", systemImage: "plus") }
+                Button { model.command("addHost") } label: {
+                    Label("Add PC by Address…", systemImage: "plus")
+                }
             }
         } label: {
             HStack(spacing: 10) {
@@ -297,21 +359,22 @@ struct HostMenu: View {
 
     private var statusText: String {
         guard let host = model.currentHost else { return model.hosts.isEmpty ? "No PCs yet" : "Tap to choose" }
-        if !host.paired { return "Not paired" }
-        return host.online ? "Online" : "Offline · last known games"
+        let others = model.hosts.count - 1
+        var text = !host.paired ? "Not paired" : (host.online ? "Online" : "Offline")
+        if others > 0 { text += " · \(others) more" }
+        return text
     }
 }
 
 struct ArtworkImage: View {
     let path: String?
     let fallbackText: String
-    var contentMode: ContentMode = .fill
 
     var body: some View {
         if let image = ArtworkCache.shared.image(path) {
             Image(uiImage: image)
                 .resizable()
-                .aspectRatio(contentMode: contentMode)
+                .aspectRatio(contentMode: .fill)
         } else {
             ZStack {
                 LinearGradient(colors: [Color(white: 0.22), Color(white: 0.10)],
@@ -326,16 +389,14 @@ struct ArtworkImage: View {
     }
 }
 
-struct GameContextMenu: View {
+/// The game options shown in the ••• menu and on long-press
+struct GameMenuItems: View {
     let game: GameItem
     @ObservedObject var model: HomeModel
 
     var body: some View {
-        Button { model.launch(game) } label: {
-            Label(game.running ? "Resume" : "Play", systemImage: "play.fill")
-        }
         Button { model.action("pin", game) } label: {
-            Label(game.pinned ? "Unpin from App Icon" : "Pin to App Icon", systemImage: game.pinned ? "pin.slash" : "pin")
+            Label(game.pinned ? "Unpin" : "Pin", systemImage: game.pinned ? "pin.slash" : "pin")
         }
         Button { model.action("copyLink", game) } label: {
             Label("Copy Shortcut Link", systemImage: "link")
@@ -343,8 +404,13 @@ struct GameContextMenu: View {
         Button { model.action("saveIcon", game) } label: {
             Label("Save Icon to Photos", systemImage: "photo")
         }
-        Button { model.action("more", game) } label: {
-            Label("More Options…", systemImage: "ellipsis.circle")
+        Button { model.action("hide", game) } label: {
+            Label(game.hidden ? "Show Game" : "Hide Game", systemImage: game.hidden ? "eye" : "eye.slash")
+        }
+        if game.running {
+            Button(role: .destructive) { model.action("quit", game) } label: {
+                Label("Quit Game", systemImage: "xmark.circle")
+            }
         }
     }
 }
@@ -374,8 +440,8 @@ struct EmptyStateView: View {
                     Label("Pair with \(host.name)", systemImage: "link")
                 }
                 .primaryGlassButton()
-            } else if model.currentHost != nil {
-                Button { model.command("refreshHost") } label: {
+            } else if let host = model.currentHost {
+                Button { model.hostAction("refresh", host) } label: {
                     Label("Refresh Games", systemImage: "arrow.clockwise")
                 }
                 .primaryGlassButton()
@@ -412,25 +478,13 @@ struct HomeTab: View {
                 if let featured = model.featured {
                     ScrollView(.vertical, showsIndicators: false) {
                         VStack(alignment: .leading, spacing: compact ? 14 : 22) {
-                            HStack {
-                                HostMenu(model: model)
-                                Spacer()
-                                Button { model.command("artwork") } label: {
-                                    Image(systemName: "photo.on.rectangle.angled")
-                                        .font(.system(size: 16, weight: .semibold))
-                                        .frame(width: 22, height: 22)
-                                }
-                                .secondaryGlassButton()
-                                .accessibilityLabel("Game artwork")
-                            }
+                            HostMenu(model: model)
 
                             FeaturedSection(game: featured, model: model, compact: compact)
 
                             GameRow(title: "Continue Playing", games: model.continueGames, model: model, compact: compact)
 
-                            if !compact {
-                                GameRow(title: "All Games", games: model.alphabeticalGames, model: model, compact: compact, portrait: true)
-                            }
+                            GameRow(title: "All Games", games: model.libraryGames, model: model, compact: compact, portrait: true)
                         }
                         .padding(.horizontal, 24)
                         .padding(.top, 8)
@@ -497,13 +551,21 @@ struct FeaturedSection: View {
 
             HStack(spacing: 8) {
                 if game.running {
-                    Label("Running on PC", systemImage: "circle.fill")
-                        .labelStyle(.titleAndIcon)
-                        .font(.system(size: 12, weight: .semibold))
-                        .foregroundStyle(.green)
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 4)
-                        .glassCapsule()
+                    HStack(spacing: 6) {
+                        Circle().fill(.green).frame(width: 8, height: 8)
+                        Text("Running on PC")
+                            .font(.system(size: 12, weight: .semibold))
+                            .foregroundStyle(.white)
+                    }
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 5)
+                    .glassCapsule()
+                }
+                if game.pinned {
+                    Image(systemName: "pin.fill")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(starlightGold)
+                        .accessibilityLabel("Pinned")
                 }
                 Text(subtitle)
                     .font(.system(size: 13, weight: .medium))
@@ -521,23 +583,26 @@ struct FeaturedSection: View {
                 .tint(.white)
                 .foregroundStyle(.black)
 
-                Button { model.action("pin", game) } label: {
-                    Image(systemName: game.pinned ? "pin.fill" : "pin")
-                        .font(.system(size: 16, weight: .semibold))
-                        .frame(width: 22, height: 22)
+                if game.running {
+                    Button(role: .destructive) { model.action("quit", game) } label: {
+                        Label("Quit", systemImage: "xmark")
+                            .font(.system(size: 16, weight: .semibold))
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 3)
+                    }
+                    .secondaryGlassButton()
+                    .tint(.red)
                 }
-                .secondaryGlassButton()
-                .accessibilityLabel(game.pinned ? "Unpin from app icon" : "Pin to app icon")
 
                 Menu {
-                    GameContextMenu(game: game, model: model)
+                    GameMenuItems(game: game, model: model)
                 } label: {
                     Image(systemName: "ellipsis")
                         .font(.system(size: 16, weight: .semibold))
                         .frame(width: 22, height: 22)
                 }
                 .secondaryGlassButton()
-                .accessibilityLabel("More options")
+                .accessibilityLabel("Game options")
             }
         }
         .padding(.top, compact ? 4 : 30)
@@ -574,7 +639,7 @@ struct GameRow: View {
                         GameCard(game: game,
                                  selected: game.id == model.featured?.id,
                                  portrait: portrait,
-                                 height: portrait ? 180 : (compact ? 84 : 110))
+                                 height: portrait ? (compact ? 150 : 180) : (compact ? 84 : 110))
                             .onTapGesture {
                                 if game.id == model.featured?.id {
                                     model.launch(game)
@@ -582,7 +647,7 @@ struct GameRow: View {
                                     withAnimation(.easeInOut(duration: 0.25)) { model.featuredId = game.id }
                                 }
                             }
-                            .contextMenu { GameContextMenu(game: game, model: model) }
+                            .contextMenu { GameMenuItems(game: game, model: model) }
                     }
                 }
                 .padding(.vertical, 6)
@@ -621,16 +686,26 @@ struct GameCard: View {
                 }
             }
 
-            if game.running {
-                Circle()
-                    .fill(.green)
-                    .frame(width: 10, height: 10)
-                    .overlay(Circle().stroke(.black.opacity(0.4), lineWidth: 2))
-                    .padding(8)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
+            HStack(spacing: 6) {
+                if game.pinned {
+                    Image(systemName: "pin.fill")
+                        .font(.system(size: 10, weight: .bold))
+                        .foregroundStyle(starlightGold)
+                        .padding(5)
+                        .background(.black.opacity(0.55), in: Circle())
+                }
+                if game.running {
+                    Circle()
+                        .fill(.green)
+                        .frame(width: 10, height: 10)
+                        .overlay(Circle().stroke(.black.opacity(0.4), lineWidth: 2))
+                }
             }
+            .padding(8)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
         }
         .frame(width: width, height: height)
+        .opacity(game.hidden ? 0.45 : 1)
         .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
         .overlay(
             RoundedRectangle(cornerRadius: 16, style: .continuous)
@@ -640,7 +715,7 @@ struct GameCard: View {
         .scaleEffect(selected ? 1.03 : 1)
         .animation(.easeInOut(duration: 0.2), value: selected)
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel(game.name + (game.running ? ", running" : ""))
+        .accessibilityLabel(game.name + (game.running ? ", running" : "") + (game.pinned ? ", pinned" : ""))
         .accessibilityAddTraits(.isButton)
     }
 }
@@ -652,7 +727,7 @@ struct LibraryTab: View {
     @State private var search = ""
 
     private var filtered: [GameItem] {
-        let all = model.alphabeticalGames
+        let all = model.libraryGames
         guard !search.isEmpty else { return all }
         return all.filter { $0.name.localizedCaseInsensitiveContains(search) }
     }
@@ -674,7 +749,7 @@ struct LibraryTab: View {
                                 }
                                 .frame(width: 120)
                                 .onTapGesture { model.launch(game) }
-                                .contextMenu { GameContextMenu(game: game, model: model) }
+                                .contextMenu { GameMenuItems(game: game, model: model) }
                             }
                         }
                         .padding(20)
@@ -709,28 +784,44 @@ struct SettingsTab: View {
         NavigationView {
             List {
                 Section("Streaming") {
-                    Button { model.command("streamSettings") } label: {
+                    NavigationLink {
+                        StreamSettingsView(model: model)
+                    } label: {
                         Label("Stream Settings", systemImage: "slider.horizontal.3")
                     }
                 }
+
                 Section("PCs") {
-                    Button { model.command("addHost") } label: {
-                        Label("Add PC…", systemImage: "plus")
+                    ForEach(model.hosts) { host in
+                        NavigationLink {
+                            HostDetailView(model: model, hostId: host.id)
+                        } label: {
+                            HStack {
+                                Label(host.name, systemImage: "desktopcomputer")
+                                Spacer()
+                                Text(host.paired ? (host.online ? "Online" : "Offline") : "Not paired")
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
                     }
-                    if model.currentHost != nil {
-                        Button { model.command("hostOptions") } label: {
-                            Label("Options for \(model.currentHost?.name ?? "PC")…", systemImage: "desktopcomputer")
+                    Button { model.command("addHost") } label: {
+                        Label("Add PC by Address…", systemImage: "plus")
+                    }
+                }
+
+                Section("Appearance") {
+                    NavigationLink {
+                        ArtworkSettingsView(model: model)
+                    } label: {
+                        HStack {
+                            Label("Game Artwork", systemImage: "photo.on.rectangle.angled")
+                            Spacer()
+                            Text(model.artworkConfigured ? "SteamGridDB" : "Not set up")
+                                .foregroundStyle(.secondary)
                         }
                     }
                 }
-                Section("Appearance") {
-                    Button { model.command("artwork") } label: {
-                        Label("Game Artwork (SteamGridDB)", systemImage: "photo.on.rectangle.angled")
-                    }
-                    Button { model.command("classicLayout") } label: {
-                        Label("Use Classic Moonlight Layout", systemImage: "rectangle.grid.1x2")
-                    }
-                }
+
                 Section {
                     HStack {
                         Text("Version")
@@ -747,5 +838,316 @@ struct SettingsTab: View {
             .navigationTitle("Settings")
         }
         .navigationViewStyle(.stack)
+    }
+}
+
+// MARK: - PC detail
+
+struct HostDetailView: View {
+    @ObservedObject var model: HomeModel
+    let hostId: String
+    @State private var confirmRemove = false
+
+    private var host: HostItem? { model.hosts.first { $0.id == hostId } }
+
+    var body: some View {
+        List {
+            if let host = host {
+                Section {
+                    HStack {
+                        Text("Status")
+                        Spacer()
+                        Text(host.paired ? (host.online ? "Online" : "Offline") : "Not paired")
+                            .foregroundStyle(.secondary)
+                    }
+                    if !host.address.isEmpty {
+                        HStack {
+                            Text("Address")
+                            Spacer()
+                            Text(host.address).foregroundStyle(.secondary)
+                        }
+                    }
+                }
+
+                Section {
+                    if !host.paired {
+                        Button { model.hostAction("pair", host) } label: {
+                            Label("Pair", systemImage: "link")
+                        }
+                    } else {
+                        if host.id != model.selectedHost {
+                            Button { model.onSelectHost?(host.id) } label: {
+                                Label("Use This PC", systemImage: "checkmark.circle")
+                            }
+                        }
+                        Button { model.hostAction("refresh", host) } label: {
+                            Label("Refresh Games", systemImage: "arrow.clockwise")
+                        }
+                        Toggle(isOn: Binding(get: { host.showHidden },
+                                             set: { _ in model.hostAction("toggleHidden", host) })) {
+                            Label("Show Hidden Games", systemImage: "eye")
+                        }
+                    }
+                    if !host.online {
+                        Button { model.hostAction("wake", host) } label: {
+                            Label("Wake PC", systemImage: "power")
+                        }
+                    }
+                    Button { model.hostAction("testNetwork", host) } label: {
+                        Label("Test Network", systemImage: "network")
+                    }
+                }
+
+                Section {
+                    Button(role: .destructive) { confirmRemove = true } label: {
+                        Label("Remove PC", systemImage: "trash")
+                    }
+                }
+            } else {
+                Text("This PC was removed.")
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .navigationTitle(host?.name ?? "PC")
+        .confirmationDialog("Remove \(host?.name ?? "this PC")?", isPresented: $confirmRemove, titleVisibility: .visible) {
+            Button("Remove PC", role: .destructive) {
+                if let host = host { model.hostAction("remove", host) }
+            }
+        } message: {
+            Text("You'll need to pair again to stream from it.")
+        }
+    }
+}
+
+// MARK: - Artwork settings
+
+struct ArtworkSettingsView: View {
+    @ObservedObject var model: HomeModel
+    @State private var key = ""
+    @State private var confirmRemove = false
+
+    var body: some View {
+        Form {
+            Section {
+                SecureField(model.artworkConfigured ? "New API key (optional)" : "SteamGridDB API key", text: $key)
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled()
+                Button {
+                    model.onArtworkCommand?("save", key)
+                    key = ""
+                } label: {
+                    Label(model.artworkConfigured ? "Download Missing Artwork" : "Save Key & Download", systemImage: "arrow.down.circle")
+                }
+                .disabled(!model.artworkConfigured && key.isEmpty)
+            } header: {
+                Text("SteamGridDB")
+            } footer: {
+                Text(model.artworkConfigured
+                     ? "Key saved (…\(model.artworkKeySuffix)). New games get artwork automatically."
+                     : "Covers, backgrounds, logos and icons come from steamgriddb.com. Sign in there, open Preferences → API, generate a key and paste it here. It's stored only on this device.")
+            }
+
+            if model.artworkConfigured {
+                Section {
+                    Button { model.onArtworkCommand?("redownload", "") } label: {
+                        Label("Re-download All Artwork", systemImage: "arrow.triangle.2.circlepath")
+                    }
+                    Button(role: .destructive) { confirmRemove = true } label: {
+                        Label("Remove Key & Artwork", systemImage: "trash")
+                    }
+                }
+            }
+        }
+        .navigationTitle("Game Artwork")
+        .confirmationDialog("Remove the SteamGridDB key and downloaded artwork?", isPresented: $confirmRemove, titleVisibility: .visible) {
+            Button("Remove", role: .destructive) { model.onArtworkCommand?("remove", "") }
+        }
+    }
+}
+
+// MARK: - Stream settings
+
+/// Mirrors Moonlight's stream settings. Keys exchanged with Objective-C:
+/// width, height, framerate, bitrate (kbps), onscreenControls (0-3), codec (0 auto, 1 H.264, 2 HEVC, 3 AV1),
+/// absoluteTouch, optimizeGames, multiController, swapABXY, audioOnPC, hdr, framePacing, btMouse, statsOverlay,
+/// plus read-only resolutions ([{label, width, height}]) and maxFramerate.
+struct StreamSettingsView: View {
+    @ObservedObject var model: HomeModel
+
+    @State private var loaded = false
+    @State private var resolutions: [ResolutionOption] = []
+    @State private var resolutionIndex = 0
+    @State private var customWidth = ""
+    @State private var customHeight = ""
+    @State private var framerate = 60
+    @State private var maxFramerate = 60
+    @State private var bitrateMbps: Double = 20
+    @State private var onscreenControls = 1
+    @State private var codec = 0
+    @State private var absoluteTouch = false
+    @State private var optimizeGames = true
+    @State private var multiController = true
+    @State private var swapABXY = false
+    @State private var audioOnPC = false
+    @State private var hdr = false
+    @State private var framePacing = false
+    @State private var btMouse = false
+    @State private var statsOverlay = false
+
+    struct ResolutionOption: Hashable {
+        let label: String
+        let width: Int
+        let height: Int
+    }
+
+    private var customIndex: Int { resolutions.count }
+
+    var body: some View {
+        Form {
+            Section("Video") {
+                Picker("Resolution", selection: $resolutionIndex) {
+                    ForEach(Array(resolutions.enumerated()), id: \.offset) { index, res in
+                        Text("\(res.label) · \(res.width)×\(res.height)").tag(index)
+                    }
+                    Text("Custom").tag(customIndex)
+                }
+                if resolutionIndex == customIndex {
+                    HStack {
+                        TextField("Width", text: $customWidth).keyboardType(.numberPad)
+                        Text("×").foregroundStyle(.secondary)
+                        TextField("Height", text: $customHeight).keyboardType(.numberPad)
+                    }
+                }
+                Picker("Frame Rate", selection: $framerate) {
+                    Text("30 FPS").tag(30)
+                    Text("60 FPS").tag(60)
+                    if maxFramerate >= 120 { Text("120 FPS").tag(120) }
+                }
+                .pickerStyle(.segmented)
+                VStack(alignment: .leading) {
+                    HStack {
+                        Text("Bitrate")
+                        Spacer()
+                        Text(String(format: "%.1f Mbps", bitrateMbps)).foregroundStyle(.secondary)
+                    }
+                    Slider(value: $bitrateMbps, in: 0.5...150, step: 0.5)
+                }
+                Picker("Video Codec", selection: $codec) {
+                    Text("Automatic").tag(0)
+                    Text("H.264").tag(1)
+                    Text("HEVC").tag(2)
+                    Text("AV1").tag(3)
+                }
+                Toggle("HDR", isOn: $hdr)
+                Toggle("Smoothest Video (frame pacing)", isOn: $framePacing)
+            }
+
+            Section("Controls") {
+                Picker("Touch Mode", selection: $absoluteTouch) {
+                    Text("Touchpad").tag(false)
+                    Text("Touchscreen").tag(true)
+                }
+                .pickerStyle(.segmented)
+                Picker("On-Screen Controls", selection: $onscreenControls) {
+                    Text("Off").tag(0)
+                    Text("Auto").tag(1)
+                    Text("Simple").tag(2)
+                    Text("Full").tag(3)
+                }
+                Toggle("Multi-Controller Mode", isOn: $multiController)
+                Toggle("Swap A/B and X/Y Buttons", isOn: $swapABXY)
+                Toggle("Bluetooth Mouse Support", isOn: $btMouse)
+            }
+
+            Section("Host") {
+                Toggle("Optimize Game Settings", isOn: $optimizeGames)
+                Toggle("Play Audio on PC", isOn: $audioOnPC)
+                Toggle("Statistics Overlay", isOn: $statsOverlay)
+            }
+        }
+        .navigationTitle("Stream Settings")
+        .onAppear(perform: load)
+        .onDisappear(perform: save)
+        .onChange(of: resolutionIndex) { _ in save() }
+        .onChange(of: framerate) { _ in save() }
+        .onChange(of: codec) { _ in save() }
+        .onChange(of: hdr) { _ in save() }
+        .onChange(of: framePacing) { _ in save() }
+        .onChange(of: absoluteTouch) { _ in save() }
+        .onChange(of: onscreenControls) { _ in save() }
+        .onChange(of: multiController) { _ in save() }
+        .onChange(of: swapABXY) { _ in save() }
+        .onChange(of: btMouse) { _ in save() }
+        .onChange(of: optimizeGames) { _ in save() }
+        .onChange(of: audioOnPC) { _ in save() }
+        .onChange(of: statsOverlay) { _ in save() }
+    }
+
+    private func load() {
+        guard !loaded, let settings = model.settingsProvider?() else { return }
+        let list = (settings["resolutions"] as? [[String: Any]] ?? []).compactMap { dict -> ResolutionOption? in
+            guard let label = dict["label"] as? String,
+                  let w = (dict["width"] as? NSNumber)?.intValue,
+                  let h = (dict["height"] as? NSNumber)?.intValue else { return nil }
+            return ResolutionOption(label: label, width: w, height: h)
+        }
+        resolutions = list
+        let width = (settings["width"] as? NSNumber)?.intValue ?? 1920
+        let height = (settings["height"] as? NSNumber)?.intValue ?? 1080
+        if let match = list.firstIndex(where: { $0.width == width && $0.height == height }) {
+            resolutionIndex = match
+        } else {
+            resolutionIndex = list.count
+            customWidth = "\(width)"
+            customHeight = "\(height)"
+        }
+        maxFramerate = (settings["maxFramerate"] as? NSNumber)?.intValue ?? 60
+        framerate = (settings["framerate"] as? NSNumber)?.intValue ?? 60
+        bitrateMbps = Double((settings["bitrate"] as? NSNumber)?.intValue ?? 20000) / 1000.0
+        onscreenControls = (settings["onscreenControls"] as? NSNumber)?.intValue ?? 1
+        codec = (settings["codec"] as? NSNumber)?.intValue ?? 0
+        absoluteTouch = (settings["absoluteTouch"] as? NSNumber)?.boolValue ?? false
+        optimizeGames = (settings["optimizeGames"] as? NSNumber)?.boolValue ?? true
+        multiController = (settings["multiController"] as? NSNumber)?.boolValue ?? true
+        swapABXY = (settings["swapABXY"] as? NSNumber)?.boolValue ?? false
+        audioOnPC = (settings["audioOnPC"] as? NSNumber)?.boolValue ?? false
+        hdr = (settings["hdr"] as? NSNumber)?.boolValue ?? false
+        framePacing = (settings["framePacing"] as? NSNumber)?.boolValue ?? false
+        btMouse = (settings["btMouse"] as? NSNumber)?.boolValue ?? false
+        statsOverlay = (settings["statsOverlay"] as? NSNumber)?.boolValue ?? false
+        // Let the onChange handlers fired by the assignments above pass before saving is allowed
+        DispatchQueue.main.async { loaded = true }
+    }
+
+    private func save() {
+        guard loaded else { return }
+        var width = 1920
+        var height = 1080
+        if resolutionIndex < resolutions.count {
+            width = resolutions[resolutionIndex].width
+            height = resolutions[resolutionIndex].height
+        } else if let w = Int(customWidth), let h = Int(customHeight), w >= 256, h >= 256 {
+            width = w
+            height = h
+        } else {
+            return
+        }
+        model.onSaveSettings?([
+            "width": width,
+            "height": height,
+            "framerate": framerate,
+            "bitrate": Int(bitrateMbps * 1000),
+            "onscreenControls": onscreenControls,
+            "codec": codec,
+            "absoluteTouch": absoluteTouch,
+            "optimizeGames": optimizeGames,
+            "multiController": multiController,
+            "swapABXY": swapABXY,
+            "audioOnPC": audioOnPC,
+            "hdr": hdr,
+            "framePacing": framePacing,
+            "btMouse": btMouse,
+            "statsOverlay": statsOverlay
+        ])
     }
 }

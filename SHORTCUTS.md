@@ -2,10 +2,12 @@
 
 ## Ecrã principal
 
-- **Início:** PC no topo, jogo em destaque com a arte de fundo, botão **Play**, fila "Continue Playing".
+- **Início:** PC no topo (toca para mudar de PC ou ver outros PCs na rede), jogo em destaque com a arte de fundo,
+  **Play** (ou **Resume** + **Quit** se o jogo estiver a correr), menu **•••** e as filas "Continue Playing" e "All Games".
+  Os jogos fixados aparecem sempre primeiro.
 - **Library:** todos os jogos do PC, com pesquisa.
-- **Settings:** definições de stream do Moonlight, PCs, arte (SteamGridDB) e **Use Classic Moonlight Layout**
-  para voltar ao ecrã original (para regressar: no layout clássico, **Game Artwork → Use New Starlight Layout**).
+- **Settings:** ecrãs nativos para **Stream Settings**, cada **PC** (emparelhar, acordar, atualizar jogos,
+  mostrar jogos escondidos, testar rede, remover), **Game Artwork** (SteamGridDB) e **About**.
 
 # Atalhos para jogos específicos
 
@@ -30,18 +32,18 @@ o link à mão: ver abaixo.
 
 ## Fixar um jogo no ícone da app (o mais rápido)
 
-1. Na app, mantém o dedo em cima do jogo → **Pin to App Icon**.
+1. Na app, toca em **•••** (ou mantém o dedo em cima do jogo) → **Pin**.
 2. No ecrã principal do iPhone, mantém o dedo no ícone da **Starlight**: o jogo aparece no menu.
 3. Tocar nele abre logo o ecrã de arranque com a arte do jogo e entra no stream,
    sem passar pelo ecrã principal da app.
 
-Até 4 jogos (limite do iOS). Para tirar: **Unpin from App Icon** no mesmo menu.
+Até 4 jogos (limite do iOS). Para tirar: **Unpin** no mesmo menu. Os jogos fixados também ficam nos primeiros lugares das listas da app.
 
 ## Atalho na app Atalhos (com o ícone do jogo)
 
 1. Abre a app **Atalhos** → **+** → **Adicionar ação** → procura **Starlight** → **Start Game**.
 2. Toca em *Game* e escolhe o jogo na lista (vem do Vibepollo, com a arte).
-3. **Ícone do jogo:** na Starlight, mantém o dedo no jogo → **Save Icon to Photos**.
+3. **Ícone do jogo:** na Starlight, **•••** (ou mantém o dedo no jogo) → **Save Icon to Photos**.
    No atalho: partilhar/ⓘ → **Adicionar ao ecrã principal** → toca no ícone → **Escolher foto**.
 
 Também funciona com a Siri ("Start Cyberpunk 2077 in Starlight") e aparece no Spotlight.
@@ -49,7 +51,7 @@ A lista de jogos atualiza sempre que abres a app e ela lê a lista do PC.
 
 ## Como criar um atalho por link (alternativa)
 
-1. Abre a app, entra no PC e **mantém o dedo em cima do jogo**.
+1. Abre a app e toca em **•••** no jogo (ou mantém o dedo em cima dele).
 2. Escolhe **Copy Shortcut Link** — o link fica copiado.
 3. Na app **Atalhos**: novo atalho → ação **Abrir URLs** → cola o link.
 4. Dá-lhe nome e ícone e, se quiseres, **Adicionar ao ecrã principal**.
@@ -63,7 +65,7 @@ Se algo falhar (PC não emparelhado, jogo não encontrado), aparece um aviso a e
 ## Arte dos jogos (SteamGridDB)
 
 1. Em steamgriddb.com, entra com a conta Steam → **Preferences → API** → gera uma chave.
-2. Na Starlight, toca no botão de imagem no topo (**Game Artwork**) e cola a chave.
+2. Na Starlight, vai a **Settings → Game Artwork** e cola a chave.
 3. A app descarrega capa, fundo, logótipo e ícone de cada jogo. Os jogos novos são
    descarregados automaticamente. A chave fica só no iPhone.
 

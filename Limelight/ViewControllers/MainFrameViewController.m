@@ -977,17 +977,8 @@ static NSMutableSet* hostList;
     }
     
 #if !TARGET_OS_TV
-    // Game artwork (SteamGridDB) settings
-    UIBarButtonItem* artworkButton = [[UIBarButtonItem alloc] initWithImage:[UIImage systemImageNamed:@"photo.on.rectangle.angled"]
-                                                                      style:UIBarButtonItemStylePlain
-                                                                     target:self
-                                                                     action:@selector(showArtworkSettings)];
-    artworkButton.accessibilityLabel = @"Game Artwork";
-    NSMutableArray* rightItems = [self.navigationItem.rightBarButtonItems mutableCopy] ?: [NSMutableArray array];
-    [rightItems addObject:artworkButton];
-    self.navigationItem.rightBarButtonItems = rightItems;
-    
-    // Starlight home screen (SwiftUI) on top of the classic Moonlight UI
+    // Starlight UI (SwiftUI) on top of the Moonlight view controller, which keeps
+    // doing discovery, pairing and streaming underneath
     [self installHomeIfNeeded];
 #endif
         
@@ -1002,7 +993,9 @@ static NSMutableSet* hostList;
     [self disableUpButton];
     
     // Set the gesture
-    [self.view addGestureRecognizer:self.revealViewController.panGestureRecognizer];
+    if (_home == nil) {
+        [self.view addGestureRecognizer:self.revealViewController.panGestureRecognizer];
+    }
     
     // Get callbacks associated with the viewController
     [self.revealViewController setDelegate:self];
@@ -1479,7 +1472,11 @@ static const NSUInteger kMaxQuickActions = 4;
     [[self revealViewController] setPrimaryViewController:self];
 #endif
     
+#if !TARGET_OS_TV
+    [self.navigationController setNavigationBarHidden:(_home != nil) animated:NO];
+#else
     [self.navigationController setNavigationBarHidden:NO animated:YES];
+#endif
     
     // Hide 1px border line
     UIImage* fakeImage = [[UIImage alloc] init];
@@ -1523,6 +1520,17 @@ static const NSUInteger kMaxQuickActions = 4;
     // Check for a pending deep link launch (cold start or returning from a stream)
     [self handlePendingLaunch:NO];
 }
+
+#if !TARGET_OS_TV
+- (void)viewDidLayoutSubviews
+{
+    [super viewDidLayoutSubviews];
+    // The stream screen and system transitions can restore the navigation bar; Starlight never shows it
+    if (_home != nil && !self.navigationController.navigationBarHidden && self.navigationController.topViewController == self) {
+        [self.navigationController setNavigationBarHidden:YES animated:NO];
+    }
+}
+#endif
 
 - (void)viewWillAppear:(BOOL)animated
 {
@@ -1748,13 +1756,6 @@ static const NSUInteger kMaxQuickActions = 4;
         }]];
     }
     
-    if (_home == nil) {
-        [alert addAction:[UIAlertAction actionWithTitle:@"Use New Starlight Layout" style:UIAlertActionStyleDefault handler:^(UIAlertAction* action) {
-            [[NSUserDefaults standardUserDefaults] setBool:NO forKey:@"StarlightClassicLayout"];
-            [self installHomeIfNeeded];
-        }]];
-    }
-    
     [alert addAction:[UIAlertAction actionWithTitle:@"Cancel" style:UIAlertActionStyleCancel handler:nil]];
     [[self activeViewController] presentViewController:alert animated:YES completion:nil];
 }
@@ -1784,9 +1785,11 @@ static const NSUInteger kMaxQuickActions = 4;
 #pragma mark - Starlight home screen (SwiftUI)
 
 - (void)installHomeIfNeeded {
-    if (_home != nil || [[NSUserDefaults standardUserDefaults] boolForKey:@"StarlightClassicLayout"]) {
+    if (_home != nil) {
         return;
     }
+    // The classic layout is gone; clear the old preference
+    [[NSUserDefaults standardUserDefaults] removeObjectForKey:@"StarlightClassicLayout"];
     
     _home = [[StarlightHomeController alloc] init];
     __weak MainFrameViewController* weakSelf = self;
@@ -1810,6 +1813,18 @@ static const NSUInteger kMaxQuickActions = 4;
     _home.onCommand = ^(NSString* command) {
         [weakSelf homeCommand:command];
     };
+    _home.onHostAction = ^(NSString* action, NSString* hostUUID) {
+        [weakSelf homeHostAction:action host:hostUUID];
+    };
+    _home.onArtworkCommand = ^(NSString* command, NSString* key) {
+        [weakSelf homeArtworkCommand:command key:key];
+    };
+    _home.settingsProvider = ^NSDictionary<NSString*, id>* {
+        return [weakSelf homeStreamSettings];
+    };
+    _home.onSaveSettings = ^(NSDictionary<NSString*, id>* settings) {
+        [weakSelf homeSaveStreamSettings:settings];
+    };
     
     UIViewController* homeVC = _home.viewController;
     [self addChildViewController:homeVC];
@@ -1820,20 +1835,6 @@ static const NSUInteger kMaxQuickActions = 4;
     
     [self.navigationController setNavigationBarHidden:YES animated:NO];
     [self pushHomeState];
-}
-
-- (void)removeHome {
-    if (_home == nil) {
-        return;
-    }
-    [_homeRefreshTimer invalidate];
-    _homeRefreshTimer = nil;
-    UIViewController* homeVC = _home.viewController;
-    [homeVC willMoveToParentViewController:nil];
-    [homeVC.view removeFromSuperview];
-    [homeVC removeFromParentViewController];
-    _home = nil;
-    [self.navigationController setNavigationBarHidden:NO animated:YES];
 }
 
 - (TemporaryHost*)hostWithUUID:(NSString*)uuid {
@@ -1911,7 +1912,9 @@ static const NSUInteger kMaxQuickActions = 4;
         [hosts addObject:@{ @"uuid": host.uuid,
                             @"name": host.name ?: @"PC",
                             @"online": @(host.state == StateOnline),
-                            @"paired": @(host.pairState == PairStatePaired || (host.pairState == PairStateUnknown && host.serverCert != nil)) }];
+                            @"paired": @(host.pairState == PairStatePaired || (host.pairState == PairStateUnknown && host.serverCert != nil)),
+                            @"showHidden": @(_showHiddenApps && [host.uuid isEqualToString:currentUUID]),
+                            @"address": host.activeAddress ?: (host.localAddress ?: (host.address ?: @"")) }];
     }
     
     NSMutableArray* apps = [NSMutableArray array];
@@ -1920,9 +1923,18 @@ static const NSUInteger kMaxQuickActions = 4;
         SteamGridDBManager* sgdb = [SteamGridDBManager sharedManager];
         NSDictionary* lastPlayed = [[NSUserDefaults standardUserDefaults] dictionaryForKey:@"StarlightLastPlayed"];
         NSFileManager* fm = [NSFileManager defaultManager];
+        NSArray* pins = [self pinnedApps];
         for (TemporaryApp* app in current.appList) {
-            if (app.hidden || app.id == nil || app.name == nil) {
+            if (app.id == nil || app.name == nil) {
                 continue;
+            }
+            NSInteger pinIndex = -1;
+            for (NSUInteger i = 0; i < pins.count; i++) {
+                NSDictionary* entry = pins[i];
+                if ([entry[@"host"] isEqualToString:current.uuid] && [entry[@"app"] isEqualToString:app.id]) {
+                    pinIndex = (NSInteger)i;
+                    break;
+                }
             }
             NSString* grid = [sgdb cachedPathForAppName:app.name kind:SteamGridDBKindGrid];
             if (grid == nil) {
@@ -1935,7 +1947,8 @@ static const NSUInteger kMaxQuickActions = 4;
                                @"app": app.id,
                                @"name": app.name,
                                @"running": @([app.id isEqualToString:current.currentGame]),
-                               @"pinned": @([self isAppPinned:app]),
+                               @"pinIndex": @(pinIndex),
+                               @"hidden": @(app.hidden),
                                @"gridPath": grid,
                                @"heroPath": [sgdb cachedPathForAppName:app.name kind:SteamGridDBKindHero] ?: @"",
                                @"logoPath": [sgdb cachedPathForAppName:app.name kind:SteamGridDBKindLogo] ?: @"",
@@ -1943,7 +1956,12 @@ static const NSUInteger kMaxQuickActions = 4;
         }
     }
     
-    [_home updateWithHosts:hosts selectedHost:current.uuid apps:apps];
+    SteamGridDBManager* artwork = [SteamGridDBManager sharedManager];
+    NSString* key = artwork.apiKey ?: @"";
+    NSDictionary* artworkState = @{ @"configured": @([artwork isConfigured]),
+                                    @"keySuffix": key.length >= 4 ? [key substringFromIndex:key.length - 4] : @"" };
+    
+    [_home updateWithHosts:hosts selectedHost:current.uuid apps:apps artwork:artworkState];
 }
 
 - (void)homeSelectedHost:(NSString*)hostUUID {
@@ -1955,9 +1973,15 @@ static const NSUInteger kMaxQuickActions = 4;
     [[NSUserDefaults standardUserDefaults] setObject:hostUUID forKey:@"StarlightLastHost"];
     [self pushHomeState];
     
-    // Same as tapping the PC in the classic UI: pairs if needed, loads its games,
-    // or offers Wake-on-LAN if it's offline
-    [self hostClicked:host view:self.view];
+    if (![_selectedHost.uuid isEqualToString:hostUUID]) {
+        _showHiddenApps = NO;
+    }
+    
+    // Online: pair if needed and load its games. Offline: just show the cached games
+    // (Wake PC lives in Settings › PCs)
+    if (host.state == StateOnline) {
+        [self hostClicked:host view:self.view];
+    }
 }
 
 - (void)homeAppAction:(NSString*)action host:(NSString*)hostUUID app:(NSString*)appId {
@@ -1982,8 +2006,13 @@ static const NSUInteger kMaxQuickActions = 4;
     else if ([action isEqualToString:@"saveIcon"]) {
         [self saveIconToPhotosForApp:app];
     }
-    else if ([action isEqualToString:@"more"]) {
-        [self appLongClicked:app view:self.view];
+    else if ([action isEqualToString:@"hide"]) {
+        app.hidden = !app.hidden;
+        [self updateAppEntry:app forHost:app.host];
+        [self saveGameCatalog];
+    }
+    else if ([action isEqualToString:@"quit"]) {
+        [self quitRunningAppOnHost:host];
     }
     [self pushHomeState];
 }
@@ -1998,19 +2027,272 @@ static const NSUInteger kMaxQuickActions = 4;
         // No view: always goes through the full refresh (server info + app list)
         [self hostClicked:host view:nil];
     }
-    else if ([command isEqualToString:@"hostOptions"] && host != nil) {
-        [self hostLongClicked:host view:self.view];
+}
+
+- (void)homeHostAction:(NSString*)action host:(NSString*)hostUUID {
+    TemporaryHost* host = [self hostWithUUID:hostUUID];
+    if (host == nil) {
+        return;
     }
-    else if ([command isEqualToString:@"streamSettings"]) {
-        [[self revealViewController] revealToggleAnimated:YES];
+    
+    if ([action isEqualToString:@"refresh"] || [action isEqualToString:@"pair"]) {
+        if (![hostUUID isEqualToString:[self homeCurrentHostUUID]]) {
+            _homeHostUUID = hostUUID;
+            [[NSUserDefaults standardUserDefaults] setObject:hostUUID forKey:@"StarlightLastHost"];
+        }
+        if ([action isEqualToString:@"pair"]) {
+            if (host.state != StateOnline) {
+                UIAlertController* offline = [UIAlertController alertControllerWithTitle:@"PC Offline"
+                                                                                 message:[NSString stringWithFormat:@"%@ needs to be on and running Sunshine or Vibepollo to pair.", host.name]
+                                                                          preferredStyle:UIAlertControllerStyleAlert];
+                [offline addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:nil]];
+                [[self activeViewController] presentViewController:offline animated:YES completion:nil];
+            }
+            else {
+                // A view marks this as a user action, which is what allows pairing
+                [self hostClicked:host view:self.view];
+            }
+        }
+        else {
+            // No view: goes through the full refresh (server info + app list)
+            [self hostClicked:host view:nil];
+        }
     }
-    else if ([command isEqualToString:@"artwork"]) {
-        [self showArtworkSettings];
+    else if ([action isEqualToString:@"toggleHidden"]) {
+        _showHiddenApps = !_showHiddenApps;
+        _homeHostUUID = hostUUID;
     }
-    else if ([command isEqualToString:@"classicLayout"]) {
-        [[NSUserDefaults standardUserDefaults] setBool:YES forKey:@"StarlightClassicLayout"];
-        [self removeHome];
+    else if ([action isEqualToString:@"wake"]) {
+        [self wakeHostFromHome:host];
     }
+    else if ([action isEqualToString:@"testNetwork"]) {
+        [self runNetworkTestFromHome];
+    }
+    else if ([action isEqualToString:@"remove"]) {
+        [_discMan removeHostFromDiscovery:host];
+        DataManager* dataMan = [[DataManager alloc] init];
+        [dataMan removeHost:host];
+        @synchronized(hostList) {
+            [hostList removeObject:host];
+            [self updateAllHosts:[hostList allObjects]];
+        }
+        if ([_homeHostUUID isEqualToString:hostUUID]) {
+            _homeHostUUID = nil;
+        }
+        if ([_selectedHost.uuid isEqualToString:hostUUID]) {
+            _selectedHost = nil;
+        }
+        if ([[[NSUserDefaults standardUserDefaults] stringForKey:@"StarlightLastHost"] isEqualToString:hostUUID]) {
+            [[NSUserDefaults standardUserDefaults] removeObjectForKey:@"StarlightLastHost"];
+        }
+        [self updateHostShortcuts];
+    }
+    [self pushHomeState];
+}
+
+- (void)wakeHostFromHome:(TemporaryHost*)host {
+    UIAlertController* wolAlert = [UIAlertController alertControllerWithTitle:@"Wake PC" message:@"" preferredStyle:UIAlertControllerStyleAlert];
+    [wolAlert addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:nil]];
+    if (host.mac == nil || [host.mac isEqualToString:@"00:00:00:00:00:00"]) {
+        wolAlert.message = @"This PC's MAC address isn't known yet, so a wake-up request can't be sent. Connect to it once while it's on.";
+    } else {
+        dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
+            [WakeOnLanManager wakeHost:host];
+        });
+        wolAlert.message = @"Wake-up request sent. It may take a few moments for the PC to wake. If it never does, check that Wake-on-LAN is enabled on it.";
+    }
+    [[self activeViewController] presentViewController:wolAlert animated:YES completion:nil];
+}
+
+- (void)runNetworkTestFromHome {
+    [self showLoadingFrame:^{
+        dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
+            unsigned int portTestResult = LiTestClientConnectivity(CONN_TEST_SERVER, 443, ML_PORT_FLAG_ALL);
+            dispatch_async(dispatch_get_main_queue(), ^{
+                [self hideLoadingFrame:^{
+                    NSString* message;
+                    if (portTestResult == 0) {
+                        message = @"This network doesn't appear to be blocking streaming. If you still have trouble connecting, check your PC's firewall settings.";
+                    }
+                    else if (portTestResult == ML_TEST_RESULT_INCONCLUSIVE) {
+                        message = @"The test couldn't run because none of the connection testing servers were reachable. Check your Internet connection or try again later.";
+                    }
+                    else {
+                        char blockedPorts[512];
+                        LiStringifyPortFlags(portTestResult, "\n", blockedPorts, sizeof(blockedPorts));
+                        message = [NSString stringWithFormat:@"This network seems to be blocking streaming. These ports were blocked:\n%s", blockedPorts];
+                    }
+                    UIAlertController* alert = [UIAlertController alertControllerWithTitle:@"Network Test" message:message preferredStyle:UIAlertControllerStyleAlert];
+                    [alert addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:nil]];
+                    [[self activeViewController] presentViewController:alert animated:YES completion:nil];
+                }];
+            });
+        });
+    }];
+}
+
+- (void)quitRunningAppOnHost:(TemporaryHost*)host {
+    TemporaryApp* runningApp = [self findRunningApp:host];
+    if (runningApp == nil) {
+        return;
+    }
+    Log(LOG_I, @"Quitting application: %@", runningApp.name);
+    [_appManager stopRetrieving];
+    [self showLoadingFrame:^{
+        dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
+            HttpManager* hMan = [[HttpManager alloc] initWithHost:host];
+            HttpResponse* quitResponse = [[HttpResponse alloc] init];
+            HttpRequest* quitRequest = [HttpRequest requestForResponse:quitResponse withUrlRequest:[hMan newQuitAppRequest]];
+            
+            // Exempt this host from discovery while handling the quit operation
+            [self->_discMan pauseDiscoveryForHost:host];
+            [hMan executeRequestSynchronously:quitRequest];
+            if (quitResponse.statusCode == 200) {
+                ServerInfoResponse* serverInfoResp = [[ServerInfoResponse alloc] init];
+                [hMan executeRequestSynchronously:[HttpRequest requestForResponse:serverInfoResp withUrlRequest:[hMan newServerInfoRequest:false]
+                                                                    fallbackError:401 fallbackRequest:[hMan newHttpServerInfoRequest]]];
+                if (![serverInfoResp isStatusOk] || [[serverInfoResp getStringTag:@"state"] hasSuffix:@"_SERVER_BUSY"]) {
+                    // Newer servers report success even when another client's app didn't really quit
+                    quitResponse.statusCode = 599;
+                }
+                else {
+                    [serverInfoResp populateHost:host];
+                }
+            }
+            [self->_discMan resumeDiscoveryForHost:host];
+            
+            dispatch_async(dispatch_get_main_queue(), ^{
+                if (quitResponse.statusCode != 200) {
+                    UIAlertController* alert = [UIAlertController alertControllerWithTitle:@"Couldn't Quit Game"
+                                                                                   message:@"If this game was started from another device, quit it from that device."
+                                                                            preferredStyle:UIAlertControllerStyleAlert];
+                    [alert addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:nil]];
+                    [self hideLoadingFrame:^{
+                        [[self activeViewController] presentViewController:alert animated:YES completion:nil];
+                    }];
+                }
+                else {
+                    host.currentGame = @"0";
+                    [self hideLoadingFrame:nil];
+                }
+                [self updateAppsForHost:host];
+                [self pushHomeState];
+            });
+        });
+    }];
+}
+
+- (void)homeArtworkCommand:(NSString*)command key:(NSString*)key {
+    SteamGridDBManager* sgdb = [SteamGridDBManager sharedManager];
+    NSArray* allHosts;
+    @synchronized (hostList) {
+        allHosts = [hostList allObjects];
+    }
+    
+    if ([command isEqualToString:@"save"]) {
+        NSString* trimmed = [key stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
+        if (trimmed.length > 0) {
+            sgdb.apiKey = trimmed;
+        }
+        if (![sgdb isConfigured]) {
+            return;
+        }
+        [self pushHomeState];
+        [self fetchArtworkForHosts:allHosts force:NO completion:^(NSUInteger fetched, NSUInteger notFound, NSUInteger failed) {
+            [self showArtworkResultFetched:fetched notFound:notFound failed:failed];
+        }];
+    }
+    else if ([command isEqualToString:@"redownload"] && [sgdb isConfigured]) {
+        [self fetchArtworkForHosts:allHosts force:YES completion:^(NSUInteger fetched, NSUInteger notFound, NSUInteger failed) {
+            [self->_boxArtCache removeAllObjects];
+            [self.collectionView reloadData];
+            [self saveGameCatalog];
+            [self showArtworkResultFetched:fetched notFound:notFound failed:failed];
+        }];
+    }
+    else if ([command isEqualToString:@"remove"]) {
+        sgdb.apiKey = nil;
+        [sgdb clearCache];
+        [_boxArtCache removeAllObjects];
+        [self.collectionView reloadData];
+        [self saveGameCatalog];
+        [self pushHomeState];
+    }
+}
+
+- (NSDictionary<NSString*, id>*)homeStreamSettings {
+    DataManager* dataMan = [[DataManager alloc] init];
+    TemporarySettings* settings = [dataMan getSettings];
+    
+    // Same presets as Moonlight's settings screen, plus this device's own screen sizes
+    UIWindow* window = self.view.window ?: UIApplication.sharedApplication.windows.firstObject;
+    CGFloat scale = window.screen.scale > 0 ? window.screen.scale : UIScreen.mainScreen.scale;
+    CGSize frame = window.frame.size;
+    int fullWidth = (int)(MAX(frame.width, frame.height) * scale);
+    int fullHeight = (int)(MIN(frame.width, frame.height) * scale);
+    UIEdgeInsets insets = window.safeAreaInsets;
+    CGFloat horizontalInsets = frame.width >= frame.height ? (insets.left + insets.right) : (insets.top + insets.bottom);
+    int safeWidth = (int)((MAX(frame.width, frame.height) - horizontalInsets) * scale);
+    
+    NSMutableArray* resolutions = [NSMutableArray arrayWithArray:@[
+        @{ @"label": @"360p", @"width": @640, @"height": @360 },
+        @{ @"label": @"720p", @"width": @1280, @"height": @720 },
+        @{ @"label": @"1080p", @"width": @1920, @"height": @1080 },
+        @{ @"label": @"4K", @"width": @3840, @"height": @2160 },
+    ]];
+    if (fullWidth > 0 && fullHeight > 0) {
+        if (safeWidth > 0 && safeWidth != fullWidth) {
+            [resolutions addObject:@{ @"label": @"Safe Area", @"width": @(safeWidth & ~1), @"height": @(fullHeight & ~1) }];
+        }
+        [resolutions addObject:@{ @"label": @"Full Screen", @"width": @(fullWidth & ~1), @"height": @(fullHeight & ~1) }];
+    }
+    
+    return @{
+        @"resolutions": resolutions,
+        @"width": settings.width ?: @1920,
+        @"height": settings.height ?: @1080,
+        @"framerate": settings.framerate ?: @60,
+        @"maxFramerate": @([UIScreen mainScreen].maximumFramesPerSecond),
+        @"bitrate": settings.bitrate ?: @20000,
+        @"onscreenControls": settings.onscreenControls ?: @1,
+        @"codec": @((int)settings.preferredCodec),
+        @"absoluteTouch": @(settings.absoluteTouchMode),
+        @"optimizeGames": @(settings.optimizeGames),
+        @"multiController": @(settings.multiController),
+        @"swapABXY": @(settings.swapABXYButtons),
+        @"audioOnPC": @(settings.playAudioOnPC),
+        @"hdr": @(settings.enableHdr),
+        @"framePacing": @(settings.useFramePacing),
+        @"btMouse": @(settings.btMouseSupport),
+        @"statsOverlay": @(settings.statsOverlay),
+    };
+}
+
+- (void)homeSaveStreamSettings:(NSDictionary<NSString*, id>*)values {
+    DataManager* dataMan = [[DataManager alloc] init];
+    TemporarySettings* current = [dataMan getSettings];
+    
+    uint32_t codec = (uint32_t)[values[@"codec"] intValue];
+    if (codec > CODEC_PREF_AV1) {
+        codec = CODEC_PREF_AUTO;
+    }
+    
+    [dataMan saveSettingsWithBitrate:[values[@"bitrate"] integerValue]
+                           framerate:[values[@"framerate"] integerValue]
+                              height:[values[@"height"] integerValue]
+                               width:[values[@"width"] integerValue]
+                         audioConfig:[current.audioConfig integerValue] ?: 2
+                    onscreenControls:[values[@"onscreenControls"] integerValue]
+                       optimizeGames:[values[@"optimizeGames"] boolValue]
+                     multiController:[values[@"multiController"] boolValue]
+                     swapABXYButtons:[values[@"swapABXY"] boolValue]
+                           audioOnPC:[values[@"audioOnPC"] boolValue]
+                      preferredCodec:codec
+                      useFramePacing:[values[@"framePacing"] boolValue]
+                           enableHdr:[values[@"hdr"] boolValue]
+                      btMouseSupport:[values[@"btMouse"] boolValue]
+                   absoluteTouchMode:[values[@"absoluteTouch"] boolValue]
+                        statsOverlay:[values[@"statsOverlay"] boolValue]];
 }
 
 // Snapshot of every paired PC's games for the Shortcuts app / Siri / Spotlight
