@@ -58,6 +58,9 @@
     NSCache* _boxArtCache;
     bool _background;
     BOOL _pendingLaunchFallbackScheduled;
+    // Auto Wake-on-LAN for pinned games / links / Shortcuts
+    BOOL _pendingLaunchWaking;
+    UILabel* _launchStatusLabel;
     UIView* _launchOverlay;
 #if TARGET_OS_TV
     UITapGestureRecognizer* _menuRecognizer;
@@ -1159,6 +1162,23 @@ static NSMutableSet* hostList;
     delegate.pendingLaunchHost = nil;
     delegate.pendingLaunchApp = nil;
     _pendingLaunchFallbackScheduled = NO;
+    _pendingLaunchWaking = NO;
+}
+
+// Settings → Launching → Wake PC Automatically (on unless turned off)
+- (BOOL)autoWakeEnabled {
+    id value = [[NSUserDefaults standardUserDefaults] objectForKey:@"StarlightAutoWake"];
+    return value == nil || [value boolValue];
+}
+
+- (BOOL)canWakeHost:(TemporaryHost*)host {
+    return host.mac != nil && ![host.mac isEqualToString:@"00:00:00:00:00:00"];
+}
+
+- (void)sendWakeToHost:(TemporaryHost*)host {
+    dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
+        [WakeOnLanManager wakeHost:host];
+    });
 }
 
 - (void)showPendingLaunchError:(NSString*)message {
@@ -1242,14 +1262,27 @@ static NSMutableSet* hostList;
 
     // Cover the main screen with a start screen for this app
     [self showLaunchOverlayForApp:app];
+    if (_pendingLaunchWaking && host.state != StateOnline) {
+        _launchStatusLabel.text = [NSString stringWithFormat:@"Waking %@...", host.name];
+    }
     
     if (host.state != StateOnline && !force) {
         // Give discovery a moment to find the PC and refresh its address and running game.
         // Discovery doesn't notify us when a known host comes online, so poll its state.
         if (!_pendingLaunchFallbackScheduled) {
             _pendingLaunchFallbackScheduled = YES;
-            Log(LOG_I, @"Waiting for %@ to come online before launching %@", host.name, app.name);
-            [self pollPendingLaunchHost:host remainingChecks:6];
+            if ([self autoWakeEnabled] && [self canWakeHost:host]) {
+                // Asleep or off: wake it and wait up to ~60 s (re-sending the request every 10 s)
+                Log(LOG_I, @"Waking %@ before launching %@", host.name, app.name);
+                _pendingLaunchWaking = YES;
+                _launchStatusLabel.text = [NSString stringWithFormat:@"Waking %@...", host.name];
+                [self sendWakeToHost:host];
+                [self pollPendingLaunchHost:host remainingChecks:120];
+            }
+            else {
+                Log(LOG_I, @"Waiting for %@ to come online before launching %@", host.name, app.name);
+                [self pollPendingLaunchHost:host remainingChecks:6];
+            }
         }
         return;
     }
@@ -1322,6 +1355,7 @@ static NSMutableSet* hostList;
     
     UILabel* status = [[UILabel alloc] init];
     status.text = app != nil ? [NSString stringWithFormat:@"Starting %@...", app.name] : @"Starting...";
+    _launchStatusLabel = status;
     status.textColor = [UIColor whiteColor];
     status.textAlignment = NSTextAlignmentCenter;
     status.translatesAutoresizingMaskIntoConstraints = NO;
@@ -1418,9 +1452,16 @@ static const NSUInteger kMaxQuickActions = 4;
             return;
         }
         if (host.state == StateOnline || remainingChecks <= 1) {
+            if (self->_pendingLaunchWaking && host.state == StateOnline) {
+                self->_launchStatusLabel.text = [NSString stringWithFormat:@"%@ is awake", host.name];
+            }
             [self handlePendingLaunch:YES];
         }
         else {
+            // Every 10 s while waking, send the request again (the first packet can be lost while the NIC sleeps)
+            if (self->_pendingLaunchWaking && remainingChecks % 20 == 0) {
+                [self sendWakeToHost:host];
+            }
             [self pollPendingLaunchHost:host remainingChecks:remainingChecks - 1];
         }
     });

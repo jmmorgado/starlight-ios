@@ -16,6 +16,7 @@
 - **Settings:** ecrãs nativos para **Stream Settings**, cada **PC** (emparelhar, acordar, atualizar jogos,
   testar rede, remover), **Hidden Games**, **Game Artwork** (SteamGridDB) e **About**.
 - **Continue Playing:** só jogos iniciados nos últimos 30 dias (pela Starlight ou no PC, segundo a Steam) e o que estiver a correr. Se não houver nenhum, a fila não aparece.
+- **Acordar o PC:** com **Settings → Launching → Wake PC Automatically** ligado (por omissão), um jogo fixado, um link starlight:// ou um Atalho acordam o PC por Wake-on-LAN e esperam até ~60 s antes de começar o stream. No menu do PC (botão em cima à direita ou □) aparece **Wake <PC>** quando está desligado.
 - **Jogos escondidos:** "Hide Game" tira o jogo da Home, da Library e da pesquisa. Ficam em **Settings → Hidden Games**, onde **Show** (ou ✕) os traz de volta.
 - **Settings com comando:** cruz para cima/baixo entre as opções · **✕** abre o ecrã, liga/desliga ou passa à opção seguinte · **← / →** mudam o valor (resolução, FPS, bitrate ±1 Mbps, codec, interruptores) · **○** volta atrás (ou fecha o teclado). Em campos de texto, ✕ abre o teclado. Ações de remover pedem **✕ duas vezes**.
 

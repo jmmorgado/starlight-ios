@@ -791,6 +791,11 @@ struct PCToolbarButton: View {
                     }
                 }
                 Section {
+                    if let host = model.currentHost, host.paired, !host.online {
+                        Button { model.hostAction("wake", host) } label: {
+                            Label("Wake \(host.name)", systemImage: "power")
+                        }
+                    }
                     if let host = model.currentHost, host.paired {
                         Button { model.hostAction("refresh", host) } label: {
                             Label("Refresh Games", systemImage: "arrow.clockwise")
@@ -1223,6 +1228,12 @@ struct PCDropdown: View {
                     }
                 }
                 Divider().padding(.vertical, 2)
+                if let host = model.currentHost, host.paired, !host.online {
+                    row("pc-wake", title: "Wake \(host.name)", symbol: "power") {
+                        model.closePC()
+                        model.hostAction("wake", host)
+                    }
+                }
                 if let host = model.currentHost, host.paired {
                     row("pc-refresh", title: "Refresh Games", symbol: "arrow.clockwise") {
                         model.closePC()
@@ -2486,6 +2497,8 @@ struct SettingsTab: View {
     @ObservedObject private var steam = SteamManager.shared
     /// The screen pushed from the root (also set by ✕ on the controller)
     @State private var route: String?
+    /// Read by MainFrameViewController when a pinned game, link or Shortcut launches a game
+    @AppStorage("StarlightAutoWake") private var autoWake = true
 
     private var version: String {
         let info = Bundle.main.infoDictionary
@@ -2525,6 +2538,17 @@ struct SettingsTab: View {
                             Label("Add PC by Address…", systemImage: "plus")
                         }
                         .settingsFocus("set-addpc", scope: "settings") { model.command("addHost") }
+                    }
+
+                    Section {
+                        Toggle(isOn: $autoWake) {
+                            Label("Wake PC Automatically", systemImage: "power")
+                        }
+                        .settingsFocus("set-autowake", scope: "settings", adjust: { autoWake = $0 > 0 }) { autoWake.toggle() }
+                    } header: {
+                        Text("Launching")
+                    } footer: {
+                        Text("When a pinned game, a starlight:// link or a Shortcut starts a game and the PC is asleep, Starlight sends a Wake-on-LAN request and waits for it before streaming. Wake-on-LAN has to be enabled on the PC.")
                     }
 
                     Section("Library") {
