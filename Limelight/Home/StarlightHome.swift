@@ -714,7 +714,7 @@ struct GameCard: View {
                 .frame(width: width, height: height)
                 .clipped()
 
-            // A hand-picked landscape grid already shows the game's name
+            // Vertical and horizontal covers have the logo built in; only the plain background gets one on top
             if !portrait && game.widePath == nil {
                 LinearGradient(colors: [.clear, .black.opacity(0.75)], startPoint: .center, endPoint: .bottom)
                 if let logo = ArtworkCache.shared.image(game.logoPath) {
@@ -1241,13 +1241,13 @@ struct ArtworkEditorView: View {
 
     private let kinds: [ArtKind] = [
         ArtKind(kind: "hero", title: "Background", aspect: 16.0 / 9.0,
-                footer: "Fills the Home screen and the loading screen. Also used for the game cards unless you pick a Landscape image."),
-        ArtKind(kind: "wide", title: "Landscape", aspect: 460.0 / 215.0,
-                footer: "Optional image for the game cards in Continue Playing and All Games."),
-        ArtKind(kind: "grid", title: "Cover", aspect: 2.0 / 3.0,
-                footer: "Used in Library."),
+                footer: "Fills the Home screen and the loading screen."),
+        ArtKind(kind: "wide", title: "Landscape Cover", aspect: 460.0 / 215.0,
+                footer: "Horizontal cover with the logo built in, used for the game cards in Continue Playing and All Games."),
+        ArtKind(kind: "grid", title: "Portrait Cover", aspect: 2.0 / 3.0,
+                footer: "Vertical cover with the logo built in, used in Library."),
         ArtKind(kind: "logo", title: "Logo", aspect: 2.0,
-                footer: "Shown over the background and on the game cards."),
+                footer: "Shown over the background on the Home screen."),
         ArtKind(kind: "icon", title: "Icon", aspect: 1.0,
                 footer: "Used for Save Icon to Photos and in the Shortcuts app.")
     ]
