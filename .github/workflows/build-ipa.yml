@@ -68,20 +68,39 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          TAG="build-${{ github.run_number }}"
-          SHORT_SHA="${GITHUB_SHA::7}"
-          {
-            echo "Starlight build ${{ github.run_number }} (branch \`${GITHUB_REF_NAME}\`, commit ${SHORT_SHA})"
-            echo
-            echo "## Alterações"
-            git log -1 --pretty=%B | grep -v -E '^(Co-Authored-By|Claude-Session):' || true
-            echo
-            echo "## Instalar"
-            echo "Descarrega \`Starlight.ipa\` abaixo e instala com o Sideloadly (ver SHORTCUTS.md)."
-          } > release-notes.md
+          N="${{ github.run_number }}"
+          TAG="build-$N"
+          # Hand-written notes for this build win; otherwise use the commit message
+          NOTES=".github/release-notes/build-$N.md"
+          if [ ! -f "$NOTES" ]; then
+            NOTES="release-notes.md"
+            {
+              echo "Starlight build $N (commit ${GITHUB_SHA::7})"
+              echo
+              echo "## Changes"
+              git log -1 --pretty='%s%n%n%b' | grep -v -E '^(Co-Authored-By|Claude-Session):' || true
+              echo
+              echo "## Install"
+              echo "Download \`Starlight.ipa\` below and install it with Sideloadly (see SHORTCUTS.md)."
+            } > "$NOTES"
+          fi
           gh release create "$TAG" dist/Starlight.ipa \
             --repo "$GITHUB_REPOSITORY" \
             --target "$GITHUB_SHA" \
-            --title "Starlight build ${{ github.run_number }}" \
-            --notes-file release-notes.md \
+            --title "Starlight build $N" \
+            --notes-file "$NOTES" \
             --latest
+
+      - name: Sync notes of earlier releases
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          for f in .github/release-notes/build-*.md; do
+            [ -f "$f" ] || continue
+            TAG=$(basename "$f" .md)
+            [ "$TAG" = "build-${{ github.run_number }}" ] && continue
+            if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
+              gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --notes-file "$f"
+              echo "Updated notes for $TAG"
+            fi
+          done
