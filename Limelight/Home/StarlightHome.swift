@@ -708,7 +708,8 @@ struct GameCard: View {
     let height: CGFloat
 
     var body: some View {
-        let width = portrait ? height * 2 / 3 : height * 16 / 9
+        // SteamGridDB proportions: portrait covers 600x900, landscape covers 460x215 / 920x430
+        let width = portrait ? height * 2 / 3 : height * 460 / 215
         ZStack(alignment: .bottomLeading) {
             ArtworkImage(path: portrait ? game.gridPath : (game.widePath ?? game.heroPath ?? game.gridPath), fallbackText: game.name)
                 .frame(width: width, height: height)
