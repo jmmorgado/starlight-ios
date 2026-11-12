@@ -192,7 +192,20 @@ final class HomeModel: ObservableObject {
     var artworkRequest: ((String, [String: Any], @escaping ([String: Any]) -> Void) -> Void)?
 
     // Navigation state
-    @Published var tab: StarlightTab = .home
+    @Published var tab: StarlightTab = .home {
+        didSet {
+            guard tab != oldValue else { return }
+            previousTab = oldValue
+            closePC()
+            closeGameMenu()
+            GameFocus.shared.focusedID = nil
+            if tab == .search {
+                searchFieldFocused = true
+            } else if oldValue == .search {
+                searchFieldFocused = false
+            }
+        }
+    }
     var previousTab: StarlightTab = .home
     @Published var pcExpanded = false
     @Published var gameMenu: GameItem?
@@ -209,11 +222,7 @@ final class HomeModel: ObservableObject {
         closeGameMenu()
         unfocusTabBar()
         if newTab != tab {
-            previousTab = tab
             tab = newTab
-            tabBarCollapsedByScroll = false
-            lastScrollOffset = 0
-            GameFocus.shared.focusedID = nil
         }
     }
 
@@ -249,10 +258,8 @@ final class HomeModel: ObservableObject {
         closeGameMenu()
         unfocusTabBar()
         if tab != .search {
-            previousTab = tab
             tab = .search
         }
-        GameFocus.shared.focus("search-button")
         searchFieldFocused = true
     }
 
@@ -474,18 +481,10 @@ enum StarlightTab: String, CaseIterable {
 
 struct HomeRootView: View {
     @ObservedObject var model: HomeModel
-    @ObservedObject private var focus = GameFocus.shared
 
     var body: some View {
-        ZStack(alignment: .bottomLeading) {
-            content
-                .safeAreaInset(edge: .top, spacing: 0) {
-                    TopBar(model: model)
-                }
-
-            StarlightTabBar(model: model)
-                .frame(maxWidth: .infinity)
-                .padding(.bottom, 6)
+        ZStack(alignment: .topLeading) {
+            tabs
 
             if model.pcExpanded {
                 PCDropdown(model: model)
@@ -506,14 +505,213 @@ struct HomeRootView: View {
         }
     }
 
+    /// System tab bar (Liquid Glass on iOS 26). The Search tab is the round button at the bottom right
+    /// that expands into the search field. L1 / R1 change the selection.
     @ViewBuilder
-    private var content: some View {
-        switch model.tab {
-        case .home: HomeTab(model: model)
-        case .library: LibraryTab(model: model)
-        case .settings: SettingsTab(model: model)
-        case .search: SearchTab(model: model)
+    private var tabs: some View {
+        if #available(iOS 18.0, *) {
+            TabView(selection: $model.tab) {
+                Tab(StarlightTab.home.title, systemImage: StarlightTab.home.symbol, value: StarlightTab.home) {
+                    StarlightStack { HomeTab(model: model).starlightToolbar(model) }
+                }
+                Tab(StarlightTab.library.title, systemImage: StarlightTab.library.symbol, value: StarlightTab.library) {
+                    StarlightStack {
+                        LibraryTab(model: model)
+                            .navigationTitle("Library")
+                            .starlightToolbar(model)
+                    }
+                }
+                Tab(StarlightTab.settings.title, systemImage: StarlightTab.settings.symbol, value: StarlightTab.settings) {
+                    SettingsTab(model: model)
+                }
+                Tab(value: StarlightTab.search, role: .search) {
+                    StarlightStack { NativeSearchScreen(model: model) }
+                }
+            }
+        } else {
+            TabView(selection: $model.tab) {
+                StarlightStack { HomeTab(model: model).starlightToolbar(model) }
+                    .tabItem { Label(StarlightTab.home.title, systemImage: StarlightTab.home.symbol) }
+                    .tag(StarlightTab.home)
+                StarlightStack {
+                    LibraryTab(model: model)
+                        .navigationTitle("Library")
+                        .starlightToolbar(model)
+                }
+                .tabItem { Label(StarlightTab.library.title, systemImage: StarlightTab.library.symbol) }
+                .tag(StarlightTab.library)
+                SettingsTab(model: model)
+                    .tabItem { Label(StarlightTab.settings.title, systemImage: StarlightTab.settings.symbol) }
+                    .tag(StarlightTab.settings)
+                StarlightStack { NativeSearchScreen(model: model) }
+                    .tabItem { Label(StarlightTab.search.title, systemImage: StarlightTab.search.symbol) }
+                    .tag(StarlightTab.search)
+            }
         }
+    }
+}
+
+/// NavigationStack where available (needed for the iOS 26 toolbar and search behaviour)
+struct StarlightStack<Content: View>: View {
+    @ViewBuilder let content: () -> Content
+
+    var body: some View {
+        if #available(iOS 16.0, *) {
+            NavigationStack { content() }
+        } else {
+            NavigationView { content() }
+                .navigationViewStyle(.stack)
+        }
+    }
+}
+
+extension View {
+    /// PC button on the leading side and the status on the trailing side of the system navigation bar.
+    /// On iOS 26 the system draws both as Liquid Glass and the PC menu opens with the native morph.
+    func starlightToolbar(_ model: HomeModel) -> some View {
+        self
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .navigationBarLeading) {
+                    PCToolbarButton(model: model)
+                }
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    StatusCluster()
+                }
+            }
+    }
+
+    func starlightStatusToolbar() -> some View {
+        self.toolbar {
+            ToolbarItem(placement: .navigationBarTrailing) {
+                StatusCluster()
+            }
+        }
+    }
+}
+
+/// Search with the system search field (focus follows △ on the controller)
+struct NativeSearchScreen: View {
+    @ObservedObject var model: HomeModel
+
+    var body: some View {
+        if #available(iOS 18.0, *) {
+            FocusedSearch(model: model)
+        } else {
+            SearchTab(model: model)
+                .navigationTitle("Search")
+                .starlightToolbar(model)
+                .searchable(text: $model.searchQuery, prompt: "Search game")
+        }
+    }
+}
+
+@available(iOS 18.0, *)
+private struct FocusedSearch: View {
+    @ObservedObject var model: HomeModel
+    @FocusState private var focused: Bool
+
+    var body: some View {
+        SearchTab(model: model)
+            .navigationTitle("Search")
+            .starlightToolbar(model)
+            .searchable(text: $model.searchQuery, prompt: "Search game")
+            .searchFocused($focused)
+            .onAppear { focused = model.searchFieldFocused }
+            .onChange(of: model.searchFieldFocused) { _, value in
+                if focused != value { focused = value }
+            }
+            .onChange(of: focused) { _, value in
+                if model.searchFieldFocused != value { model.searchFieldFocused = value }
+            }
+    }
+}
+
+/// The PC button in the navigation bar: a native menu (opens with the system animation).
+/// With a controller connected it opens the navigable PC panel instead, and shows □.
+struct PCToolbarButton: View {
+    @ObservedObject var model: HomeModel
+    @ObservedObject private var device = DeviceStatus.shared
+
+    var body: some View {
+        if device.controllerConnected {
+            Button { model.togglePC() } label: { label }
+                .accessibilityLabel(accessibility)
+        } else {
+            Menu {
+                if !model.pairedHosts.isEmpty {
+                    Section("Your PCs") {
+                        ForEach(model.pairedHosts) { host in
+                            Button { model.onSelectHost?(host.id) } label: {
+                                Label(host.name + (host.online ? "" : " · offline"),
+                                      systemImage: host.id == model.selectedHost ? "checkmark" : "desktopcomputer")
+                            }
+                        }
+                    }
+                }
+                if !model.networkHosts.isEmpty {
+                    Section("On Your Network") {
+                        ForEach(model.networkHosts) { host in
+                            Button { model.onSelectHost?(host.id) } label: {
+                                Label("\(host.name) · pair", systemImage: "link")
+                            }
+                        }
+                    }
+                }
+                Section {
+                    if let host = model.currentHost, host.paired {
+                        Button { model.hostAction("refresh", host) } label: {
+                            Label("Refresh Games", systemImage: "arrow.clockwise")
+                        }
+                    }
+                    Button { model.command("addHost") } label: {
+                        Label("Add PC by Address…", systemImage: "plus")
+                    }
+                }
+            } label: {
+                label
+            }
+            .accessibilityLabel(accessibility)
+        }
+    }
+
+    private var label: some View {
+        HStack(spacing: 6) {
+            ZStack(alignment: .bottomTrailing) {
+                Image(systemName: "desktopcomputer")
+                    .font(.system(size: 16, weight: .semibold))
+                Circle()
+                    .fill(statusColor)
+                    .frame(width: 8, height: 8)
+                    .overlay(Circle().stroke(.black.opacity(0.6), lineWidth: 1.5))
+                    .offset(x: 3, y: 2)
+            }
+            Text(model.currentHost?.name ?? "Choose a PC")
+                .font(.system(size: 14, weight: .semibold))
+                .lineLimit(1)
+            if device.controllerConnected {
+                Image(systemName: PadGlyph.pc)
+                    .font(.system(size: 14))
+                    .foregroundStyle(.secondary)
+            } else {
+                Image(systemName: "chevron.down")
+                    .font(.system(size: 10, weight: .bold))
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .foregroundStyle(.white)
+        .padding(.horizontal, 4)
+    }
+
+    private var statusColor: Color {
+        guard let host = model.currentHost else { return .gray }
+        if !host.paired { return .orange }
+        return host.online ? .green : .gray
+    }
+
+    private var accessibility: String {
+        guard let host = model.currentHost else { return "Choose a PC" }
+        return "PC \(host.name), " + (!host.paired ? "not paired" : (host.online ? "online" : "offline"))
     }
 }
 
@@ -755,156 +953,6 @@ final class GamepadInput {
     }
 }
 
-// MARK: - Top bar: PC, search, status
-
-struct TopBar: View {
-    @ObservedObject var model: HomeModel
-
-    var body: some View {
-        HStack(spacing: 10) {
-            PCButton(model: model)
-            SearchButton(model: model)
-            Spacer(minLength: 8)
-            StatusCluster()
-        }
-        .padding(.horizontal, 20)
-        .padding(.top, 6)
-        .padding(.bottom, 6)
-    }
-}
-
-struct PCButton: View {
-    @ObservedObject var model: HomeModel
-    @ObservedObject private var device = DeviceStatus.shared
-
-    var body: some View {
-        Button { model.togglePC() } label: {
-            HStack(spacing: 8) {
-                ZStack(alignment: .bottomTrailing) {
-                    Image(systemName: "desktopcomputer")
-                        .font(.system(size: 17, weight: .semibold))
-                    Circle()
-                        .fill(statusColor)
-                        .frame(width: 9, height: 9)
-                        .overlay(Circle().stroke(.black.opacity(0.6), lineWidth: 1.5))
-                        .offset(x: 3, y: 2)
-                }
-                if model.pcExpanded {
-                    VStack(alignment: .leading, spacing: 1) {
-                        Text(model.currentHost?.name ?? "Choose a PC")
-                            .font(.system(size: 14, weight: .semibold))
-                            .lineLimit(1)
-                        Text(statusText)
-                            .font(.system(size: 11))
-                            .foregroundStyle(.secondary)
-                    }
-                    .transition(.opacity.combined(with: .move(edge: .leading)))
-                }
-                if device.controllerConnected {
-                    Image(systemName: PadGlyph.pc)
-                        .font(.system(size: 15, weight: .regular))
-                        .foregroundStyle(.secondary)
-                } else {
-                    Image(systemName: model.pcExpanded ? "chevron.up" : "chevron.down")
-                        .font(.system(size: 10, weight: .bold))
-                        .foregroundStyle(.secondary)
-                }
-            }
-            .foregroundStyle(.white)
-            .padding(.horizontal, 12)
-            .frame(height: 40)
-            .glassCapsule()
-        }
-        .buttonStyle(.plain)
-        .gameFocus("pc-button", corner: 20) { model.togglePC() }
-        .accessibilityLabel("PC: \(model.currentHost?.name ?? "none"), \(statusText)")
-        .animation(.spring(response: 0.3, dampingFraction: 0.85), value: model.pcExpanded)
-    }
-
-    private var statusColor: Color {
-        guard let host = model.currentHost else { return .gray }
-        if !host.paired { return .orange }
-        return host.online ? .green : .gray
-    }
-
-    private var statusText: String {
-        guard let host = model.currentHost else { return model.hosts.isEmpty ? "No PCs yet" : "Tap to choose" }
-        return !host.paired ? "Not paired" : (host.online ? "Online" : "Offline")
-    }
-}
-
-/// "Search game" capsule. Tapping it (or △) expands it into the search field, right here in the top bar.
-struct SearchButton: View {
-    @ObservedObject var model: HomeModel
-    @ObservedObject private var device = DeviceStatus.shared
-    @FocusState private var fieldFocused: Bool
-
-    private var searching: Bool { model.tab == .search }
-
-    var body: some View {
-        Group {
-            if searching {
-                HStack(spacing: 8) {
-                    Image(systemName: "magnifyingglass")
-                        .font(.system(size: 15, weight: .semibold))
-                        .foregroundStyle(.secondary)
-                    TextField("Search game", text: $model.searchQuery)
-                        .focused($fieldFocused)
-                        .textInputAutocapitalization(.never)
-                        .autocorrectionDisabled()
-                        .submitLabel(.search)
-                        .onSubmit { model.searchFieldFocused = false }
-                        .font(.system(size: 15, weight: .semibold))
-                    Button { model.closeSearch() } label: {
-                        Image(systemName: "xmark.circle.fill")
-                            .font(.system(size: 17))
-                            .foregroundStyle(.secondary)
-                    }
-                    .buttonStyle(.plain)
-                    .accessibilityLabel("Close search")
-                }
-                .foregroundStyle(.white)
-                .padding(.horizontal, 14)
-                .frame(maxWidth: 460)
-                .frame(height: 40)
-                .glassCapsule()
-                .gameFocus("search-button", corner: 20) { model.searchFieldFocused = true }
-                .transition(.opacity)
-            } else {
-                Button { model.openSearch(fromController: false) } label: {
-                    HStack(spacing: 8) {
-                        Image(systemName: "magnifyingglass")
-                            .font(.system(size: 15, weight: .semibold))
-                        Text("Search game")
-                            .font(.system(size: 15, weight: .semibold))
-                        if device.controllerConnected {
-                            Image(systemName: PadGlyph.search)
-                                .font(.system(size: 15, weight: .regular))
-                                .foregroundStyle(.secondary)
-                        }
-                    }
-                    .foregroundStyle(.white)
-                    .padding(.horizontal, 14)
-                    .frame(height: 40)
-                    .glassCapsule()
-                }
-                .buttonStyle(.plain)
-                .gameFocus("search-button", corner: 20) { model.openSearch(fromController: true) }
-                .transition(.opacity)
-            }
-        }
-        .animation(.spring(response: 0.3, dampingFraction: 0.85), value: searching)
-        .onAppear { fieldFocused = model.searchFieldFocused }
-        .onChange(of: model.searchFieldFocused) { focused in
-            // Give the expanding field a moment to appear before raising the keyboard
-            DispatchQueue.main.asyncAfter(deadline: .now() + (focused ? 0.05 : 0)) { fieldFocused = focused }
-        }
-        .onChange(of: fieldFocused) { focused in
-            if model.searchFieldFocused != focused { model.searchFieldFocused = focused }
-        }
-    }
-}
-
 /// The PC list that drops down from the PC button
 struct PCDropdown: View {
     @ObservedObject var model: HomeModel
@@ -951,8 +999,8 @@ struct PCDropdown: View {
             .padding(12)
             .frame(width: 280)
             .modifier(PanelGlass(corner: 22))
-            .padding(.leading, 20)
-            .padding(.top, 56)
+            .padding(.leading, 16)
+            .padding(.top, 50)
         }
         .transition(.opacity)
     }
@@ -1058,58 +1106,6 @@ struct PanelGlass: ViewModifier {
         } else {
             content.background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: corner, style: .continuous))
         }
-    }
-}
-
-// MARK: - Tab bar
-
-/// Home / Library / Settings: an always-visible Liquid Glass tab bar, centred like the system one.
-/// With a controller connected, L1 / R1 switch tabs and their glyphs show at the ends.
-struct StarlightTabBar: View {
-    @ObservedObject var model: HomeModel
-    @ObservedObject private var device = DeviceStatus.shared
-
-    var body: some View {
-        HStack(spacing: 2) {
-            if device.controllerConnected {
-                Image(systemName: PadGlyph.leftShoulder)
-                    .font(.system(size: 17))
-                    .foregroundStyle(.secondary)
-                    .padding(.horizontal, 10)
-                    .accessibilityHidden(true)
-            }
-            ForEach(StarlightTab.barTabs, id: \.self) { tab in
-                Button { model.select(tab) } label: {
-                    HStack(spacing: 6) {
-                        Image(systemName: tab.symbol)
-                            .font(.system(size: 17, weight: .semibold))
-                        Text(tab.title)
-                            .font(.system(size: 15, weight: .semibold))
-                    }
-                    .foregroundStyle(model.tab == tab ? starlightGold : .white)
-                    .padding(.horizontal, 16)
-                    .frame(height: 44)
-                    .background {
-                        if model.tab == tab {
-                            Capsule().fill(Color.white.opacity(0.16))
-                        }
-                    }
-                    .contentShape(Capsule())
-                }
-                .buttonStyle(.plain)
-                .accessibilityAddTraits(model.tab == tab ? .isSelected : [])
-            }
-            if device.controllerConnected {
-                Image(systemName: PadGlyph.rightShoulder)
-                    .font(.system(size: 17))
-                    .foregroundStyle(.secondary)
-                    .padding(.horizontal, 10)
-                    .accessibilityHidden(true)
-            }
-        }
-        .padding(4)
-        .glassCapsule()
-        .animation(.easeInOut(duration: 0.2), value: model.tab)
     }
 }
 
@@ -1276,9 +1272,22 @@ struct StatusCluster: View {
         .foregroundStyle(.white)
         .lineLimit(1)
         .fixedSize()
-        .padding(.horizontal, 16)
-        .frame(height: 40)
-        .glassCapsule()
+        .padding(.horizontal, 6)
+        .modifier(ToolbarItemGlass())
+    }
+}
+
+/// iOS 26 wraps navigation bar items in Liquid Glass itself; earlier versions get a material capsule
+struct ToolbarItemGlass: ViewModifier {
+    func body(content: Content) -> some View {
+        if #available(iOS 26.0, *) {
+            content
+        } else {
+            content
+                .padding(.horizontal, 8)
+                .padding(.vertical, 4)
+                .background(.ultraThinMaterial, in: Capsule())
+        }
     }
 }
 
@@ -1878,7 +1887,7 @@ struct SettingsTab: View {
             }
             .navigationTitle("Settings")
             .navigationBarTitleDisplayMode(.inline)
-            .safeAreaInset(edge: .bottom) { Color.clear.frame(height: 56) }
+            .starlightStatusToolbar()
         }
         .navigationViewStyle(.stack)
     }
