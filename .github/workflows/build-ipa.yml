@@ -27,8 +27,8 @@ jobs:
         with:
           submodules: recursive
 
-      - name: Download iOS platform
-        run: xcodebuild -downloadPlatform iOS
+      - name: Show Xcode version
+        run: xcodebuild -version
 
       - name: Build (Release, iphoneos, unsigned)
         run: |
