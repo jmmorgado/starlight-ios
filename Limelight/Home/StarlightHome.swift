@@ -252,11 +252,14 @@ final class HomeModel: ObservableObject {
             previousTab = tab
             tab = .search
         }
-        if fromController {
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { GameFocus.shared.focus("search-field") }
-        } else {
-            searchFieldFocused = true
-        }
+        GameFocus.shared.focus("search-button")
+        searchFieldFocused = true
+    }
+
+    func closeSearch() {
+        searchFieldFocused = false
+        searchQuery = ""
+        select(previousTab == .search ? .home : previousTab)
     }
 
     func expandTabBar() {
@@ -288,7 +291,9 @@ final class HomeModel: ObservableObject {
     func switchTab(by delta: Int) {
         let tabs = StarlightTab.barTabs
         let index = tabs.firstIndex(of: tab) ?? 0
-        select(tabs[(index + delta + tabs.count) % tabs.count])
+        // From Search, L1/R1 continue from the tab you came from
+        let base = tab == .search ? (tabs.firstIndex(of: previousTab) ?? 0) : index
+        select(tabs[(base + delta + tabs.count) % tabs.count])
         flashWork?.cancel()
         tabBarFlash = true
         let work = DispatchWorkItem { [weak self] in self?.tabBarFlash = false }
@@ -330,12 +335,12 @@ final class HomeModel: ObservableObject {
             } else if tabBarFocused {
                 unfocusTabBar()
             } else if tab == .search {
-                select(previousTab == .search ? .home : previousTab)
+                closeSearch()
             }
         case .search: openSearch(fromController: true)
         case .pc: togglePC()
         case .options:
-            if tabBarFocused { unfocusTabBar() } else { focusTabBar() }
+            break
         case .previousTab: switchTab(by: -1)
         case .nextTab: switchTab(by: 1)
         }
@@ -479,7 +484,7 @@ struct HomeRootView: View {
                 }
 
             StarlightTabBar(model: model)
-                .padding(.leading, 20)
+                .frame(maxWidth: .infinity)
                 .padding(.bottom, 6)
 
             if model.pcExpanded {
@@ -828,30 +833,75 @@ struct PCButton: View {
     }
 }
 
+/// "Search game" capsule. Tapping it (or △) expands it into the search field, right here in the top bar.
 struct SearchButton: View {
     @ObservedObject var model: HomeModel
     @ObservedObject private var device = DeviceStatus.shared
+    @FocusState private var fieldFocused: Bool
+
+    private var searching: Bool { model.tab == .search }
 
     var body: some View {
-        Button { model.openSearch(fromController: false) } label: {
-            HStack(spacing: 8) {
-                Image(systemName: "magnifyingglass")
-                    .font(.system(size: 15, weight: .semibold))
-                Text("Search game")
-                    .font(.system(size: 15, weight: .semibold))
-                if device.controllerConnected {
-                    Image(systemName: PadGlyph.search)
-                        .font(.system(size: 15, weight: .regular))
+        Group {
+            if searching {
+                HStack(spacing: 8) {
+                    Image(systemName: "magnifyingglass")
+                        .font(.system(size: 15, weight: .semibold))
                         .foregroundStyle(.secondary)
+                    TextField("Search game", text: $model.searchQuery)
+                        .focused($fieldFocused)
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled()
+                        .submitLabel(.search)
+                        .onSubmit { model.searchFieldFocused = false }
+                        .font(.system(size: 15, weight: .semibold))
+                    Button { model.closeSearch() } label: {
+                        Image(systemName: "xmark.circle.fill")
+                            .font(.system(size: 17))
+                            .foregroundStyle(.secondary)
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Close search")
                 }
+                .foregroundStyle(.white)
+                .padding(.horizontal, 14)
+                .frame(maxWidth: 460)
+                .frame(height: 40)
+                .glassCapsule()
+                .gameFocus("search-button", corner: 20) { model.searchFieldFocused = true }
+                .transition(.opacity)
+            } else {
+                Button { model.openSearch(fromController: false) } label: {
+                    HStack(spacing: 8) {
+                        Image(systemName: "magnifyingglass")
+                            .font(.system(size: 15, weight: .semibold))
+                        Text("Search game")
+                            .font(.system(size: 15, weight: .semibold))
+                        if device.controllerConnected {
+                            Image(systemName: PadGlyph.search)
+                                .font(.system(size: 15, weight: .regular))
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 14)
+                    .frame(height: 40)
+                    .glassCapsule()
+                }
+                .buttonStyle(.plain)
+                .gameFocus("search-button", corner: 20) { model.openSearch(fromController: true) }
+                .transition(.opacity)
             }
-            .foregroundStyle(.white)
-            .padding(.horizontal, 14)
-            .frame(height: 40)
-            .glassCapsule()
         }
-        .buttonStyle(.plain)
-        .gameFocus("search-button", corner: 20) { model.openSearch(fromController: true) }
+        .animation(.spring(response: 0.3, dampingFraction: 0.85), value: searching)
+        .onAppear { fieldFocused = model.searchFieldFocused }
+        .onChange(of: model.searchFieldFocused) { focused in
+            // Give the expanding field a moment to appear before raising the keyboard
+            DispatchQueue.main.asyncAfter(deadline: .now() + (focused ? 0.05 : 0)) { fieldFocused = focused }
+        }
+        .onChange(of: fieldFocused) { focused in
+            if model.searchFieldFocused != focused { model.searchFieldFocused = focused }
+        }
     }
 }
 
@@ -1013,76 +1063,53 @@ struct PanelGlass: ViewModifier {
 
 // MARK: - Tab bar
 
-/// Home / Library / Settings. Collapses to the current tab's icon when scrolling down or when a
-/// controller is connected (then it also shows the Options glyph). Options focuses it, L1/R1 switch tabs.
+/// Home / Library / Settings: an always-visible Liquid Glass tab bar, centred like the system one.
+/// With a controller connected, L1 / R1 switch tabs and their glyphs show at the ends.
 struct StarlightTabBar: View {
     @ObservedObject var model: HomeModel
     @ObservedObject private var device = DeviceStatus.shared
 
-    private var expanded: Bool {
-        if model.tabBarFocused || model.tabBarFlash { return true }
-        if device.controllerConnected { return false }
-        return !model.tabBarCollapsedByScroll
-    }
-
     var body: some View {
-        Group {
-            if expanded {
-                HStack(spacing: 4) {
-                    if device.controllerConnected {
-                        Image(systemName: PadGlyph.leftShoulder)
-                            .font(.system(size: 16))
-                            .foregroundStyle(.secondary)
-                            .padding(.horizontal, 6)
-                    }
-                    ForEach(StarlightTab.barTabs, id: \.self) { tab in
-                        Button { model.select(tab) } label: {
-                            HStack(spacing: 6) {
-                                Image(systemName: tab.symbol)
-                                Text(tab.title)
-                            }
-                            .font(.system(size: 15, weight: .semibold))
-                            .foregroundStyle(model.tab == tab ? starlightGold : .white)
-                            .padding(.horizontal, 14)
-                            .frame(height: 40)
-                            .background(model.tab == tab ? Color.white.opacity(0.14) : .clear, in: Capsule())
-                            .contentShape(Capsule())
-                        }
-                        .buttonStyle(.plain)
-                        .gameFocus("tab-\(tab.rawValue)", scope: "tabbar", corner: 20) { model.select(tab) }
-                    }
-                    if device.controllerConnected {
-                        Image(systemName: PadGlyph.rightShoulder)
-                            .font(.system(size: 16))
-                            .foregroundStyle(.secondary)
-                            .padding(.horizontal, 6)
-                    }
-                }
-                .padding(5)
-                .glassCapsule()
-                .transition(.scale(scale: 0.6, anchor: .leading).combined(with: .opacity))
-            } else {
-                Button { model.expandTabBar() } label: {
-                    HStack(spacing: 8) {
-                        Image(systemName: model.tab.symbol)
+        HStack(spacing: 2) {
+            if device.controllerConnected {
+                Image(systemName: PadGlyph.leftShoulder)
+                    .font(.system(size: 17))
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, 10)
+                    .accessibilityHidden(true)
+            }
+            ForEach(StarlightTab.barTabs, id: \.self) { tab in
+                Button { model.select(tab) } label: {
+                    HStack(spacing: 6) {
+                        Image(systemName: tab.symbol)
                             .font(.system(size: 17, weight: .semibold))
-                            .foregroundStyle(starlightGold)
-                        if device.controllerConnected {
-                            Image(systemName: PadGlyph.options)
-                                .font(.system(size: 16))
-                                .foregroundStyle(.secondary)
+                        Text(tab.title)
+                            .font(.system(size: 15, weight: .semibold))
+                    }
+                    .foregroundStyle(model.tab == tab ? starlightGold : .white)
+                    .padding(.horizontal, 16)
+                    .frame(height: 44)
+                    .background {
+                        if model.tab == tab {
+                            Capsule().fill(Color.white.opacity(0.16))
                         }
                     }
-                    .padding(.horizontal, 14)
-                    .frame(height: 46)
-                    .glassCapsule()
+                    .contentShape(Capsule())
                 }
                 .buttonStyle(.plain)
-                .accessibilityLabel("\(model.tab.title) tab, show tabs")
-                .transition(.scale(scale: 0.6, anchor: .leading).combined(with: .opacity))
+                .accessibilityAddTraits(model.tab == tab ? .isSelected : [])
+            }
+            if device.controllerConnected {
+                Image(systemName: PadGlyph.rightShoulder)
+                    .font(.system(size: 17))
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, 10)
+                    .accessibilityHidden(true)
             }
         }
-        .animation(.spring(response: 0.35, dampingFraction: 0.85), value: expanded)
+        .padding(4)
+        .glassCapsule()
+        .animation(.easeInOut(duration: 0.2), value: model.tab)
     }
 }
 
@@ -1754,7 +1781,6 @@ struct GameGrid: View {
 
 struct SearchTab: View {
     @ObservedObject var model: HomeModel
-    @FocusState private var fieldFocused: Bool
 
     private var results: [GameItem] {
         let all = model.libraryGames
@@ -1764,33 +1790,7 @@ struct SearchTab: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 8) {
-                Image(systemName: "magnifyingglass")
-                    .foregroundStyle(.secondary)
-                TextField("Games on \(model.currentHost?.name ?? "your PC")", text: $model.searchQuery)
-                    .focused($fieldFocused)
-                    .textInputAutocapitalization(.never)
-                    .autocorrectionDisabled()
-                    .submitLabel(.search)
-                    .onSubmit { model.searchFieldFocused = false }
-                if !model.searchQuery.isEmpty {
-                    Button { model.searchQuery = "" } label: {
-                        Image(systemName: "xmark.circle.fill")
-                            .foregroundStyle(.secondary)
-                    }
-                    .buttonStyle(.plain)
-                    .accessibilityLabel("Clear search")
-                }
-            }
-            .font(.system(size: 16))
-            .padding(.horizontal, 16)
-            .frame(height: 44)
-            .glassCapsule()
-            .gameFocus("search-field", corner: 22) { model.searchFieldFocused = true }
-            .padding(.horizontal, 24)
-            .padding(.top, 4)
-
+        Group {
             if model.games.isEmpty {
                 EmptyStateView(model: model)
             } else if results.isEmpty {
@@ -1805,11 +1805,6 @@ struct SearchTab: View {
             } else {
                 GameGrid(prefix: "search", games: results, model: model)
             }
-        }
-        .onAppear { fieldFocused = model.searchFieldFocused }
-        .onChange(of: model.searchFieldFocused) { fieldFocused = $0 }
-        .onChange(of: fieldFocused) { focused in
-            if model.searchFieldFocused != focused { model.searchFieldFocused = focused }
         }
     }
 }

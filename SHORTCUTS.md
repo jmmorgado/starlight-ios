@@ -7,11 +7,11 @@
   Os jogos fixados aparecem sempre primeiro.
 - **Library:** todos os jogos do PC (capas verticais).
 - **Barra de cima:** botão do PC (toca para ver o nome e os PCs), **Search game** e, à direita, relógio, comando (PlayStation/Xbox), rede e bateria.
-- **Barra de abas:** encolhe ao fazer scroll ou com comando ligado.
+- **Barra de abas:** sempre visível, em baixo ao centro; com comando, L1/R1 mudam de aba.
 
 ## Navegar com comando
 - **Cruz / stick esquerdo:** mexer · **✕:** escolher · **○:** voltar
-- **△:** pesquisa · **□:** PC · **Options:** barra de abas · **L1/R1:** mudar de aba
+- **△:** pesquisa (escreve-se na própria barra de cima) · **□:** PC · **L1/R1:** mudar de aba
 - No stream: **Options + Share** (toque) = Guide no PC; mantidos 1 s = painel do stream.
 - **Settings:** ecrãs nativos para **Stream Settings**, cada **PC** (emparelhar, acordar, atualizar jogos,
   mostrar jogos escondidos, testar rede, remover), **Game Artwork** (SteamGridDB) e **About**.
