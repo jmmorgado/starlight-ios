@@ -402,6 +402,12 @@ final class HomeModel: ObservableObject {
         case .right: focus.move(.right)
         case .confirm: focus.activate()
         case .back:
+            // A Settings text field being edited: ○ closes the keyboard first
+            if focus.textEditing {
+                focus.textEditing = false
+                UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
+                return
+            }
             if searchFieldFocused {
                 searchFieldFocused = false
             } else if gameMenu != nil {
@@ -410,6 +416,8 @@ final class HomeModel: ObservableObject {
                 closePC()
             } else if detail != nil {
                 closeDetail()
+            } else if focus.handleBack() {
+                break
             } else if tabBarFocused {
                 unfocusTabBar()
             } else if tab == .search {
@@ -857,6 +865,26 @@ final class GameFocus: ObservableObject {
     var activeScope: String { scopes.last ?? "main" }
 
     private var grids: [String: (ids: [String], columns: Int)] = [:]
+    private var adjusters: [String: (Int) -> Void] = [:]
+    /// A Settings text field has the keyboard up
+    var textEditing = false
+    private var backHandlers: [String: () -> Void] = [:]
+
+    func registerAdjust(_ id: String, _ adjust: ((Int) -> Void)?) -> Bool {
+        adjusters[id] = adjust
+        return true
+    }
+
+    func setBack(_ scope: String, _ handler: (() -> Void)?) {
+        backHandlers[scope] = handler
+    }
+
+    /// ○ on a pushed Settings screen goes back
+    func handleBack() -> Bool {
+        guard let handler = backHandlers[activeScope] else { return false }
+        handler()
+        return true
+    }
 
     func registerGrid(_ name: String, ids: [String], columns: Int) -> Bool {
         grids[name] = (ids, columns)
@@ -898,6 +926,12 @@ final class GameFocus: ObservableObject {
     }
 
     func move(_ direction: Direction) {
+        // ← / → change the value of the focused setting instead of moving
+        if (direction == .left || direction == .right), let id = focusedID,
+           candidates.contains(where: { $0.id == id }), let adjust = adjusters[id] {
+            adjust(direction == .left ? -1 : 1)
+            return
+        }
         if let id = focusedID, activeScope == "main",
            let grid = grids.values.first(where: { $0.ids.contains(id) }), let index = grid.ids.firstIndex(of: id) {
             var target = index
@@ -961,11 +995,14 @@ struct GameFocusModifier: ViewModifier {
     let scope: String
     let corner: CGFloat
     let action: () -> Void
+    var scales = true
+    var adjust: ((Int) -> Void)? = nil
     @ObservedObject private var focus = GameFocus.shared
     @ObservedObject private var device = DeviceStatus.shared
 
     func body(content: Content) -> some View {
         let _ = focus.register(id, action)
+        let _ = focus.registerAdjust(id, adjust)
         let focused = device.controllerConnected && focus.activeScope == scope && focus.focusedID == id
         content
             .background(
@@ -979,9 +1016,44 @@ struct GameFocusModifier: ViewModifier {
                     .stroke(starlightGold, lineWidth: focused ? 3 : 0)
                     .padding(-4)
             )
-            .scaleEffect(focused ? 1.04 : 1)
+            .scaleEffect(focused && scales ? 1.04 : 1)
             .animation(.easeOut(duration: 0.12), value: focused)
             .id(id)
+    }
+}
+
+extension View {
+    /// A Settings row reachable with the controller: ✕ runs `action`, ← / → call `adjust` (pickers, sliders, switches)
+    func settingsFocus(_ id: String, scope: String, adjust: ((Int) -> Void)? = nil, action: @escaping () -> Void) -> some View {
+        self.frame(maxWidth: .infinity, alignment: .leading)
+            .contentShape(Rectangle())
+            .modifier(GameFocusModifier(id: id, scope: scope, corner: 10, action: action, scales: false, adjust: adjust))
+    }
+
+    /// A pushed Settings screen: its own focus scope, and ○ goes back
+    func settingsScreen(_ scope: String, dismiss: DismissAction) -> some View {
+        self
+            .onAppear {
+                GameFocus.shared.push(scope)
+                GameFocus.shared.setBack(scope) { dismiss() }
+            }
+            .onDisappear {
+                GameFocus.shared.setBack(scope, nil)
+                GameFocus.shared.pop(scope)
+            }
+    }
+}
+
+/// Scrolls a List/Form to the row the controller is on
+struct FocusScrollFollower: ViewModifier {
+    let proxy: ScrollViewProxy
+    @ObservedObject private var focus = GameFocus.shared
+
+    func body(content: Content) -> some View {
+        content.onChange(of: focus.focusedID) { id in
+            guard let id = id else { return }
+            withAnimation(.easeInOut(duration: 0.2)) { proxy.scrollTo(id, anchor: .center) }
+        }
     }
 }
 
@@ -2333,6 +2405,9 @@ struct SearchTab: View {
 
 struct SettingsTab: View {
     @ObservedObject var model: HomeModel
+    @ObservedObject private var steam = SteamManager.shared
+    /// The screen pushed from the root (also set by ✕ on the controller)
+    @State private var route: String?
 
     private var version: String {
         let info = Bundle.main.infoDictionary
@@ -2343,66 +2418,74 @@ struct SettingsTab: View {
 
     var body: some View {
         NavigationView {
-            List {
-                Section("Streaming") {
-                    NavigationLink {
-                        StreamSettingsView(model: model)
-                    } label: {
-                        Label("Stream Settings", systemImage: "slider.horizontal.3")
+            ScrollViewReader { proxy in
+                List {
+                    Section("Streaming") {
+                        NavigationLink(tag: "stream", selection: $route) {
+                            StreamSettingsView(model: model)
+                        } label: {
+                            Label("Stream Settings", systemImage: "slider.horizontal.3")
+                        }
+                        .settingsFocus("set-stream", scope: "main") { route = "stream" }
                     }
-                }
 
-                Section("PCs") {
-                    ForEach(model.hosts) { host in
-                        NavigationLink {
-                            HostDetailView(model: model, hostId: host.id)
+                    Section("PCs") {
+                        ForEach(model.hosts) { host in
+                            NavigationLink(tag: "pc-\(host.id)", selection: $route) {
+                                HostDetailView(model: model, hostId: host.id)
+                            } label: {
+                                HStack {
+                                    Label(host.name, systemImage: "desktopcomputer")
+                                    Spacer()
+                                    Text(host.paired ? (host.online ? "Online" : "Offline") : "Not paired")
+                                        .foregroundStyle(.secondary)
+                                }
+                            }
+                            .settingsFocus("set-pc-\(host.id)", scope: "main") { route = "pc-\(host.id)" }
+                        }
+                        Button { model.command("addHost") } label: {
+                            Label("Add PC by Address…", systemImage: "plus")
+                        }
+                        .settingsFocus("set-addpc", scope: "main") { model.command("addHost") }
+                    }
+
+                    Section("Accounts") {
+                        NavigationLink(tag: "steam", selection: $route) {
+                            SteamSettingsView()
+                        } label: {
+                            SteamSettingsRow()
+                        }
+                        .settingsFocus("set-steam", scope: "main") { route = "steam" }
+                    }
+
+                    Section("Appearance") {
+                        NavigationLink(tag: "artwork", selection: $route) {
+                            ArtworkSettingsView(model: model)
                         } label: {
                             HStack {
-                                Label(host.name, systemImage: "desktopcomputer")
+                                Label("Game Artwork", systemImage: "photo.on.rectangle.angled")
                                 Spacer()
-                                Text(host.paired ? (host.online ? "Online" : "Offline") : "Not paired")
+                                Text(model.artworkConfigured ? "SteamGridDB" : "Not set up")
                                     .foregroundStyle(.secondary)
                             }
                         }
+                        .settingsFocus("set-artwork", scope: "main") { route = "artwork" }
                     }
-                    Button { model.command("addHost") } label: {
-                        Label("Add PC by Address…", systemImage: "plus")
-                    }
-                }
 
-                Section("Accounts") {
-                    NavigationLink {
-                        SteamSettingsView()
-                    } label: {
-                        SteamSettingsRow()
-                    }
-                }
-
-                Section("Appearance") {
-                    NavigationLink {
-                        ArtworkSettingsView(model: model)
-                    } label: {
+                    Section {
                         HStack {
-                            Label("Game Artwork", systemImage: "photo.on.rectangle.angled")
+                            Text("Version")
                             Spacer()
-                            Text(model.artworkConfigured ? "SteamGridDB" : "Not set up")
-                                .foregroundStyle(.secondary)
+                            Text(version).foregroundStyle(.secondary)
                         }
+                        Text("Starlight is based on Moonlight by the Moonlight Game Streaming Project, licensed under the GNU GPL v3.")
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                    } header: {
+                        Text("About")
                     }
                 }
-
-                Section {
-                    HStack {
-                        Text("Version")
-                        Spacer()
-                        Text(version).foregroundStyle(.secondary)
-                    }
-                    Text("Starlight is based on Moonlight by the Moonlight Game Streaming Project, licensed under the GNU GPL v3.")
-                        .font(.footnote)
-                        .foregroundStyle(.secondary)
-                } header: {
-                    Text("About")
-                }
+                .modifier(FocusScrollFollower(proxy: proxy))
             }
             .navigationTitle("Settings")
             .navigationBarTitleDisplayMode(.inline)
@@ -2417,69 +2500,96 @@ struct SettingsTab: View {
 struct HostDetailView: View {
     @ObservedObject var model: HomeModel
     let hostId: String
+    @Environment(\.dismiss) private var dismiss
     @State private var confirmRemove = false
+    /// Controller: Remove PC needs a second ✕ (dialogs can't be driven by a controller)
+    @State private var removeArmed = false
+    @ObservedObject private var focus = GameFocus.shared
 
     private var host: HostItem? { model.hosts.first { $0.id == hostId } }
+    private let scope = "settings-pc"
 
     var body: some View {
-        List {
-            if let host = host {
-                Section {
-                    HStack {
-                        Text("Status")
-                        Spacer()
-                        Text(host.paired ? (host.online ? "Online" : "Offline") : "Not paired")
-                            .foregroundStyle(.secondary)
-                    }
-                    if !host.address.isEmpty {
+        ScrollViewReader { proxy in
+            List {
+                if let host = host {
+                    Section {
                         HStack {
-                            Text("Address")
+                            Text("Status")
                             Spacer()
-                            Text(host.address).foregroundStyle(.secondary)
+                            Text(host.paired ? (host.online ? "Online" : "Offline") : "Not paired")
+                                .foregroundStyle(.secondary)
                         }
-                    }
-                }
-
-                Section {
-                    if !host.paired {
-                        Button { model.hostAction("pair", host) } label: {
-                            Label("Pair", systemImage: "link")
-                        }
-                    } else {
-                        if host.id != model.selectedHost {
-                            Button { model.onSelectHost?(host.id) } label: {
-                                Label("Use This PC", systemImage: "checkmark.circle")
+                        if !host.address.isEmpty {
+                            HStack {
+                                Text("Address")
+                                Spacer()
+                                Text(host.address).foregroundStyle(.secondary)
                             }
                         }
-                        Button { model.hostAction("refresh", host) } label: {
-                            Label("Refresh Games", systemImage: "arrow.clockwise")
-                        }
-                        Toggle(isOn: Binding(get: { host.showHidden },
-                                             set: { _ in model.hostAction("toggleHidden", host) })) {
-                            Label("Show Hidden Games", systemImage: "eye")
-                        }
                     }
-                    if !host.online {
-                        Button { model.hostAction("wake", host) } label: {
-                            Label("Wake PC", systemImage: "power")
-                        }
-                    }
-                    Button { model.hostAction("testNetwork", host) } label: {
-                        Label("Test Network", systemImage: "network")
-                    }
-                }
 
-                Section {
-                    Button(role: .destructive) { confirmRemove = true } label: {
-                        Label("Remove PC", systemImage: "trash")
+                    Section {
+                        if !host.paired {
+                            Button { model.hostAction("pair", host) } label: {
+                                Label("Pair", systemImage: "link")
+                            }
+                            .settingsFocus("pc-pair", scope: scope) { model.hostAction("pair", host) }
+                        } else {
+                            if host.id != model.selectedHost {
+                                Button { model.onSelectHost?(host.id) } label: {
+                                    Label("Use This PC", systemImage: "checkmark.circle")
+                                }
+                                .settingsFocus("pc-use", scope: scope) { model.onSelectHost?(host.id) }
+                            }
+                            Button { model.hostAction("refresh", host) } label: {
+                                Label("Refresh Games", systemImage: "arrow.clockwise")
+                            }
+                            .settingsFocus("pc-refresh", scope: scope) { model.hostAction("refresh", host) }
+                            Toggle(isOn: Binding(get: { host.showHidden },
+                                                 set: { _ in model.hostAction("toggleHidden", host) })) {
+                                Label("Show Hidden Games", systemImage: "eye")
+                            }
+                            .settingsFocus("pc-hidden", scope: scope, adjust: { delta in
+                                if (delta > 0) != host.showHidden { model.hostAction("toggleHidden", host) }
+                            }) { model.hostAction("toggleHidden", host) }
+                        }
+                        if !host.online {
+                            Button { model.hostAction("wake", host) } label: {
+                                Label("Wake PC", systemImage: "power")
+                            }
+                            .settingsFocus("pc-wake", scope: scope) { model.hostAction("wake", host) }
+                        }
+                        Button { model.hostAction("testNetwork", host) } label: {
+                            Label("Test Network", systemImage: "network")
+                        }
+                        .settingsFocus("pc-test", scope: scope) { model.hostAction("testNetwork", host) }
                     }
+
+                    Section {
+                        Button(role: .destructive) { confirmRemove = true } label: {
+                            Label(removeArmed ? "Press again to remove \(host.name)" : "Remove PC", systemImage: "trash")
+                        }
+                        .settingsFocus("pc-remove", scope: scope) {
+                            if removeArmed {
+                                model.hostAction("remove", host)
+                            } else {
+                                removeArmed = true
+                            }
+                        }
+                    }
+                } else {
+                    Text("This PC was removed.")
+                        .foregroundStyle(.secondary)
                 }
-            } else {
-                Text("This PC was removed.")
-                    .foregroundStyle(.secondary)
             }
+            .modifier(FocusScrollFollower(proxy: proxy))
         }
         .navigationTitle(host?.name ?? "PC")
+        .settingsScreen(scope, dismiss: dismiss)
+        .onChange(of: focus.focusedID) { id in
+            if id != "pc-remove" { removeArmed = false }
+        }
         .confirmationDialog("Remove \(host?.name ?? "this PC")?", isPresented: $confirmRemove, titleVisibility: .visible) {
             Button("Remove PC", role: .destructive) {
                 if let host = host { model.hostAction("remove", host) }
@@ -2494,42 +2604,71 @@ struct HostDetailView: View {
 
 struct ArtworkSettingsView: View {
     @ObservedObject var model: HomeModel
+    @Environment(\.dismiss) private var dismiss
     @State private var key = ""
     @State private var confirmRemove = false
+    @State private var removeArmed = false
+    @FocusState private var keyFocused: Bool
+    @ObservedObject private var focus = GameFocus.shared
+    private let scope = "settings-artwork"
+
+    private func saveKey() {
+        model.onArtworkCommand?("save", key)
+        key = ""
+    }
 
     var body: some View {
-        Form {
-            Section {
-                SecureField(model.artworkConfigured ? "New API key (optional)" : "SteamGridDB API key", text: $key)
-                    .textInputAutocapitalization(.never)
-                    .autocorrectionDisabled()
-                Button {
-                    model.onArtworkCommand?("save", key)
-                    key = ""
-                } label: {
-                    Label(model.artworkConfigured ? "Download Missing Artwork" : "Save Key & Download", systemImage: "arrow.down.circle")
-                }
-                .disabled(!model.artworkConfigured && key.isEmpty)
-            } header: {
-                Text("SteamGridDB")
-            } footer: {
-                Text(model.artworkConfigured
-                     ? "Key saved (…\(model.artworkKeySuffix)). New games get artwork automatically."
-                     : "Covers, backgrounds, logos and icons come from steamgriddb.com. Sign in there, open Preferences → API, generate a key and paste it here. It's stored only on this device.")
-            }
-
-            if model.artworkConfigured {
+        ScrollViewReader { proxy in
+            Form {
                 Section {
-                    Button { model.onArtworkCommand?("redownload", "") } label: {
-                        Label("Re-download All Artwork", systemImage: "arrow.triangle.2.circlepath")
+                    SecureField(model.artworkConfigured ? "New API key (optional)" : "SteamGridDB API key", text: $key)
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled()
+                        .focused($keyFocused)
+                        .settingsFocus("art-key", scope: scope) { keyFocused = true }
+                    Button(action: saveKey) {
+                        Label(model.artworkConfigured ? "Download Missing Artwork" : "Save Key & Download", systemImage: "arrow.down.circle")
                     }
-                    Button(role: .destructive) { confirmRemove = true } label: {
-                        Label("Remove Key & Artwork", systemImage: "trash")
+                    .disabled(!model.artworkConfigured && key.isEmpty)
+                    .settingsFocus("art-save", scope: scope) {
+                        if model.artworkConfigured || !key.isEmpty { saveKey() }
+                    }
+                } header: {
+                    Text("SteamGridDB")
+                } footer: {
+                    Text(model.artworkConfigured
+                         ? "Key saved (…\(model.artworkKeySuffix)). New games get artwork automatically."
+                         : "Covers, backgrounds, logos and icons come from steamgriddb.com. Sign in there, open Preferences → API, generate a key and paste it here. It's stored only on this device.")
+                }
+
+                if model.artworkConfigured {
+                    Section {
+                        Button { model.onArtworkCommand?("redownload", "") } label: {
+                            Label("Re-download All Artwork", systemImage: "arrow.triangle.2.circlepath")
+                        }
+                        .settingsFocus("art-redownload", scope: scope) { model.onArtworkCommand?("redownload", "") }
+                        Button(role: .destructive) { confirmRemove = true } label: {
+                            Label(removeArmed ? "Press again to remove" : "Remove Key & Artwork", systemImage: "trash")
+                        }
+                        .settingsFocus("art-remove", scope: scope) {
+                            if removeArmed {
+                                model.onArtworkCommand?("remove", "")
+                                removeArmed = false
+                            } else {
+                                removeArmed = true
+                            }
+                        }
                     }
                 }
             }
+            .modifier(FocusScrollFollower(proxy: proxy))
         }
         .navigationTitle("Game Artwork")
+        .onChange(of: keyFocused) { focus.textEditing = $0 }
+        .settingsScreen(scope, dismiss: dismiss)
+        .onChange(of: focus.focusedID) { id in
+            if id != "art-remove" { removeArmed = false }
+        }
         .confirmationDialog("Remove the SteamGridDB key and downloaded artwork?", isPresented: $confirmRemove, titleVisibility: .visible) {
             Button("Remove", role: .destructive) { model.onArtworkCommand?("remove", "") }
         }
@@ -2544,6 +2683,20 @@ struct ArtworkSettingsView: View {
 /// plus read-only resolutions ([{label, width, height}]) and maxFramerate.
 struct StreamSettingsView: View {
     @ObservedObject var model: HomeModel
+    @Environment(\.dismiss) private var dismiss
+    @FocusState private var customField: Int?
+    private let scope = "settings-stream"
+
+    /// Next / previous value in a list (wraps around for ✕)
+    private func step<T: Equatable>(_ value: inout T, in options: [T], by delta: Int, wrap: Bool = false) {
+        guard let index = options.firstIndex(of: value) else { value = options.first ?? value; return }
+        var next = index + delta
+        if wrap { next = (next + options.count) % options.count }
+        next = min(max(next, 0), options.count - 1)
+        value = options[next]
+    }
+
+    private var framerates: [Int] { maxFramerate >= 120 ? [30, 60, 120] : [30, 60] }
 
     @State private var loaded = false
     @State private var resolutions: [ResolutionOption] = []
@@ -2574,6 +2727,7 @@ struct StreamSettingsView: View {
     private var customIndex: Int { resolutions.count }
 
     var body: some View {
+        ScrollViewReader { proxy in
         Form {
             Section("Video") {
                 Picker("Resolution", selection: $resolutionIndex) {
@@ -2582,12 +2736,18 @@ struct StreamSettingsView: View {
                     }
                     Text("Custom").tag(customIndex)
                 }
+                .settingsFocus("st-res", scope: scope, adjust: { step(&resolutionIndex, in: Array(0...customIndex), by: $0) }) {
+                    step(&resolutionIndex, in: Array(0...customIndex), by: 1, wrap: true)
+                }
                 if resolutionIndex == customIndex {
                     HStack {
                         TextField("Width", text: $customWidth).keyboardType(.numberPad)
+                            .focused($customField, equals: 0)
                         Text("×").foregroundStyle(.secondary)
                         TextField("Height", text: $customHeight).keyboardType(.numberPad)
+                            .focused($customField, equals: 1)
                     }
+                    .settingsFocus("st-custom", scope: scope) { customField = 0 }
                 }
                 Picker("Frame Rate", selection: $framerate) {
                     Text("30 FPS").tag(30)
@@ -2595,6 +2755,9 @@ struct StreamSettingsView: View {
                     if maxFramerate >= 120 { Text("120 FPS").tag(120) }
                 }
                 .pickerStyle(.segmented)
+                .settingsFocus("st-fps", scope: scope, adjust: { step(&framerate, in: framerates, by: $0) }) {
+                    step(&framerate, in: framerates, by: 1, wrap: true)
+                }
                 VStack(alignment: .leading) {
                     HStack {
                         Text("Bitrate")
@@ -2603,14 +2766,20 @@ struct StreamSettingsView: View {
                     }
                     Slider(value: $bitrateMbps, in: 0.5...150, step: 0.5)
                 }
+                .settingsFocus("st-bitrate", scope: scope, adjust: { delta in
+                    bitrateMbps = min(150, max(0.5, (bitrateMbps + Double(delta)).rounded()))
+                }) {}
                 Picker("Video Codec", selection: $codec) {
                     Text("Automatic").tag(0)
                     Text("H.264").tag(1)
                     Text("HEVC").tag(2)
                     Text("AV1").tag(3)
                 }
-                Toggle("HDR", isOn: $hdr)
-                Toggle("Smoothest Video (frame pacing)", isOn: $framePacing)
+                .settingsFocus("st-codec", scope: scope, adjust: { step(&codec, in: [0, 1, 2, 3], by: $0) }) {
+                    step(&codec, in: [0, 1, 2, 3], by: 1, wrap: true)
+                }
+                switchRow("HDR", $hdr, id: "st-hdr")
+                switchRow("Smoothest Video (frame pacing)", $framePacing, id: "st-pacing")
             }
 
             Section("Controls") {
@@ -2619,24 +2788,32 @@ struct StreamSettingsView: View {
                     Text("Touchscreen").tag(true)
                 }
                 .pickerStyle(.segmented)
+                .settingsFocus("st-touch", scope: scope, adjust: { absoluteTouch = $0 > 0 }) { absoluteTouch.toggle() }
                 Picker("On-Screen Controls", selection: $onscreenControls) {
                     Text("Off").tag(0)
                     Text("Auto").tag(1)
                     Text("Simple").tag(2)
                     Text("Full").tag(3)
                 }
-                Toggle("Multi-Controller Mode", isOn: $multiController)
-                Toggle("Swap A/B and X/Y Buttons", isOn: $swapABXY)
-                Toggle("Bluetooth Mouse Support", isOn: $btMouse)
+                .settingsFocus("st-osc", scope: scope, adjust: { step(&onscreenControls, in: [0, 1, 2, 3], by: $0) }) {
+                    step(&onscreenControls, in: [0, 1, 2, 3], by: 1, wrap: true)
+                }
+                switchRow("Multi-Controller Mode", $multiController, id: "st-multi")
+                switchRow("Swap A/B and X/Y Buttons", $swapABXY, id: "st-swap")
+                switchRow("Bluetooth Mouse Support", $btMouse, id: "st-mouse")
             }
 
             Section("Host") {
-                Toggle("Optimize Game Settings", isOn: $optimizeGames)
-                Toggle("Play Audio on PC", isOn: $audioOnPC)
-                Toggle("Statistics Overlay", isOn: $statsOverlay)
+                switchRow("Optimize Game Settings", $optimizeGames, id: "st-optimize")
+                switchRow("Play Audio on PC", $audioOnPC, id: "st-audio")
+                switchRow("Statistics Overlay", $statsOverlay, id: "st-stats")
             }
         }
+        .modifier(FocusScrollFollower(proxy: proxy))
+        }
         .navigationTitle("Stream Settings")
+        .onChange(of: customField) { GameFocus.shared.textEditing = $0 != nil }
+        .settingsScreen(scope, dismiss: dismiss)
         .onAppear(perform: load)
         .onDisappear(perform: save)
         .onChange(of: resolutionIndex) { _ in save() }
@@ -2652,6 +2829,12 @@ struct StreamSettingsView: View {
         .onChange(of: optimizeGames) { _ in save() }
         .onChange(of: audioOnPC) { _ in save() }
         .onChange(of: statsOverlay) { _ in save() }
+    }
+
+    /// A switch row: ✕ flips it, ← off, → on
+    private func switchRow(_ title: String, _ value: Binding<Bool>, id: String) -> some View {
+        Toggle(title, isOn: value)
+            .settingsFocus(id, scope: scope, adjust: { value.wrappedValue = $0 > 0 }) { value.wrappedValue.toggle() }
     }
 
     private func load() {
@@ -3559,9 +3742,30 @@ struct SteamSettingsRow: View {
 
 struct SteamSettingsView: View {
     @ObservedObject private var steam = SteamManager.shared
+    @Environment(\.dismiss) private var dismiss
     @State private var key = ""
     @State private var profile = ""
     @State private var confirmRemove = false
+    @State private var removeArmed = false
+    @FocusState private var field: Int?
+    @ObservedObject private var focus = GameFocus.shared
+    private let scope = "settings-steam"
+
+    private var canConnect: Bool {
+        !steam.busy && (steam.hasKey || !key.isEmpty) && (steam.steamID != nil || !profile.isEmpty)
+    }
+
+    private func connect() {
+        let enteredKey = key
+        let enteredProfile = profile
+        Task {
+            await steam.configure(apiKey: enteredKey, profile: enteredProfile)
+            if steam.errorMessage == nil || steam.cache != nil {
+                key = ""
+                profile = ""
+            }
+        }
+    }
 
     private var updatedText: String {
         guard let date = steam.cache?.updated else { return "Never" }
@@ -3571,25 +3775,20 @@ struct SteamSettingsView: View {
     }
 
     var body: some View {
+        ScrollViewReader { proxy in
         Form {
             Section {
                 SecureField(steam.hasKey ? "New API key (optional)" : "Steam Web API key", text: $key)
                     .textInputAutocapitalization(.never)
                     .autocorrectionDisabled()
+                    .focused($field, equals: 0)
+                    .settingsFocus("steam-key", scope: scope) { field = 0 }
                 TextField(steam.steamID ?? "SteamID64 or profile name", text: $profile)
                     .textInputAutocapitalization(.never)
                     .autocorrectionDisabled()
-                Button {
-                    let enteredKey = key
-                    let enteredProfile = profile
-                    Task {
-                        await steam.configure(apiKey: enteredKey, profile: enteredProfile)
-                        if steam.errorMessage == nil || steam.cache != nil {
-                            key = ""
-                            profile = ""
-                        }
-                    }
-                } label: {
+                    .focused($field, equals: 1)
+                    .settingsFocus("steam-profile", scope: scope) { field = 1 }
+                Button(action: connect) {
                     HStack {
                         Label(steam.isConfigured ? "Save & Test" : "Connect", systemImage: "checkmark.circle")
                         if steam.busy {
@@ -3598,7 +3797,8 @@ struct SteamSettingsView: View {
                         }
                     }
                 }
-                .disabled(steam.busy || (!steam.hasKey && key.isEmpty) || (steam.steamID == nil && profile.isEmpty))
+                .disabled(!canConnect)
+                .settingsFocus("steam-connect", scope: scope) { if canConnect { connect() } }
             } header: {
                 Text("Steam account")
             } footer: {
@@ -3628,13 +3828,29 @@ struct SteamSettingsView: View {
                         Label("Refresh Now", systemImage: "arrow.clockwise")
                     }
                     .disabled(steam.busy)
+                    .settingsFocus("steam-refresh", scope: scope) { Task { await steam.refreshNow() } }
                     Button(role: .destructive) { confirmRemove = true } label: {
-                        Label("Disconnect Steam", systemImage: "trash")
+                        Label(removeArmed ? "Press again to disconnect" : "Disconnect Steam", systemImage: "trash")
+                    }
+                    .settingsFocus("steam-remove", scope: scope) {
+                        if removeArmed {
+                            steam.remove()
+                            removeArmed = false
+                        } else {
+                            removeArmed = true
+                        }
                     }
                 }
             }
         }
+        .modifier(FocusScrollFollower(proxy: proxy))
+        }
         .navigationTitle("Steam")
+        .onChange(of: field) { focus.textEditing = $0 != nil }
+        .settingsScreen(scope, dismiss: dismiss)
+        .onChange(of: focus.focusedID) { id in
+            if id != "steam-remove" { removeArmed = false }
+        }
         .confirmationDialog("Disconnect Steam? The API key and the downloaded data are removed from this iPhone.",
                             isPresented: $confirmRemove, titleVisibility: .visible) {
             Button("Disconnect", role: .destructive) { steam.remove() }

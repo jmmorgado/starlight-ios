@@ -15,6 +15,7 @@
 - No stream: **Options + Share** (toque) = Guide no PC; mantidos 1 s = painel do stream.
 - **Settings:** ecrãs nativos para **Stream Settings**, cada **PC** (emparelhar, acordar, atualizar jogos,
   mostrar jogos escondidos, testar rede, remover), **Game Artwork** (SteamGridDB) e **About**.
+- **Settings com comando:** cruz para cima/baixo entre as opções · **✕** abre o ecrã, liga/desliga ou passa à opção seguinte · **← / →** mudam o valor (resolução, FPS, bitrate ±1 Mbps, codec, interruptores) · **○** volta atrás (ou fecha o teclado). Em campos de texto, ✕ abre o teclado. Ações de remover pedem **✕ duas vezes**.
 
 # Atalhos para jogos específicos
 
