@@ -14,7 +14,7 @@ concurrency:
   cancel-in-progress: true
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   ipa:
@@ -63,3 +63,25 @@ jobs:
           name: Starlight-ipa
           path: dist/Starlight.ipa
           retention-days: 30
+
+      - name: Publish GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="build-${{ github.run_number }}"
+          SHORT_SHA="${GITHUB_SHA::7}"
+          {
+            echo "Starlight build ${{ github.run_number }} (branch \`${GITHUB_REF_NAME}\`, commit ${SHORT_SHA})"
+            echo
+            echo "## Alterações"
+            git log -1 --pretty=%B | grep -v -E '^(Co-Authored-By|Claude-Session):' || true
+            echo
+            echo "## Instalar"
+            echo "Descarrega \`Starlight.ipa\` abaixo e instala com o Sideloadly (ver SHORTCUTS.md)."
+          } > release-notes.md
+          gh release create "$TAG" dist/Starlight.ipa \
+            --repo "$GITHUB_REPOSITORY" \
+            --target "$GITHUB_SHA" \
+            --title "Starlight build ${{ github.run_number }}" \
+            --notes-file release-notes.md \
+            --latest

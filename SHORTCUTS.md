@@ -35,13 +35,14 @@ Se algo falhar (PC não emparelhado, jogo não encontrado), aparece um aviso a e
 ## Compilar sem Mac (GitHub Actions)
 
 O workflow `.github/workflows/build-ipa.yml` compila automaticamente a cada push
-(ou manualmente em **Actions → Build unsigned IPA → Run workflow**) e gera o artefacto
-`Starlight-ipa` com o ficheiro `Starlight.ipa` (não assinado).
+(ou manualmente em **Actions → Build unsigned IPA → Run workflow**) e publica uma
+**release** com o `Starlight.ipa` (não assinado):
+https://github.com/jmmorgado/starlight-ios/releases/latest
 
 ## Instalar no iPhone a partir do Windows
 
 **Sideloadly** (Apple ID grátis):
-1. Descarrega o artefacto em Actions e extrai o `Starlight.ipa`.
+1. Descarrega o `Starlight.ipa` da [última release](https://github.com/jmmorgado/starlight-ios/releases/latest).
 2. Liga o iPhone por cabo ao PC, abre o Sideloadly, arrasta o `.ipa`, mete o teu Apple ID.
 3. Em *Advanced options* podes mudar o **Bundle ID** (para conviver com o Moonlight oficial)
    e o **nome da app**.
