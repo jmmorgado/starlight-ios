@@ -232,9 +232,7 @@ final class HomeModel: ObservableObject {
                 }
                 GameFocus.shared.focusedID = nil
             }
-            if tab == .settings {
-                GameFocus.shared.push("settings")
-            }
+            GameFocus.shared.baseScope = tab.focusScope
             if tab == .search {
                 searchFieldFocused = true
             } else if oldValue == .search {
@@ -586,6 +584,16 @@ enum StarlightTab: String, CaseIterable {
         }
     }
 
+    /// Controller focus space for the tab
+    var focusScope: String {
+        switch self {
+        case .home: return "main"
+        case .library: return "library"
+        case .settings: return "settings"
+        case .search: return "search"
+        }
+    }
+
     /// The tabs shown in the tab bar (Search has its own button at the top)
     static let barTabs: [StarlightTab] = [.home, .library, .settings]
 }
@@ -631,12 +639,14 @@ struct HomeRootView: View {
                             .navigationTitle("Library")
                             .starlightToolbar(model)
                     }
+                    .environment(\.focusTabScope, "library")
                 }
                 Tab(StarlightTab.settings.title, systemImage: StarlightTab.settings.symbol, value: StarlightTab.settings) {
                     SettingsTab(model: model)
                 }
                 Tab(value: StarlightTab.search, role: .search) {
                     StarlightStack { NativeSearchScreen(model: model) }
+                        .environment(\.focusTabScope, "search")
                 }
             }
             .modifier(TabBarMinimizeOnScroll())
@@ -650,12 +660,14 @@ struct HomeRootView: View {
                         .navigationTitle("Library")
                         .starlightToolbar(model)
                 }
+                .environment(\.focusTabScope, "library")
                 .tabItem { Label(StarlightTab.library.title, systemImage: StarlightTab.library.symbol) }
                 .tag(StarlightTab.library)
                 SettingsTab(model: model)
                     .tabItem { Label(StarlightTab.settings.title, systemImage: StarlightTab.settings.symbol) }
                     .tag(StarlightTab.settings)
                 StarlightStack { NativeSearchScreen(model: model) }
+                    .environment(\.focusTabScope, "search")
                     .tabItem { Label(StarlightTab.search.title, systemImage: StarlightTab.search.symbol) }
                     .tag(StarlightTab.search)
             }
@@ -877,7 +889,10 @@ final class GameFocus: ObservableObject {
     private var actions: [String: () -> Void] = [:]
     private var saved: [String: String] = [:]
 
-    var activeScope: String { scopes.last ?? "main" }
+    /// The focus space of the tab on screen ("main" = Home); each tab keeps its own,
+    /// because the other tabs stay loaded and their cards would steal the selection
+    var baseScope = "main"
+    var activeScope: String { scopes.last ?? baseScope }
 
     private var grids: [String: (ids: [String], columns: Int)] = [:]
     private var adjusters: [String: (Int) -> Void] = [:]
@@ -947,7 +962,7 @@ final class GameFocus: ObservableObject {
             adjust(direction == .left ? -1 : 1)
             return
         }
-        if let id = focusedID, activeScope == "main",
+        if let id = focusedID, ["main", "library", "search"].contains(activeScope),
            let grid = grids.values.first(where: { $0.ids.contains(id) }), let index = grid.ids.firstIndex(of: id) {
             var target = index
             switch direction {
@@ -1014,10 +1029,13 @@ struct GameFocusModifier: ViewModifier {
     var adjust: ((Int) -> Void)? = nil
     @ObservedObject private var focus = GameFocus.shared
     @ObservedObject private var device = DeviceStatus.shared
+    @Environment(\.focusTabScope) private var tabScope
 
     func body(content: Content) -> some View {
         let _ = focus.register(id, action)
         let _ = focus.registerAdjust(id, adjust)
+        // "main" means "the tab I'm in"
+        let scope = self.scope == "main" ? tabScope : self.scope
         let focused = device.controllerConnected && focus.activeScope == scope && focus.focusedID == id
         content
             .background(
@@ -1069,6 +1087,18 @@ struct FocusScrollFollower: ViewModifier {
             guard let id = id else { return }
             withAnimation(.easeInOut(duration: 0.2)) { proxy.scrollTo(id, anchor: .center) }
         }
+    }
+}
+
+private struct FocusTabScopeKey: EnvironmentKey {
+    static let defaultValue = "main"
+}
+
+extension EnvironmentValues {
+    /// The controller focus space of the tab a view lives in
+    var focusTabScope: String {
+        get { self[FocusTabScopeKey.self] }
+        set { self[FocusTabScopeKey.self] = newValue }
     }
 }
 
