@@ -6,4 +6,4 @@ Maintenance release: no changes to the app itself compared with build 3.
 - The build workflow now also refreshes the notes of earlier releases when their file changes.
 
 ## Install
-Download `Starlight.ipa` below and install it with [Sideloadly](https://sideloadly.io). See the [build 3 notes](https://github.com/jmmorgado/starlight-ios/releases/tag/build-3) for the full feature list and setup steps.
+Download `Starlight.ipa` below and install it with [Sideloadly](https://sideloadly.io). See the [build 3 notes](https://github.com/jmmorgado/starlight-ios/releases/tag/v0.3.0) for the full feature list and setup steps.

@@ -1,0 +1,69 @@
+name: Retag releases
+
+# One-off: moves every release from a build-N tag to v0.N.0 (same commit, same release object).
+# Releases are never deleted or recreated: the tag is switched with `gh release edit --tag`,
+# and the old tag is deleted only after the release is confirmed on the new one.
+on:
+  push:
+    branches:
+      - starlight
+    paths:
+      - '.github/retag-trigger'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  retag:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout (all tags)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Move releases to v0.N.0 tags
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          git fetch --tags --force
+          for TAG in $(gh api --paginate "repos/$REPO/releases?per_page=100" --jq '.[].tag_name'); do
+            case "$TAG" in build-*) ;; *) echo "Skipping $TAG"; continue ;; esac
+            N="${TAG#build-}"
+            NEW="v0.$N.0"
+            SHA=$(git rev-list -n 1 "refs/tags/$TAG")
+            echo "== $TAG -> $NEW ($SHA)"
+
+            # 1. New tag on the same commit
+            if ! git rev-parse -q --verify "refs/tags/$NEW" > /dev/null; then
+              git tag "$NEW" "$SHA"
+              git push origin "refs/tags/$NEW"
+            fi
+
+            # 2. Point the existing release at it (title kept as "Starlight build N")
+            gh release edit "$TAG" --repo "$REPO" --tag "$NEW" --title "Starlight build $N"
+
+            # 3. Only once the release is confirmed on the new tag, delete the old one
+            LINKED=$(gh api "repos/$REPO/releases/tags/$NEW" --jq '.tag_name')
+            if [ "$LINKED" != "$NEW" ]; then
+              echo "Release for $TAG is not on $NEW; keeping the old tag"
+              exit 1
+            fi
+            git push origin ":refs/tags/$TAG"
+          done
+
+      - name: Fix internal links in release notes
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          # Only notes that link to another release need refreshing
+          for f in $(grep -l "releases/tag/" .github/release-notes/build-*.md); do
+            N=$(basename "$f" .md); N="${N#build-}"
+            gh release edit "v0.$N.0" --repo "$REPO" --notes-file "$f"
+            echo "Refreshed notes for v0.$N.0"
+          done

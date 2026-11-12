@@ -7,6 +7,9 @@ on:
       - master
       - main
       - starlight
+    # The retag trigger file only runs the "Retag releases" workflow
+    paths-ignore:
+      - '.github/retag-trigger'
   workflow_dispatch:
 
 concurrency:
@@ -69,7 +72,8 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           N="${{ github.run_number }}"
-          TAG="build-$N"
+          # Semantic-version tags so releases sort by number (v0.9.0 < v0.10.0)
+          TAG="v0.$N.0"
           # Hand-written notes for this build win; otherwise use the commit message
           NOTES=".github/release-notes/build-$N.md"
           if [ ! -f "$NOTES" ]; then
@@ -97,8 +101,10 @@ jobs:
         run: |
           for f in .github/release-notes/build-*.md; do
             [ -f "$f" ] || continue
-            TAG=$(basename "$f" .md)
-            [ "$TAG" = "build-${{ github.run_number }}" ] && continue
+            N=$(basename "$f" .md)
+            N=${N#build-}
+            [ "$N" = "${{ github.run_number }}" ] && continue
+            TAG="v0.$N.0"
             if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
               gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --notes-file "$f"
               echo "Updated notes for $TAG"
