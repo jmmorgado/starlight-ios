@@ -643,10 +643,9 @@ extension View {
         self
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                ToolbarItem(placement: .navigationBarLeading) {
+                // Same side, same group: iOS 26 draws the PC button and the status in one Liquid Glass capsule
+                ToolbarItemGroup(placement: .navigationBarTrailing) {
                     PCToolbarButton(model: model)
-                }
-                ToolbarItem(placement: .navigationBarTrailing) {
                     StatusCluster()
                 }
             }
@@ -709,7 +708,7 @@ struct PCToolbarButton: View {
         Group {
             Menu {
                 if !model.pairedHosts.isEmpty {
-                    Section("Your PCs") {
+                    Section(model.currentHost.map { "Connected to \($0.name)" } ?? "Your PCs") {
                         ForEach(model.pairedHosts) { host in
                             Button { model.onSelectHost?(host.id) } label: {
                                 Label(host.name + (host.online ? "" : " · offline"),
@@ -755,9 +754,6 @@ struct PCToolbarButton: View {
                     .overlay(Circle().stroke(.black.opacity(0.6), lineWidth: 1.5))
                     .offset(x: 3, y: 2)
             }
-            Text(model.currentHost?.name ?? "Choose a PC")
-                .font(.system(size: 14, weight: .semibold))
-                .lineLimit(1)
             if device.controllerConnected {
                 Image(systemName: PadGlyph.pc)
                     .font(.system(size: 14))
@@ -1071,7 +1067,8 @@ struct PCDropdown: View {
             .padding(12)
             .frame(width: 280)
             .modifier(PanelGlass(corner: 22))
-            .padding(.leading, 16)
+            .frame(maxWidth: .infinity, alignment: .trailing)
+            .padding(.trailing, 16)
             .padding(.top, 50)
         }
         .transition(.opacity)
