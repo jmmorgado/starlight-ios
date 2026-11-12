@@ -1292,74 +1292,58 @@ static NSMutableSet* hostList;
     }
     
 #if !TARGET_OS_TV
-    // SteamGridDB hero as a dimmed full-screen background
-    NSString* heroPath = app != nil ? [[SteamGridDBManager sharedManager] cachedPathForAppName:app.name kind:SteamGridDBKindHero] : nil;
-    UIImage* hero = heroPath != nil ? [UIImage imageWithContentsOfFile:heroPath] : nil;
-    if (hero != nil) {
-        UIImageView* heroView = [[UIImageView alloc] initWithFrame:_launchOverlay.bounds];
-        heroView.image = hero;
-        heroView.contentMode = UIViewContentModeScaleAspectFill;
-        heroView.clipsToBounds = YES;
-        heroView.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
-        [_launchOverlay addSubview:heroView];
+    // Same look as the stream screen's loading state (StreamFrameViewController), so the
+    // hand-off to it is seamless: game background, dimmed, with the system spinner and status text
+    UIImage* background = nil;
+    if (app != nil) {
+        SteamGridDBManager* sgdb = [SteamGridDBManager sharedManager];
+        NSString* path = [sgdb cachedPathForAppName:app.name kind:SteamGridDBKindHero] ?: [sgdb cachedPathForAppName:app.name kind:SteamGridDBKindGrid];
+        background = path != nil ? [UIImage imageWithContentsOfFile:path] : nil;
+    }
+    if (background != nil) {
+        UIImageView* backgroundView = [[UIImageView alloc] initWithFrame:_launchOverlay.bounds];
+        backgroundView.image = background;
+        backgroundView.contentMode = UIViewContentModeScaleAspectFill;
+        backgroundView.clipsToBounds = YES;
+        backgroundView.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
+        [_launchOverlay addSubview:backgroundView];
         
         UIView* dim = [[UIView alloc] initWithFrame:_launchOverlay.bounds];
-        dim.backgroundColor = [UIColor colorWithWhite:0 alpha:0.6];
+        dim.backgroundColor = [UIColor colorWithWhite:0 alpha:0.55];
         dim.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
         [_launchOverlay addSubview:dim];
     }
 #endif
     
-    UIStackView* stack = [[UIStackView alloc] init];
-    stack.axis = UILayoutConstraintAxisVertical;
-    stack.alignment = UIStackViewAlignmentCenter;
-    stack.spacing = 14;
-    stack.translatesAutoresizingMaskIntoConstraints = NO;
-    [_launchOverlay addSubview:stack];
-    [NSLayoutConstraint activateConstraints:@[
-        [stack.centerXAnchor constraintEqualToAnchor:_launchOverlay.centerXAnchor],
-        [stack.centerYAnchor constraintEqualToAnchor:_launchOverlay.centerYAnchor],
-        [stack.leadingAnchor constraintGreaterThanOrEqualToAnchor:_launchOverlay.leadingAnchor constant:24],
-        [stack.trailingAnchor constraintLessThanOrEqualToAnchor:_launchOverlay.trailingAnchor constant:-24],
-    ]];
+    UILabel* status = [[UILabel alloc] init];
+    status.text = app != nil ? [NSString stringWithFormat:@"Starting %@...", app.name] : @"Starting...";
+    status.textColor = [UIColor whiteColor];
+    status.textAlignment = NSTextAlignmentCenter;
+    status.translatesAutoresizingMaskIntoConstraints = NO;
+    [_launchOverlay addSubview:status];
     
-    UIImage* boxArt = app != nil ? [MainFrameViewController loadBoxArtForCaching:app] : nil;
-    if (boxArt != nil) {
-        UIImageView* artView = [[UIImageView alloc] initWithImage:boxArt];
-        artView.contentMode = UIViewContentModeScaleAspectFill;
-        artView.clipsToBounds = YES;
-        artView.layer.cornerRadius = 14;
-        artView.translatesAutoresizingMaskIntoConstraints = NO;
-        CGFloat height = MIN(220, container.bounds.size.height * 0.45);
-        CGFloat ratio = boxArt.size.height > 0 ? boxArt.size.width / boxArt.size.height : 0.75;
-        [NSLayoutConstraint activateConstraints:@[
-            [artView.heightAnchor constraintEqualToConstant:height],
-            [artView.widthAnchor constraintEqualToConstant:height * ratio],
-        ]];
-        [stack addArrangedSubview:artView];
-    }
-    
-    UILabel* title = [[UILabel alloc] init];
-    title.text = app != nil ? [NSString stringWithFormat:@"Starting %@", app.name] : @"Starting stream";
-    title.textColor = [UIColor whiteColor];
-    title.font = [UIFont systemFontOfSize:22 weight:UIFontWeightBold];
-    title.textAlignment = NSTextAlignmentCenter;
-    title.numberOfLines = 2;
-    [stack addArrangedSubview:title];
-    
-    if (app != nil) {
-        UILabel* subtitle = [[UILabel alloc] init];
-        subtitle.text = [NSString stringWithFormat:@"Connecting to %@…", app.host.name];
-        subtitle.textColor = [UIColor colorWithWhite:1.0 alpha:0.7];
-        subtitle.font = [UIFont systemFontOfSize:15 weight:UIFontWeightRegular];
-        subtitle.textAlignment = NSTextAlignmentCenter;
-        [stack addArrangedSubview:subtitle];
-    }
-    
-    UIActivityIndicatorView* spinner = [[UIActivityIndicatorView alloc] initWithActivityIndicatorStyle:UIActivityIndicatorViewStyleLarge];
+    UIActivityIndicatorView* spinner = [[UIActivityIndicatorView alloc] initWithActivityIndicatorStyle:UIActivityIndicatorViewStyleMedium];
     spinner.color = [UIColor whiteColor];
+    spinner.translatesAutoresizingMaskIntoConstraints = NO;
     [spinner startAnimating];
-    [stack addArrangedSubview:spinner];
+    [_launchOverlay addSubview:spinner];
+    
+    UILabel* tip = [[UILabel alloc] init];
+    tip.text = @"Tip: Swipe from the left edge to disconnect from your PC";
+    tip.textColor = [UIColor whiteColor];
+    tip.textAlignment = NSTextAlignmentCenter;
+    tip.translatesAutoresizingMaskIntoConstraints = NO;
+    [_launchOverlay addSubview:tip];
+    
+    [NSLayoutConstraint activateConstraints:@[
+        [status.centerXAnchor constraintEqualToAnchor:_launchOverlay.centerXAnchor],
+        [status.centerYAnchor constraintEqualToAnchor:_launchOverlay.centerYAnchor],
+        [spinner.centerXAnchor constraintEqualToAnchor:_launchOverlay.centerXAnchor],
+        [spinner.bottomAnchor constraintEqualToAnchor:status.topAnchor constant:-20],
+        [tip.centerXAnchor constraintEqualToAnchor:_launchOverlay.centerXAnchor],
+        [NSLayoutConstraint constraintWithItem:tip attribute:NSLayoutAttributeCenterY relatedBy:NSLayoutRelationEqual
+                                        toItem:_launchOverlay attribute:NSLayoutAttributeCenterY multiplier:1.8 constant:0],
+    ]];
 }
 
 - (void)hideLaunchOverlay {

@@ -287,6 +287,8 @@ struct HomeRootView: View {
 
 struct HostMenu: View {
     @ObservedObject var model: HomeModel
+    /// In a navigation bar iOS 26 already wraps the item in Liquid Glass, so don't add a second capsule
+    var inToolbar = false
 
     var body: some View {
         Menu {
@@ -344,9 +346,9 @@ struct HostMenu: View {
                     .foregroundStyle(.secondary)
             }
             .foregroundStyle(.white)
-            .padding(.horizontal, 14)
-            .padding(.vertical, 8)
-            .glassCapsule()
+            .padding(.horizontal, inToolbar ? 6 : 14)
+            .padding(.vertical, inToolbar ? 2 : 8)
+            .modifier(HostMenuBackground(inToolbar: inToolbar))
         }
         .accessibilityLabel("Choose PC, current: \(model.currentHost?.name ?? "none")")
     }
@@ -363,6 +365,22 @@ struct HostMenu: View {
         var text = !host.paired ? "Not paired" : (host.online ? "Online" : "Offline")
         if others > 0 { text += " · \(others) more" }
         return text
+    }
+}
+
+private struct HostMenuBackground: ViewModifier {
+    let inToolbar: Bool
+
+    func body(content: Content) -> some View {
+        if inToolbar {
+            if #available(iOS 26.0, *) {
+                content
+            } else {
+                content.background(.ultraThinMaterial, in: Capsule())
+            }
+        } else {
+            content.glassCapsule()
+        }
     }
 }
 
@@ -756,10 +774,11 @@ struct LibraryTab: View {
                     }
                 }
             }
-            .navigationTitle(model.currentHost?.name ?? "Library")
+            .navigationTitle("Library")
+            .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .navigationBarTrailing) {
-                    HostMenu(model: model)
+                    HostMenu(model: model, inToolbar: true)
                 }
             }
             .searchable(text: $search, prompt: "Search games")

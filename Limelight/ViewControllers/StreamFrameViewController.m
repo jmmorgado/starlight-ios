@@ -12,6 +12,9 @@
 #import "StreamManager.h"
 #import "ControllerSupport.h"
 #import "DataManager.h"
+#if !TARGET_OS_TV
+#import "SteamGridDBManager.h"
+#endif
 
 #include <sys/socket.h>
 #include <netinet/in.h>
@@ -44,6 +47,7 @@
     UILabel *_tipLabel;
     UIActivityIndicatorView *_spinner;
     StreamView *_streamView;
+    UIView *_loadingBackground;
     UIScrollView *_scrollView;
     BOOL _userIsInteracting;
     CGSize _keyboardSize;
@@ -205,6 +209,35 @@
         // Add StreamView directly in relative mode
         [self.view addSubview:_streamView];
     }
+    
+#if !TARGET_OS_TV
+    // Starlight: show the game's art behind the loading status (same look as the launch screen)
+    SteamGridDBManager* sgdb = [SteamGridDBManager sharedManager];
+    NSString* backgroundPath = [sgdb cachedPathForAppName:self.streamConfig.appName kind:SteamGridDBKindHero]
+        ?: [sgdb cachedPathForAppName:self.streamConfig.appName kind:SteamGridDBKindGrid];
+    UIImage* background = backgroundPath != nil ? [UIImage imageWithContentsOfFile:backgroundPath] : nil;
+    _loadingBackground = [[UIView alloc] initWithFrame:self.view.bounds];
+    _loadingBackground.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
+    _loadingBackground.userInteractionEnabled = NO;
+    _loadingBackground.backgroundColor = [UIColor blackColor];
+    if (background != nil) {
+        UIImageView* backgroundView = [[UIImageView alloc] initWithFrame:_loadingBackground.bounds];
+        backgroundView.image = background;
+        backgroundView.contentMode = UIViewContentModeScaleAspectFill;
+        backgroundView.clipsToBounds = YES;
+        backgroundView.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
+        [_loadingBackground addSubview:backgroundView];
+        
+        UIView* dim = [[UIView alloc] initWithFrame:_loadingBackground.bounds];
+        dim.backgroundColor = [UIColor colorWithWhite:0 alpha:0.55];
+        dim.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
+        [_loadingBackground addSubview:dim];
+    }
+    [self.view addSubview:_loadingBackground];
+    
+    [_spinner setActivityIndicatorViewStyle:UIActivityIndicatorViewStyleMedium];
+    _spinner.color = [UIColor whiteColor];
+#endif
     
     [self.view addSubview:_stageLabel];
     [self.view addSubview:_spinner];
@@ -374,6 +407,15 @@
         // the first frame of video.
         self->_stageLabel.hidden = YES;
         self->_tipLabel.hidden = YES;
+        
+        // Fade the game art out as the video takes over
+        UIView* loadingBackground = self->_loadingBackground;
+        self->_loadingBackground = nil;
+        [UIView animateWithDuration:0.3 animations:^{
+            loadingBackground.alpha = 0;
+        } completion:^(BOOL finished) {
+            [loadingBackground removeFromSuperview];
+        }];
         
         [self->_streamView showOnScreenControls];
         
