@@ -37,22 +37,18 @@ jobs:
             SHA=$(git rev-list -n 1 "refs/tags/$TAG")
             echo "== $TAG -> $NEW ($SHA)"
 
-            # 1. New tag on the same commit
-            if ! git rev-parse -q --verify "refs/tags/$NEW" > /dev/null; then
-              git tag "$NEW" "$SHA"
-              git push origin "refs/tags/$NEW"
-            fi
+            # 1+2. Point the existing release at the new tag on the same commit (the release API creates it)
+            gh release edit "$TAG" --repo "$REPO" --tag "$NEW" --target "$SHA" --title "Starlight build $N"
 
-            # 2. Point the existing release at it (title kept as "Starlight build N")
-            gh release edit "$TAG" --repo "$REPO" --tag "$NEW" --title "Starlight build $N"
-
-            # 3. Only once the release is confirmed on the new tag, delete the old one
+            # 3. Only once the release is confirmed on the new tag, and that tag is on the same commit, delete the old one
             LINKED=$(gh api "repos/$REPO/releases/tags/$NEW" --jq '.tag_name')
-            if [ "$LINKED" != "$NEW" ]; then
-              echo "Release for $TAG is not on $NEW; keeping the old tag"
+            NEW_SHA=$(gh api "repos/$REPO/commits/$NEW" --jq '.sha')
+            if [ "$LINKED" != "$NEW" ] || [ "$NEW_SHA" != "$SHA" ]; then
+              echo "Release for $TAG is not on $NEW at $SHA (got $LINKED at $NEW_SHA); keeping the old tag"
               exit 1
             fi
-            git push origin ":refs/tags/$TAG"
+            gh api -X DELETE "repos/$REPO/git/refs/tags/$TAG"
+            echo "Moved $TAG -> $NEW"
           done
 
       - name: Fix internal links in release notes
