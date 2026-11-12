@@ -1,4 +1,13 @@
-# Starlight — atalhos para jogos específicos
+# Starlight
+
+## Ecrã principal
+
+- **Início:** PC no topo, jogo em destaque com a arte de fundo, botão **Play**, fila "Continue Playing".
+- **Library:** todos os jogos do PC, com pesquisa.
+- **Settings:** definições de stream do Moonlight, PCs, arte (SteamGridDB) e **Use Classic Moonlight Layout**
+  para voltar ao ecrã original (para regressar: no layout clássico, **Game Artwork → Use New Starlight Layout**).
+
+# Atalhos para jogos específicos
 
 **Starlight** é um fork do [Moonlight para iOS](https://github.com/moonlight-stream/moonlight-ios) (GPLv3), igual ao original, com uma única funcionalidade acrescentada:
 **abrir diretamente o stream de um jogo a partir de um link**, para usar na app Atalhos,

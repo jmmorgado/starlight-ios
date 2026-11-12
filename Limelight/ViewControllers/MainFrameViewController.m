@@ -31,6 +31,7 @@
 #import "SettingsViewController.h"
 #if !TARGET_OS_TV
 #import "SteamGridDBManager.h"
+#import "Moonlight-Swift.h"
 #endif
 #else
 #import <sys/utsname.h>
@@ -60,6 +61,10 @@
     UIView* _launchOverlay;
 #if TARGET_OS_TV
     UITapGestureRecognizer* _menuRecognizer;
+#else
+    StarlightHomeController* _home;
+    NSTimer* _homeRefreshTimer;
+    NSString* _homeHostUUID;
 #endif
 }
 static NSMutableSet* hostList;
@@ -612,6 +617,9 @@ static NSMutableSet* hostList;
 }
 
 - (void) prepareToStreamApp:(TemporaryApp *)app {
+#if !TARGET_OS_TV
+    [self recordLastPlayedForApp:app];
+#endif
     _streamConfig = [[StreamConfiguration alloc] init];
     _streamConfig.host = app.host.activeAddress;
     _streamConfig.httpsPort = app.host.httpsPort;
@@ -978,6 +986,9 @@ static NSMutableSet* hostList;
     NSMutableArray* rightItems = [self.navigationItem.rightBarButtonItems mutableCopy] ?: [NSMutableArray array];
     [rightItems addObject:artworkButton];
     self.navigationItem.rightBarButtonItems = rightItems;
+    
+    // Starlight home screen (SwiftUI) on top of the classic Moonlight UI
+    [self installHomeIfNeeded];
 #endif
         
 #if !TARGET_OS_TV
@@ -1500,6 +1511,15 @@ static const NSUInteger kMaxQuickActions = 4;
                                                object: nil];
 #endif
     
+#if !TARGET_OS_TV
+    // Keep the home screen's PC/game state fresh (online status, running game)
+    [_homeRefreshTimer invalidate];
+    if (_home != nil) {
+        [self pushHomeState];
+        _homeRefreshTimer = [NSTimer scheduledTimerWithTimeInterval:2.0 target:self selector:@selector(pushHomeState) userInfo:nil repeats:YES];
+    }
+#endif
+    
     // Check for a pending deep link launch (cold start or returning from a stream)
     [self handlePendingLaunch:NO];
 }
@@ -1520,6 +1540,10 @@ static const NSUInteger kMaxQuickActions = 4;
     // view, so we won't get a return to active notification
     // for that which would normally fire beginForegroundRefresh.
     [self beginForegroundRefresh];
+    
+#if !TARGET_OS_TV
+    [self.navigationController setNavigationBarHidden:(_home != nil) animated:NO];
+#endif
 }
 
 - (void)viewDidDisappear:(BOOL)animated
@@ -1528,6 +1552,11 @@ static const NSUInteger kMaxQuickActions = 4;
     
     // The stream view is up (or we left for another reason): drop the start screen
     [self hideLaunchOverlay];
+    
+#if !TARGET_OS_TV
+    [_homeRefreshTimer invalidate];
+    _homeRefreshTimer = nil;
+#endif
     
     // when discovery stops, we must create a new instance because
     // you cannot restart an NSOperation when it is finished
@@ -1663,6 +1692,7 @@ static const NSUInteger kMaxQuickActions = 4;
     [_boxArtCache removeAllObjects];
     [self.collectionView reloadData];
     [self saveGameCatalog];
+    [self pushHomeState];
 }
 
 - (void)showArtworkSettings {
@@ -1718,6 +1748,13 @@ static const NSUInteger kMaxQuickActions = 4;
         }]];
     }
     
+    if (_home == nil) {
+        [alert addAction:[UIAlertAction actionWithTitle:@"Use New Starlight Layout" style:UIAlertActionStyleDefault handler:^(UIAlertAction* action) {
+            [[NSUserDefaults standardUserDefaults] setBool:NO forKey:@"StarlightClassicLayout"];
+            [self installHomeIfNeeded];
+        }]];
+    }
+    
     [alert addAction:[UIAlertAction actionWithTitle:@"Cancel" style:UIAlertActionStyleCancel handler:nil]];
     [[self activeViewController] presentViewController:alert animated:YES completion:nil];
 }
@@ -1742,6 +1779,238 @@ static const NSUInteger kMaxQuickActions = 4;
     UIAlertController* done = [UIAlertController alertControllerWithTitle:@"Game Artwork" message:message preferredStyle:UIAlertControllerStyleAlert];
     [done addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:nil]];
     [[self activeViewController] presentViewController:done animated:YES completion:nil];
+}
+
+#pragma mark - Starlight home screen (SwiftUI)
+
+- (void)installHomeIfNeeded {
+    if (_home != nil || [[NSUserDefaults standardUserDefaults] boolForKey:@"StarlightClassicLayout"]) {
+        return;
+    }
+    
+    _home = [[StarlightHomeController alloc] init];
+    __weak MainFrameViewController* weakSelf = self;
+    
+    _home.onSelectHost = ^(NSString* hostUUID) {
+        [weakSelf homeSelectedHost:hostUUID];
+    };
+    _home.onLaunchApp = ^(NSString* hostUUID, NSString* appId) {
+        MainFrameViewController* strongSelf = weakSelf;
+        if (strongSelf == nil) {
+            return;
+        }
+        AppDelegate* delegate = (AppDelegate*)[UIApplication sharedApplication].delegate;
+        delegate.pendingLaunchHost = hostUUID;
+        delegate.pendingLaunchApp = appId;
+        [strongSelf handlePendingLaunch:NO];
+    };
+    _home.onAppAction = ^(NSString* action, NSString* hostUUID, NSString* appId) {
+        [weakSelf homeAppAction:action host:hostUUID app:appId];
+    };
+    _home.onCommand = ^(NSString* command) {
+        [weakSelf homeCommand:command];
+    };
+    
+    UIViewController* homeVC = _home.viewController;
+    [self addChildViewController:homeVC];
+    homeVC.view.frame = self.view.bounds;
+    homeVC.view.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
+    [self.view addSubview:homeVC.view];
+    [homeVC didMoveToParentViewController:self];
+    
+    [self.navigationController setNavigationBarHidden:YES animated:NO];
+    [self pushHomeState];
+}
+
+- (void)removeHome {
+    if (_home == nil) {
+        return;
+    }
+    [_homeRefreshTimer invalidate];
+    _homeRefreshTimer = nil;
+    UIViewController* homeVC = _home.viewController;
+    [homeVC willMoveToParentViewController:nil];
+    [homeVC.view removeFromSuperview];
+    [homeVC removeFromParentViewController];
+    _home = nil;
+    [self.navigationController setNavigationBarHidden:NO animated:YES];
+}
+
+- (TemporaryHost*)hostWithUUID:(NSString*)uuid {
+    if (uuid == nil) {
+        return nil;
+    }
+    @synchronized (hostList) {
+        for (TemporaryHost* host in hostList) {
+            if ([host.uuid isEqualToString:uuid]) {
+                return host;
+            }
+        }
+    }
+    return nil;
+}
+
+- (TemporaryApp*)appWithId:(NSString*)appId onHost:(TemporaryHost*)host {
+    for (TemporaryApp* app in host.appList) {
+        if ([app.id isEqualToString:appId]) {
+            return app;
+        }
+    }
+    return nil;
+}
+
+- (NSString*)homeCurrentHostUUID {
+    NSString* uuid = _homeHostUUID ?: [[NSUserDefaults standardUserDefaults] stringForKey:@"StarlightLastHost"];
+    if ([self hostWithUUID:uuid] != nil) {
+        return uuid;
+    }
+    if (_selectedHost.uuid != nil) {
+        return _selectedHost.uuid;
+    }
+    // Fall back to a paired PC, preferring one that's online
+    TemporaryHost* best = nil;
+    @synchronized (hostList) {
+        for (TemporaryHost* host in hostList) {
+            if (host.pairState != PairStatePaired && host.serverCert == nil) {
+                continue;
+            }
+            if (best == nil || (host.state == StateOnline && best.state != StateOnline)) {
+                best = host;
+            }
+        }
+    }
+    return best.uuid;
+}
+
+- (void)recordLastPlayedForApp:(TemporaryApp*)app {
+    if (app.host.uuid == nil || app.id == nil) {
+        return;
+    }
+    NSMutableDictionary* lastPlayed = [[[NSUserDefaults standardUserDefaults] dictionaryForKey:@"StarlightLastPlayed"] mutableCopy] ?: [NSMutableDictionary dictionary];
+    lastPlayed[[NSString stringWithFormat:@"%@|%@", app.host.uuid, app.id]] = @([[NSDate date] timeIntervalSince1970]);
+    [[NSUserDefaults standardUserDefaults] setObject:lastPlayed forKey:@"StarlightLastPlayed"];
+}
+
+- (void)pushHomeState {
+    if (_home == nil) {
+        return;
+    }
+    
+    NSString* currentUUID = [self homeCurrentHostUUID];
+    NSMutableArray* hosts = [NSMutableArray array];
+    NSArray* sortedHosts;
+    @synchronized (hostList) {
+        sortedHosts = [[hostList allObjects] sortedArrayUsingComparator:^NSComparisonResult(TemporaryHost* a, TemporaryHost* b) {
+            return [a.name ?: @"" localizedCaseInsensitiveCompare:b.name ?: @""];
+        }];
+    }
+    for (TemporaryHost* host in sortedHosts) {
+        if (host.uuid == nil) {
+            continue;
+        }
+        [hosts addObject:@{ @"uuid": host.uuid,
+                            @"name": host.name ?: @"PC",
+                            @"online": @(host.state == StateOnline),
+                            @"paired": @(host.pairState == PairStatePaired || (host.pairState == PairStateUnknown && host.serverCert != nil)) }];
+    }
+    
+    NSMutableArray* apps = [NSMutableArray array];
+    TemporaryHost* current = [self hostWithUUID:currentUUID];
+    if (current != nil) {
+        SteamGridDBManager* sgdb = [SteamGridDBManager sharedManager];
+        NSDictionary* lastPlayed = [[NSUserDefaults standardUserDefaults] dictionaryForKey:@"StarlightLastPlayed"];
+        NSFileManager* fm = [NSFileManager defaultManager];
+        for (TemporaryApp* app in current.appList) {
+            if (app.hidden || app.id == nil || app.name == nil) {
+                continue;
+            }
+            NSString* grid = [sgdb cachedPathForAppName:app.name kind:SteamGridDBKindGrid];
+            if (grid == nil) {
+                NSString* boxArt = [AppAssetManager boxArtPathForApp:app];
+                grid = [fm fileExistsAtPath:boxArt] ? boxArt : @"";
+            }
+            NSNumber* played = lastPlayed[[NSString stringWithFormat:@"%@|%@", current.uuid, app.id]];
+            [apps addObject:@{ @"host": current.uuid,
+                               @"hostName": current.name ?: @"",
+                               @"app": app.id,
+                               @"name": app.name,
+                               @"running": @([app.id isEqualToString:current.currentGame]),
+                               @"pinned": @([self isAppPinned:app]),
+                               @"gridPath": grid,
+                               @"heroPath": [sgdb cachedPathForAppName:app.name kind:SteamGridDBKindHero] ?: @"",
+                               @"logoPath": [sgdb cachedPathForAppName:app.name kind:SteamGridDBKindLogo] ?: @"",
+                               @"lastPlayed": played ?: @0 }];
+        }
+    }
+    
+    [_home updateWithHosts:hosts selectedHost:current.uuid apps:apps];
+}
+
+- (void)homeSelectedHost:(NSString*)hostUUID {
+    TemporaryHost* host = [self hostWithUUID:hostUUID];
+    if (host == nil) {
+        return;
+    }
+    _homeHostUUID = hostUUID;
+    [[NSUserDefaults standardUserDefaults] setObject:hostUUID forKey:@"StarlightLastHost"];
+    [self pushHomeState];
+    
+    // Same as tapping the PC in the classic UI: pairs if needed, loads its games,
+    // or offers Wake-on-LAN if it's offline
+    [self hostClicked:host view:self.view];
+}
+
+- (void)homeAppAction:(NSString*)action host:(NSString*)hostUUID app:(NSString*)appId {
+    TemporaryHost* host = [self hostWithUUID:hostUUID];
+    TemporaryApp* app = host != nil ? [self appWithId:appId onHost:host] : nil;
+    if (app == nil) {
+        return;
+    }
+    
+    if ([action isEqualToString:@"pin"]) {
+        [self togglePinForApp:app];
+    }
+    else if ([action isEqualToString:@"copyLink"]) {
+        NSString* link = [self launchLinkForApp:app];
+        [UIPasteboard generalPasteboard].string = link;
+        UIAlertController* copied = [UIAlertController alertControllerWithTitle:@"Shortcut Link Copied"
+                                                                        message:[NSString stringWithFormat:@"In the Shortcuts app, add an \"Open URLs\" action and paste this link:\n\n%@", link]
+                                                                 preferredStyle:UIAlertControllerStyleAlert];
+        [copied addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:nil]];
+        [[self activeViewController] presentViewController:copied animated:YES completion:nil];
+    }
+    else if ([action isEqualToString:@"saveIcon"]) {
+        [self saveIconToPhotosForApp:app];
+    }
+    else if ([action isEqualToString:@"more"]) {
+        [self appLongClicked:app view:self.view];
+    }
+    [self pushHomeState];
+}
+
+- (void)homeCommand:(NSString*)command {
+    TemporaryHost* host = [self hostWithUUID:[self homeCurrentHostUUID]];
+    
+    if ([command isEqualToString:@"addHost"]) {
+        [self addHostClicked];
+    }
+    else if ([command isEqualToString:@"refreshHost"] && host != nil) {
+        // No view: always goes through the full refresh (server info + app list)
+        [self hostClicked:host view:nil];
+    }
+    else if ([command isEqualToString:@"hostOptions"] && host != nil) {
+        [self hostLongClicked:host view:self.view];
+    }
+    else if ([command isEqualToString:@"streamSettings"]) {
+        [[self revealViewController] revealToggleAnimated:YES];
+    }
+    else if ([command isEqualToString:@"artwork"]) {
+        [self showArtworkSettings];
+    }
+    else if ([command isEqualToString:@"classicLayout"]) {
+        [[NSUserDefaults standardUserDefaults] setBool:YES forKey:@"StarlightClassicLayout"];
+        [self removeHome];
+    }
 }
 
 // Snapshot of every paired PC's games for the Shortcuts app / Siri / Spotlight
@@ -1972,6 +2241,10 @@ static const NSUInteger kMaxQuickActions = 4;
     
     [hostScrollView removeFromSuperview];
     [self.collectionView reloadData];
+    
+#if !TARGET_OS_TV
+    [self pushHomeState];
+#endif
 }
 
 - (UICollectionViewCell *)collectionView:(UICollectionView *)collectionView cellForItemAtIndexPath:(NSIndexPath *)indexPath {
