@@ -143,6 +143,14 @@ struct GameItem: Identifiable, Equatable {
 
     var pinned: Bool { pinIndex != nil }
 
+    /// On a PC (streamable), as opposed to a Steam game you own that isn't installed
+    var isInstalled: Bool { !host.isEmpty }
+
+    static func steamOnly(appid: Int, name: String) -> GameItem {
+        GameItem(["host": "", "app": "steam-\(appid)", "name": name.isEmpty ? "Steam game \(appid)" : name,
+                  "steamAppId": appid])!
+    }
+
     init?(_ dict: [String: Any]) {
         guard let host = dict["host"] as? String,
               let app = dict["app"] as? String,
@@ -180,9 +188,10 @@ struct GameItem: Identifiable, Equatable {
 }
 
 struct GameDetailRoute: Equatable {
-    let gameId: String
+    let game: GameItem
     let source: String
     let tab: StarlightTab
+    var gameId: String { game.id }
 }
 
 final class HomeModel: ObservableObject {
@@ -261,7 +270,7 @@ final class HomeModel: ObservableObject {
         }
         closePC()
         closeGameMenu()
-        detail = GameDetailRoute(gameId: game.id, source: source, tab: tab)
+        detail = GameDetailRoute(game: game, source: source, tab: tab)
     }
 
     func closeDetail() {
@@ -270,7 +279,7 @@ final class HomeModel: ObservableObject {
 
     var detailGame: GameItem? {
         guard let route = detail else { return nil }
-        return games.first { $0.id == route.gameId }
+        return games.first { $0.id == route.gameId } ?? route.game
     }
 
     func togglePC() { pcExpanded ? closePC() : openPC() }
@@ -411,11 +420,11 @@ final class HomeModel: ObservableObject {
         case .options:
             if gameMenu != nil {
                 closeGameMenu()
-            } else if let game = focusedOrFeaturedGame {
+            } else if let game = focusedOrFeaturedGame, game.isInstalled {
                 openGameMenu(game)
             }
         case .play:
-            if gameMenu == nil, !pcExpanded, let game = focusedOrFeaturedGame { launch(game) }
+            if gameMenu == nil, !pcExpanded, let game = focusedOrFeaturedGame, game.isInstalled { launch(game) }
         case .previousTab: switchTab(by: -1)
         case .nextTab: switchTab(by: 1)
         }
@@ -440,12 +449,23 @@ final class HomeModel: ObservableObject {
         games.filter { !$0.hidden }.sorted { a, b in
             if let pinned = pinnedFirst(a, b) { return pinned }
             if a.running != b.running { return a.running }
-            switch (a.lastPlayed, b.lastPlayed) {
+            switch (effectiveLastPlayed(a), effectiveLastPlayed(b)) {
             case let (x?, y?): return x > y
             case (_?, nil): return true
             case (nil, _?): return false
             default: return a.name.localizedCaseInsensitiveCompare(b.name) == .orderedAscending
             }
+        }
+    }
+
+    /// Most recent of: played through Starlight, or played on the PC according to Steam
+    func effectiveLastPlayed(_ game: GameItem) -> Date? {
+        let steamDate = game.steamAppId.flatMap { SteamManager.shared.owned($0)?.lastPlayed }
+        switch (game.lastPlayed, steamDate) {
+        case let (x?, y?): return max(x, y)
+        case let (x?, nil): return x
+        case let (nil, y?): return y
+        default: return nil
         }
     }
 
@@ -836,6 +856,13 @@ final class GameFocus: ObservableObject {
 
     var activeScope: String { scopes.last ?? "main" }
 
+    private var grids: [String: (ids: [String], columns: Int)] = [:]
+
+    func registerGrid(_ name: String, ids: [String], columns: Int) -> Bool {
+        grids[name] = (ids, columns)
+        return true
+    }
+
     func register(_ id: String, _ action: @escaping () -> Void) -> Bool {
         actions[id] = action
         return true
@@ -871,6 +898,23 @@ final class GameFocus: ObservableObject {
     }
 
     func move(_ direction: Direction) {
+        if let id = focusedID, activeScope == "main",
+           let grid = grids.values.first(where: { $0.ids.contains(id) }), let index = grid.ids.firstIndex(of: id) {
+            var target = index
+            switch direction {
+            case .left: target = index % grid.columns == 0 ? -1 : index - 1
+            case .right: target = (index + 1) % grid.columns == 0 ? -1 : index + 1
+            case .up: target = index - grid.columns
+            case .down: target = index + grid.columns
+            }
+            if direction == .down && target >= grid.ids.count && index / grid.columns < (grid.ids.count - 1) / grid.columns {
+                target = grid.ids.count - 1
+            }
+            if grid.ids.indices.contains(target) {
+                focusedID = grid.ids[target]
+            }
+            return
+        }
         let list = candidates
         guard !list.isEmpty else { return }
         guard let current = list.first(where: { $0.id == focusedID }) else {
@@ -1374,13 +1418,28 @@ struct ToolbarItemGlass: ViewModifier {
 struct ArtworkImage: View {
     let path: String?
     let fallbackText: String
+    var remoteURL: URL? = nil
 
     var body: some View {
         if let image = ArtworkCache.shared.image(path) {
             Image(uiImage: image)
                 .resizable()
                 .aspectRatio(contentMode: .fill)
+        } else if let url = remoteURL {
+            AsyncImage(url: url) { phase in
+                if let image = phase.image {
+                    image.resizable().aspectRatio(contentMode: .fill)
+                } else {
+                    placeholder
+                }
+            }
         } else {
+            placeholder
+        }
+    }
+
+    private var placeholder: some View {
+        Group {
             ZStack {
                 LinearGradient(colors: [Color(white: 0.22), Color(white: 0.10)],
                                startPoint: .topLeading, endPoint: .bottomTrailing)
@@ -1480,6 +1539,7 @@ struct EmptyStateView: View {
 
 struct HomeTab: View {
     @ObservedObject var model: HomeModel
+    @ObservedObject private var steam = SteamManager.shared
     @ObservedObject private var focus = GameFocus.shared
     @Namespace private var zoom
 
@@ -1504,7 +1564,7 @@ struct HomeTab: View {
                                         compact: compact, leadingInset: leading, trailingInset: trailing, zoom: zoom)
                                     .id("section-continue")
 
-                                GameRow(id: "all", title: "All Games", games: model.libraryGames, model: model,
+                                GameRow(id: "all", title: "Ready to Play", games: model.libraryGames, model: model,
                                         compact: compact, leadingInset: leading, trailingInset: trailing, zoom: zoom)
                                     .id("section-all")
                             }
@@ -1662,12 +1722,15 @@ struct FeaturedSection: View {
     private var subtitle: String {
         var parts: [String] = []
         if !game.hostName.isEmpty { parts.append(game.hostName) }
-        if let last = game.lastPlayed {
+        if let last = model.effectiveLastPlayed(game) {
             let formatter = RelativeDateTimeFormatter()
             formatter.unitsStyle = .full
             parts.append("Played " + formatter.localizedString(for: last, relativeTo: Date()))
         } else {
             parts.append("Not played yet")
+        }
+        if let appid = game.steamAppId, let owned = SteamManager.shared.owned(appid), owned.playtimeForever > 0 {
+            parts.append(SteamManager.formatPlaytime(owned.playtimeForever) + " in total")
         }
         return parts.joined(separator: " · ")
     }
@@ -1797,7 +1860,7 @@ struct GameDetailDestination: ViewModifier {
                     if !presented && model.detail?.tab == tab { model.detail = nil }
                 }
             )) {
-                if let route = model.detail, let game = model.games.first(where: { $0.id == route.gameId }) {
+                if let route = model.detail, let game = model.games.first(where: { $0.id == route.gameId }) ?? Optional(route.game) {
                     GameDetailView(model: model, game: game)
                         .modifier(ZoomDestination(id: route.source, zoom: zoom))
                 }
@@ -1811,6 +1874,7 @@ struct GameDetailDestination: ViewModifier {
 struct GameDetailView: View {
     @ObservedObject var model: HomeModel
     @ObservedObject private var device = DeviceStatus.shared
+    @ObservedObject private var focus = GameFocus.shared
     let game: GameItem
 
     private struct Option: Identifiable {
@@ -1850,12 +1914,23 @@ struct GameDetailView: View {
     var body: some View {
         GeometryReader { geo in
             let heroHeight = max(220, geo.size.height * 0.62)
+            ScrollViewReader { proxy in
             ScrollView(.vertical, showsIndicators: false) {
                 VStack(alignment: .leading, spacing: 18) {
                     hero(height: heroHeight)
+                        .id("detail-top")
 
                     VStack(alignment: .leading, spacing: 18) {
                         HStack(spacing: 10) {
+                            if !game.isInstalled {
+                                Label("Not on this PC", systemImage: "icloud.and.arrow.down")
+                                    .font(.system(size: 15, weight: .semibold))
+                                    .foregroundStyle(.secondary)
+                                    .padding(.horizontal, 14)
+                                    .frame(height: 40)
+                                    .modifier(PanelGlass(corner: 20))
+                                    .gameFocus("detail-play", scope: "detail", corner: 20) {}
+                            } else {
                             Button { model.launch(game) } label: {
                                 HStack(spacing: 8) {
                                     Label(game.running ? "Resume" : "Play", systemImage: "play.fill")
@@ -1896,6 +1971,12 @@ struct GameDetailView: View {
                             }
                             .secondaryGlassButton()
                             .accessibilityLabel("Game options")
+                            }
+                        }
+
+                        if let appid = game.steamAppId {
+                            SteamStatsSection(appid: appid)
+                                .padding(.top, 6)
                         }
                     }
                     .padding(.horizontal, geo.safeAreaInsets.leading + 24)
@@ -1903,6 +1984,17 @@ struct GameDetailView: View {
                 }
             }
             .ignoresSafeArea(.container, edges: [.top, .horizontal])
+            .onChange(of: focus.focusedID) { focused in
+                guard let focused = focused else { return }
+                withAnimation(.easeInOut(duration: 0.2)) {
+                    if focused == "detail-play" || focused == "detail-quit" {
+                        proxy.scrollTo("detail-top", anchor: .top)
+                    } else if focused.hasPrefix("ach-") {
+                        proxy.scrollTo(focused, anchor: .center)
+                    }
+                }
+            }
+            }
         }
         .background(Color.black.ignoresSafeArea())
         .navigationBarTitleDisplayMode(.inline)
@@ -1914,12 +2006,23 @@ struct GameDetailView: View {
         ZStack(alignment: .bottomLeading) {
             Color.clear
                 .overlay(
-                    ArtworkImage(path: game.heroPath ?? game.gridPath, fallbackText: "")
+                    ArtworkImage(path: game.heroPath ?? game.gridPath, fallbackText: "",
+                                 remoteURL: game.steamAppId.flatMap { SteamManager.heroURL($0) })
                 )
                 .clipped()
             LinearGradient(colors: [.clear, .black.opacity(0.35), .black], startPoint: .center, endPoint: .bottom)
             VStack(alignment: .leading, spacing: 8) {
-                if let logo = ArtworkCache.shared.image(game.logoPath) {
+                if game.logoPath == nil, let appid = game.steamAppId, let url = SteamManager.logoURL(appid) {
+                    AsyncImage(url: url) { phase in
+                        if let image = phase.image {
+                            image.resizable().aspectRatio(contentMode: .fit)
+                        } else {
+                            Text(game.name).font(.system(size: 36, weight: .heavy)).lineLimit(2)
+                        }
+                    }
+                    .frame(maxWidth: 380, maxHeight: 110, alignment: .leading)
+                    .shadow(color: .black.opacity(0.5), radius: 8)
+                } else if let logo = ArtworkCache.shared.image(game.logoPath) {
                     Image(uiImage: logo)
                         .resizable()
                         .aspectRatio(contentMode: .fit)
@@ -2007,14 +2110,27 @@ struct GameCard: View {
     let selected: Bool
     let portrait: Bool
     let height: CGFloat
+    var showsReadyBadge = false
 
     var body: some View {
         let width = portrait ? height * 2 / 3 : height * 16 / 9
         ZStack(alignment: .bottomLeading) {
             // Portrait cards: the portrait cover. Landscape cards: the same background as the Home screen, plus the logo
-            ArtworkImage(path: portrait ? game.gridPath : (game.heroPath ?? game.gridPath), fallbackText: game.name)
+            ArtworkImage(path: portrait ? game.gridPath : (game.heroPath ?? game.gridPath), fallbackText: game.name,
+                         remoteURL: game.steamAppId.flatMap { portrait ? SteamManager.coverURL($0) : SteamManager.heroURL($0) })
                 .frame(width: width, height: height)
                 .clipped()
+
+            if showsReadyBadge && game.isInstalled {
+                Text("Ready to Play")
+                    .font(.system(size: 10, weight: .bold))
+                    .foregroundStyle(.black)
+                    .padding(.horizontal, 7)
+                    .padding(.vertical, 3)
+                    .background(Color.green, in: Capsule())
+                    .padding(8)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomLeading)
+            }
 
             if !portrait {
                 LinearGradient(colors: [.clear, .black.opacity(0.75)], startPoint: .center, endPoint: .bottom)
@@ -2070,26 +2186,55 @@ struct GameCard: View {
 
 struct LibraryTab: View {
     @ObservedObject var model: HomeModel
+    @ObservedObject private var steam = SteamManager.shared
     @Namespace private var zoom
+    @State private var filter: GameCollection.Filter = .all
+    @State private var sort: GameCollection.Sort = .name
 
     var body: some View {
+        let entries = GameCollection.entries(model: model, steam: steam)
+        let shown = GameCollection.apply(entries, filter: filter, sort: sort, steam: steam, model: model)
         Group {
-            if model.games.isEmpty {
+            if entries.isEmpty {
                 EmptyStateView(model: model)
             } else {
-                GameGrid(prefix: "lib", games: model.libraryGames, model: model, zoom: zoom)
+                GameGrid(prefix: "lib", games: shown, model: model, zoom: zoom, showsReadyBadge: true) {
+                    HStack(spacing: 12) {
+                        Picker("Show", selection: $filter) {
+                            ForEach(GameCollection.Filter.allCases) { Text($0.rawValue).tag($0) }
+                        }
+                        .pickerStyle(.segmented)
+                        .frame(maxWidth: 420)
+                        Menu {
+                            Picker("Sort by", selection: $sort) {
+                                ForEach(GameCollection.Sort.allCases) { Text($0.rawValue).tag($0) }
+                            }
+                        } label: {
+                            Label(sort.rawValue, systemImage: "arrow.up.arrow.down")
+                                .font(.system(size: 14, weight: .semibold))
+                        }
+                        .secondaryGlassButton()
+                        Spacer(minLength: 0)
+                        Text("\(shown.count) games")
+                            .font(.system(size: 13))
+                            .foregroundStyle(.secondary)
+                    }
+                }
             }
         }
         .modifier(GameDetailDestination(model: model, tab: .library, zoom: zoom))
     }
 }
 
-/// Portrait covers in a grid (Library and Search). Not lazy, so every cover can be reached with the controller.
-struct GameGrid: View {
+/// Portrait covers in a lazy grid (Library and Search can hold hundreds of Steam games).
+/// Controller moves are index-based, so covers off screen are still reachable.
+struct GameGrid<Header: View>: View {
     let prefix: String
     let games: [GameItem]
     @ObservedObject var model: HomeModel
     var zoom: Namespace.ID? = nil
+    var showsReadyBadge = false
+    @ViewBuilder var header: () -> Header
     @ObservedObject private var focus = GameFocus.shared
 
     private let cardWidth: CGFloat = 120
@@ -2100,29 +2245,28 @@ struct GameGrid: View {
         return max(2, Int((width + spacing) / (cardWidth + spacing)))
     }
 
-    private var rows: [[GameItem]] {
-        stride(from: 0, to: games.count, by: columns).map { Array(games[$0..<min($0 + columns, games.count)]) }
-    }
-
     var body: some View {
+        let _ = focus.registerGrid(prefix, ids: games.map { "\(prefix)-\($0.id)" }, columns: columns)
         ScrollViewReader { proxy in
             ScrollView(.vertical, showsIndicators: false) {
-                VStack(alignment: .leading, spacing: 18) {
-                    ScrollOffsetReader()
-                    ForEach(Array(rows.enumerated()), id: \.offset) { _, row in
-                        HStack(alignment: .top, spacing: spacing) {
-                            ForEach(row) { game in
-                                VStack(alignment: .leading, spacing: 6) {
-                                    GameCard(game: game, selected: false, portrait: true, height: 180)
-                                        .modifier(ZoomSource(id: "\(prefix)-\(game.id)", zoom: zoom))
-                                        .gameFocus("\(prefix)-\(game.id)") { model.openDetail(game, source: "\(prefix)-\(game.id)") }
-                                    Text(game.name)
-                                        .font(.system(size: 12.5, weight: .semibold))
-                                        .lineLimit(1)
-                                }
-                                .frame(width: cardWidth)
-                                .onTapGesture { model.openDetail(game, source: "\(prefix)-\(game.id)") }
-                                .contextMenu { GameMenuItems(game: game, model: model) }
+                VStack(alignment: .leading, spacing: 14) {
+                    header()
+                    LazyVGrid(columns: Array(repeating: GridItem(.fixed(cardWidth), spacing: spacing, alignment: .top), count: columns),
+                              alignment: .leading, spacing: 18) {
+                        ForEach(games) { game in
+                            let focusID = "\(prefix)-\(game.id)"
+                            VStack(alignment: .leading, spacing: 6) {
+                                GameCard(game: game, selected: false, portrait: true, height: 180, showsReadyBadge: showsReadyBadge)
+                                    .modifier(ZoomSource(id: focusID, zoom: zoom))
+                                    .gameFocus(focusID) { model.openDetail(game, source: focusID) }
+                                Text(game.name)
+                                    .font(.system(size: 12.5, weight: .semibold))
+                                    .lineLimit(1)
+                            }
+                            .frame(width: cardWidth)
+                            .onTapGesture { model.openDetail(game, source: focusID) }
+                            .contextMenu {
+                                if game.isInstalled { GameMenuItems(game: game, model: model) }
                             }
                         }
                     }
@@ -2132,7 +2276,6 @@ struct GameGrid: View {
                 .padding(.bottom, 90)
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
-            .trackScroll(model)
             .onChange(of: focus.focusedID) { focused in
                 guard let focused = focused, focused.hasPrefix("\(prefix)-") else { return }
                 withAnimation(.easeInOut(duration: 0.2)) {
@@ -2143,14 +2286,23 @@ struct GameGrid: View {
     }
 }
 
+extension GameGrid where Header == EmptyView {
+    init(prefix: String, games: [GameItem], model: HomeModel, zoom: Namespace.ID? = nil, showsReadyBadge: Bool = false) {
+        self.init(prefix: prefix, games: games, model: model, zoom: zoom, showsReadyBadge: showsReadyBadge, header: { EmptyView() })
+    }
+}
+
 // MARK: - Search
 
 struct SearchTab: View {
     @ObservedObject var model: HomeModel
     @Namespace private var zoom
 
+    @ObservedObject private var steam = SteamManager.shared
+
     private var results: [GameItem] {
-        let all = model.libraryGames
+        let all = GameCollection.apply(GameCollection.entries(model: model, steam: steam),
+                                       filter: .all, sort: .name, steam: steam, model: model)
         let trimmed = model.searchQuery.trimmingCharacters(in: .whitespaces)
         guard !trimmed.isEmpty else { return all }
         return all.filter { $0.name.localizedCaseInsensitiveContains(trimmed) }
@@ -2170,7 +2322,7 @@ struct SearchTab: View {
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
-                GameGrid(prefix: "search", games: results, model: model, zoom: zoom)
+                GameGrid(prefix: "search", games: results, model: model, zoom: zoom, showsReadyBadge: true)
             }
         }
         .modifier(GameDetailDestination(model: model, tab: .search, zoom: zoom))
@@ -3126,7 +3278,6 @@ struct SteamCache: Codable {
 }
 
 /// Talks to the Steam Web API and keeps a local cache. Used by the game page and Home in later releases.
-@MainActor
 final class SteamManager: ObservableObject {
     static let shared = SteamManager()
 
@@ -3134,6 +3285,8 @@ final class SteamManager: ObservableObject {
     @Published private(set) var busy = false
     @Published private(set) var errorMessage: String?
     @Published private(set) var hasKey = SteamKeychain.load() != nil
+    @Published private(set) var achievements: [Int: SteamAppStats] = [:]
+    private var loadingAchievements: Set<Int> = []
 
     private static let steamIDKey = "StarlightSteamID"
     private static let staleAfter: TimeInterval = 3 * 60 * 60
@@ -3156,6 +3309,7 @@ final class SteamManager: ObservableObject {
     // MARK: Setup
 
     /// Saves the key (if given) and the profile, then checks them by downloading the games
+    @MainActor
     func configure(apiKey: String, profile: String) async {
         let key = apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
         if !key.isEmpty {
@@ -3186,12 +3340,14 @@ final class SteamManager: ObservableObject {
         }
     }
 
+    @MainActor
     func refreshIfStale() {
         guard isConfigured else { return }
         if let updated = cache?.updated, Date().timeIntervalSince(updated) < Self.staleAfter { return }
         Task { await refreshNow() }
     }
 
+    @MainActor
     func refreshNow() async {
         guard let key = SteamKeychain.load(), let id = steamID, !busy else { return }
         busy = true
@@ -3204,13 +3360,15 @@ final class SteamManager: ObservableObject {
         }
     }
 
+    @MainActor
     func remove() {
+        achievements = [:]
         SteamKeychain.delete()
         UserDefaults.standard.removeObject(forKey: Self.steamIDKey)
         hasKey = false
         cache = nil
         errorMessage = nil
-        try? FileManager.default.removeItem(at: Self.cacheURL)
+        try? FileManager.default.removeItem(at: Self.cacheURL.deletingLastPathComponent())
     }
 
     // MARK: Steam Web API
@@ -3253,6 +3411,7 @@ final class SteamManager: ObservableObject {
         throw SteamError(message: "No Steam profile called \u{201C}\(text)\u{201D}. Use your SteamID64 or the name in your profile URL.")
     }
 
+    @MainActor
     private func refresh(key: String, steamID: String) async throws {
         // Profile name and visibility
         let summary = try await get("ISteamUser/GetPlayerSummaries/v2/", ["key": key, "steamids": steamID])
@@ -3293,6 +3452,75 @@ final class SteamManager: ObservableObject {
         if !profilePublic {
             errorMessage = "Connected, but your Steam “Game details” are private, so playtime and achievements are empty. Set them to Public in Steam › Profile › Privacy Settings."
         }
+    }
+
+    // MARK: Achievements
+
+    /// Player progress + names/icons + global rarity for one game, cached for a few hours
+    @MainActor
+    func loadAchievements(_ appid: Int) async {
+        if let cached = achievements[appid], Date().timeIntervalSince(cached.updated) < Self.staleAfter { return }
+        if let stored = Self.loadStats(appid), Date().timeIntervalSince(stored.updated) < Self.staleAfter {
+            achievements[appid] = stored
+            return
+        }
+        guard let key = SteamKeychain.load(), let id = steamID, !loadingAchievements.contains(appid) else { return }
+        loadingAchievements.insert(appid)
+        defer { loadingAchievements.remove(appid) }
+
+        let app = String(appid)
+        // Games without achievements answer with an error: that just means an empty list
+        let player = (try? await get("ISteamUserStats/GetPlayerAchievements/v1/", ["key": key, "steamid": id, "appid": app, "l": "english"])) ?? [:]
+        let schema = (try? await get("ISteamUserStats/GetSchemaForGame/v2/", ["key": key, "appid": app, "l": "english"])) ?? [:]
+        let global = (try? await get("ISteamUserStats/GetGlobalAchievementPercentagesForApp/v2/", ["gameid": app])) ?? [:]
+
+        var progress: [String: (Bool, Date?)] = [:]
+        for item in ((player["playerstats"] as? [String: Any])?["achievements"] as? [[String: Any]] ?? []) {
+            guard let name = item["apiname"] as? String else { continue }
+            let time = (item["unlocktime"] as? Double) ?? 0
+            progress[name] = (((item["achieved"] as? Int) ?? 0) == 1, time > 0 ? Date(timeIntervalSince1970: time) : nil)
+        }
+        var rarity: [String: Double] = [:]
+        for item in ((global["achievementpercentages"] as? [String: Any])?["achievements"] as? [[String: Any]] ?? []) {
+            guard let name = item["name"] as? String else { continue }
+            if let value = item["percent"] as? Double {
+                rarity[name] = value
+            } else if let text = item["percent"] as? String, let value = Double(text) {
+                rarity[name] = value
+            }
+        }
+        let definitions = ((schema["game"] as? [String: Any])?["availableGameStats"] as? [String: Any])?["achievements"] as? [[String: Any]] ?? []
+        let list: [SteamAchievement] = definitions.compactMap { item in
+            guard let name = item["name"] as? String else { return nil }
+            let state = progress[name]
+            return SteamAchievement(id: name,
+                                    name: item["displayName"] as? String ?? name,
+                                    description: item["description"] as? String ?? "",
+                                    hidden: ((item["hidden"] as? Int) ?? 0) == 1,
+                                    icon: item["icon"] as? String ?? "",
+                                    iconGray: item["icongray"] as? String ?? "",
+                                    achieved: state?.0 ?? false,
+                                    unlocked: state?.1,
+                                    percent: rarity[name])
+        }
+        let stats = SteamAppStats(appid: appid, achievements: list, updated: Date())
+        achievements[appid] = stats
+        Self.saveStats(stats)
+    }
+
+    private static func statsURL(_ appid: Int) -> URL {
+        cacheURL.deletingLastPathComponent().appendingPathComponent("achievements-\(appid).json")
+    }
+
+    private static func loadStats(_ appid: Int) -> SteamAppStats? {
+        guard let data = try? Data(contentsOf: statsURL(appid)) else { return nil }
+        return try? JSONDecoder().decode(SteamAppStats.self, from: data)
+    }
+
+    private static func saveStats(_ stats: SteamAppStats) {
+        let url = statsURL(stats.appid)
+        try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        if let data = try? JSONEncoder().encode(stats) { try? data.write(to: url, options: .atomic) }
     }
 
     // MARK: Cache
@@ -3421,5 +3649,198 @@ struct SteamSettingsView: View {
                 .foregroundStyle(.secondary)
                 .lineLimit(1)
         }
+    }
+}
+
+// MARK: - Steam achievements and collection helpers
+
+struct SteamAchievement: Codable, Identifiable, Equatable {
+    let id: String          // API name
+    let name: String
+    let description: String
+    let hidden: Bool
+    let icon: String
+    let iconGray: String
+    let achieved: Bool
+    let unlocked: Date?
+    let percent: Double?
+}
+
+struct SteamAppStats: Codable, Equatable {
+    let appid: Int
+    let achievements: [SteamAchievement]
+    let updated: Date
+
+    var unlockedCount: Int { achievements.filter(\.achieved).count }
+}
+
+extension SteamManager {
+    static func formatPlaytime(_ minutes: Int) -> String {
+        if minutes < 60 { return "\(minutes) min" }
+        let hours = Double(minutes) / 60
+        return hours < 10 ? String(format: "%.1f h", hours) : "\(Int(hours.rounded())) h"
+    }
+
+    /// Steam's own artwork for games that aren't on the PC (no key needed)
+    static func coverURL(_ appid: Int) -> URL? { URL(string: "https://cdn.cloudflare.steamstatic.com/steam/apps/\(appid)/library_600x900.jpg") }
+    static func heroURL(_ appid: Int) -> URL? { URL(string: "https://cdn.cloudflare.steamstatic.com/steam/apps/\(appid)/library_hero.jpg") }
+    static func logoURL(_ appid: Int) -> URL? { URL(string: "https://cdn.cloudflare.steamstatic.com/steam/apps/\(appid)/logo.png") }
+}
+
+/// Library / Search entries: everything on the PC plus every Steam game you own, merged by appid
+enum GameCollection {
+    enum Filter: String, CaseIterable, Identifiable {
+        case all = "All", ready = "Ready to Play", notInstalled = "Not Installed"
+        var id: String { rawValue }
+    }
+
+    enum Sort: String, CaseIterable, Identifiable {
+        case name = "Name", recent = "Recently Played", playtime = "Most Played"
+        var id: String { rawValue }
+    }
+
+    static func entries(model: HomeModel, steam: SteamManager) -> [GameItem] {
+        let installed = model.libraryGames
+        let installedSteamIds = Set(installed.compactMap(\.steamAppId))
+        let steamOnly = (steam.cache?.owned ?? [])
+            .filter { !installedSteamIds.contains($0.appid) }
+            .map { GameItem.steamOnly(appid: $0.appid, name: $0.name) }
+        return installed + steamOnly
+    }
+
+    static func apply(_ entries: [GameItem], filter: Filter, sort: Sort, steam: SteamManager, model: HomeModel) -> [GameItem] {
+        let filtered: [GameItem]
+        switch filter {
+        case .all: filtered = entries
+        case .ready: filtered = entries.filter(\.isInstalled)
+        case .notInstalled: filtered = entries.filter { !$0.isInstalled }
+        }
+        func playtime(_ game: GameItem) -> Int { game.steamAppId.flatMap { steam.owned($0)?.playtimeForever } ?? 0 }
+        func last(_ game: GameItem) -> Date { model.effectiveLastPlayed(game) ?? .distantPast }
+        return filtered.sorted { a, b in
+            switch sort {
+            case .name:
+                return a.name.localizedCaseInsensitiveCompare(b.name) == .orderedAscending
+            case .recent:
+                let (x, y) = (last(a), last(b))
+                return x != y ? x > y : a.name.localizedCaseInsensitiveCompare(b.name) == .orderedAscending
+            case .playtime:
+                let (x, y) = (playtime(a), playtime(b))
+                return x != y ? x > y : a.name.localizedCaseInsensitiveCompare(b.name) == .orderedAscending
+            }
+        }
+    }
+}
+
+/// Playtime and achievements on the game page (Steam games only)
+struct SteamStatsSection: View {
+    let appid: Int
+    @ObservedObject private var steam = SteamManager.shared
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            if let owned = steam.owned(appid) {
+                HStack(spacing: 22) {
+                    stat(SteamManager.formatPlaytime(owned.playtimeForever), "Played")
+                    if let recent = steam.recent(appid), recent.playtimeTwoWeeks > 0 {
+                        stat(SteamManager.formatPlaytime(recent.playtimeTwoWeeks), "Last 2 weeks")
+                    }
+                    if let last = owned.lastPlayed {
+                        stat(last.formatted(date: .abbreviated, time: .omitted), "Last played")
+                    }
+                }
+            }
+
+            if let stats = steam.achievements[appid] {
+                if !stats.achievements.isEmpty {
+                    VStack(alignment: .leading, spacing: 8) {
+                        HStack {
+                            Text("Achievements")
+                                .font(.system(size: 17, weight: .bold))
+                            Spacer()
+                            Text("\(stats.unlockedCount) of \(stats.achievements.count)")
+                                .font(.system(size: 14, weight: .semibold))
+                                .foregroundStyle(.secondary)
+                        }
+                        ProgressView(value: Double(stats.unlockedCount), total: Double(max(stats.achievements.count, 1)))
+                            .tint(starlightGold)
+                    }
+                    .frame(maxWidth: 560)
+
+                    ForEach(sorted(stats.achievements)) { achievement in
+                        AchievementRow(achievement: achievement)
+                            .gameFocus("ach-\(achievement.id)", scope: "detail", corner: 14) {}
+                    }
+                }
+            } else if steam.isConfigured {
+                HStack(spacing: 8) {
+                    ProgressView()
+                    Text("Loading Steam stats…").foregroundStyle(.secondary)
+                }
+            }
+        }
+        .task(id: appid) { await steam.loadAchievements(appid) }
+    }
+
+    private func stat(_ value: String, _ label: String) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(value).font(.system(size: 18, weight: .bold))
+            Text(label).font(.system(size: 12)).foregroundStyle(.secondary)
+        }
+    }
+
+    /// Unlocked first (most recent first), then locked from most to least common
+    private func sorted(_ list: [SteamAchievement]) -> [SteamAchievement] {
+        list.sorted { a, b in
+            if a.achieved != b.achieved { return a.achieved }
+            if a.achieved { return (a.unlocked ?? .distantPast) > (b.unlocked ?? .distantPast) }
+            return (a.percent ?? 0) > (b.percent ?? 0)
+        }
+    }
+}
+
+struct AchievementRow: View {
+    let achievement: SteamAchievement
+
+    var body: some View {
+        HStack(spacing: 12) {
+            AsyncImage(url: URL(string: achievement.achieved ? achievement.icon : achievement.iconGray)) { phase in
+                if let image = phase.image {
+                    image.resizable()
+                } else {
+                    Color.white.opacity(0.08)
+                }
+            }
+            .frame(width: 44, height: 44)
+            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(achievement.hidden && !achievement.achieved ? "Hidden achievement" : achievement.name)
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundStyle(achievement.achieved ? .white : .white.opacity(0.7))
+                if !(achievement.hidden && !achievement.achieved), !achievement.description.isEmpty {
+                    Text(achievement.description)
+                        .font(.system(size: 12.5))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(2)
+                }
+            }
+            Spacer(minLength: 8)
+            VStack(alignment: .trailing, spacing: 2) {
+                if achievement.achieved, let date = achievement.unlocked {
+                    Text(date.formatted(date: .abbreviated, time: .omitted))
+                        .font(.system(size: 12, weight: .semibold))
+                }
+                if let percent = achievement.percent {
+                    Text(String(format: "%.1f%% of players", percent))
+                        .font(.system(size: 11.5))
+                        .foregroundStyle(percent < 10 ? starlightGold : .secondary)
+                }
+            }
+        }
+        .padding(10)
+        .frame(maxWidth: 560)
+        .modifier(PanelGlass(corner: 14))
+        .accessibilityElement(children: .combine)
     }
 }
