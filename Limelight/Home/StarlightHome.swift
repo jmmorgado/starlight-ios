@@ -708,15 +708,14 @@ struct GameCard: View {
     let height: CGFloat
 
     var body: some View {
-        // SteamGridDB proportions: portrait covers 600x900, landscape covers 460x215 / 920x430
-        let width = portrait ? height * 2 / 3 : height * 460 / 215
+        let width = portrait ? height * 2 / 3 : height * 16 / 9
         ZStack(alignment: .bottomLeading) {
-            ArtworkImage(path: portrait ? game.gridPath : (game.widePath ?? game.heroPath ?? game.gridPath), fallbackText: game.name)
+            // Portrait cards: the portrait cover. Landscape cards: the same background as the Home screen, plus the logo
+            ArtworkImage(path: portrait ? game.gridPath : (game.heroPath ?? game.gridPath), fallbackText: game.name)
                 .frame(width: width, height: height)
                 .clipped()
 
-            // Vertical and horizontal covers have the logo built in; only the plain background gets one on top
-            if !portrait && game.widePath == nil {
+            if !portrait {
                 LinearGradient(colors: [.clear, .black.opacity(0.75)], startPoint: .center, endPoint: .bottom)
                 if let logo = ArtworkCache.shared.image(game.logoPath) {
                     Image(uiImage: logo)
@@ -1242,13 +1241,11 @@ struct ArtworkEditorView: View {
 
     private let kinds: [ArtKind] = [
         ArtKind(kind: "hero", title: "Background", aspect: 16.0 / 9.0,
-                footer: "Fills the Home screen and the loading screen."),
-        ArtKind(kind: "wide", title: "Landscape Cover", aspect: 460.0 / 215.0,
-                footer: "Horizontal cover with the logo built in, used for the game cards in Continue Playing and All Games."),
+                footer: "Fills the Home screen and the loading screen, and is used for the game cards in Continue Playing and All Games."),
         ArtKind(kind: "grid", title: "Portrait Cover", aspect: 2.0 / 3.0,
                 footer: "Vertical cover with the logo built in, used in Library."),
         ArtKind(kind: "logo", title: "Logo", aspect: 2.0,
-                footer: "Shown over the background on the Home screen."),
+                footer: "Shown over the background on the Home screen and on the game cards."),
         ArtKind(kind: "icon", title: "Icon", aspect: 1.0,
                 footer: "Used for Save Icon to Photos and in the Shortcuts app.")
     ]

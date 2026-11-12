@@ -230,24 +230,6 @@ typedef NS_ENUM(NSInteger, ArtworkFetchResult) {
         return ArtworkFetchResultSkipped;
     }
     if (!force && [fm fileExistsAtPath:[dir stringByAppendingPathComponent:SteamGridDBKindGrid]]) {
-        // Already downloaded. Artwork from older versions has no horizontal cover yet: add just that once.
-        NSString* widePath = [dir stringByAppendingPathComponent:SteamGridDBKindWide];
-        NSString* noWideMarker = [dir stringByAppendingPathComponent:@"wide-none"];
-        NSString* gameId = [self matchForAppName:name][@"id"];
-        if ([fm fileExistsAtPath:widePath] || [fm fileExistsAtPath:noWideMarker] || gameId == nil) {
-            return ArtworkFetchResultSkipped;
-        }
-        NSInteger wideStatus = 0;
-        NSArray* items = [self apiGet:[self endpointForKind:SteamGridDBKindWide gameId:[NSString stringWithFormat:@"%@", gameId]] statusCode:&wideStatus];
-        if (items == nil) {
-            return ArtworkFetchResultFailed;
-        }
-        NSString* chosenURL = [self artOverridesForName:name][SteamGridDBKindWide];
-        NSArray* candidates = [chosenURL isKindOfClass:[NSString class]] ? [@[@{ @"url": chosenURL }] arrayByAddingObjectsFromArray:items] : items;
-        if (candidates.count > 0 && [self downloadFirstOf:candidates toPath:widePath]) {
-            return ArtworkFetchResultFetched;
-        }
-        [[NSData data] writeToFile:noWideMarker atomically:YES];
         return ArtworkFetchResultSkipped;
     }
 
@@ -286,7 +268,7 @@ typedef NS_ENUM(NSInteger, ArtworkFetchResult) {
 
     NSDictionary* chosen = [self artOverridesForName:name];
     BOOL gotAny = NO;
-    for (NSString* kind in @[SteamGridDBKindGrid, SteamGridDBKindHero, SteamGridDBKindLogo, SteamGridDBKindIcon, SteamGridDBKindWide]) {
+    for (NSString* kind in @[SteamGridDBKindGrid, SteamGridDBKindHero, SteamGridDBKindLogo, SteamGridDBKindIcon]) {
         NSString* path = [dir stringByAppendingPathComponent:kind];
         NSString* chosenURL = chosen[kind];
         if ([chosenURL isKindOfClass:[NSString class]] && [self downloadFirstOf:@[@{ @"url": chosenURL }] toPath:path]) {
