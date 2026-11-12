@@ -452,18 +452,23 @@ final class HomeModel: ObservableObject {
         }
     }
 
-    /// Pinned games first (in pin order), then the running game, then most recently played
+    /// How far back Continue Playing looks
+    static let continueWindow: TimeInterval = 30 * 24 * 3600
+
+    /// Only games started recently (through Starlight or on the PC per Steam) or running now, newest first
     var continueGames: [GameItem] {
-        games.filter { !$0.hidden }.sorted { a, b in
-            if let pinned = pinnedFirst(a, b) { return pinned }
-            if a.running != b.running { return a.running }
-            switch (effectiveLastPlayed(a), effectiveLastPlayed(b)) {
-            case let (x?, y?): return x > y
-            case (_?, nil): return true
-            case (nil, _?): return false
-            default: return a.name.localizedCaseInsensitiveCompare(b.name) == .orderedAscending
+        let cutoff = Date().addingTimeInterval(-Self.continueWindow)
+        return games
+            .filter { !$0.hidden && ($0.running || (effectiveLastPlayed($0).map { $0 >= cutoff } ?? false)) }
+            .sorted { a, b in
+                if a.running != b.running { return a.running }
+                return (effectiveLastPlayed(a) ?? .distantPast) > (effectiveLastPlayed(b) ?? .distantPast)
             }
-        }
+    }
+
+    /// Games hidden on the current PC (managed in Settings → Hidden Games)
+    var hiddenGames: [GameItem] {
+        games.filter(\.hidden).sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
     }
 
     /// Most recent of: played through Starlight, or played on the PC according to Steam
@@ -477,10 +482,9 @@ final class HomeModel: ObservableObject {
         }
     }
 
-    /// Pinned games first, then alphabetical (hidden games only when the PC shows them)
+    /// Pinned games first, then alphabetical; hidden games live in Settings → Hidden Games
     var libraryGames: [GameItem] {
-        let showHidden = currentHost?.showHidden ?? false
-        return games.filter { showHidden || !$0.hidden }.sorted { a, b in
+        games.filter { !$0.hidden }.sorted { a, b in
             if let pinned = pinnedFirst(a, b) { return pinned }
             return a.name.localizedCaseInsensitiveCompare(b.name) == .orderedAscending
         }
@@ -489,7 +493,7 @@ final class HomeModel: ObservableObject {
     /// The game the user tapped, else the running game, else the first of Continue Playing
     var featured: GameItem? {
         if let id = featuredId, let game = games.first(where: { $0.id == id }) { return game }
-        return games.first(where: { $0.running }) ?? continueGames.first
+        return games.first(where: { $0.running }) ?? continueGames.first ?? libraryGames.first
     }
 
     func launch(_ game: GameItem) { onLaunchApp?(game.host, game.app) }
@@ -1632,9 +1636,11 @@ struct HomeTab: View {
                                     .padding(.trailing, trailing)
                                     .id("section-featured")
 
-                                GameRow(id: "continue", title: "Continue Playing", games: model.continueGames, model: model,
-                                        compact: compact, leadingInset: leading, trailingInset: trailing, zoom: zoom)
-                                    .id("section-continue")
+                                if !model.continueGames.isEmpty {
+                                    GameRow(id: "continue", title: "Continue Playing", games: model.continueGames, model: model,
+                                            compact: compact, leadingInset: leading, trailingInset: trailing, zoom: zoom)
+                                        .id("section-continue")
+                                }
 
                                 GameRow(id: "all", title: "Ready to Play", games: model.libraryGames, model: model,
                                         compact: compact, leadingInset: leading, trailingInset: trailing, zoom: zoom)
@@ -2449,6 +2455,19 @@ struct SettingsTab: View {
                         .settingsFocus("set-addpc", scope: "main") { model.command("addHost") }
                     }
 
+                    Section("Library") {
+                        NavigationLink(tag: "hidden", selection: $route) {
+                            HiddenGamesView(model: model)
+                        } label: {
+                            HStack {
+                                Label("Hidden Games", systemImage: "eye.slash")
+                                Spacer()
+                                Text("\(model.hiddenGames.count)").foregroundStyle(.secondary)
+                            }
+                        }
+                        .settingsFocus("set-hidden", scope: "main") { route = "hidden" }
+                    }
+
                     Section("Accounts") {
                         NavigationLink(tag: "steam", selection: $route) {
                             SteamSettingsView()
@@ -2492,6 +2511,45 @@ struct SettingsTab: View {
             .starlightStatusToolbar()
         }
         .navigationViewStyle(.stack)
+    }
+}
+
+// MARK: - Hidden games
+
+struct HiddenGamesView: View {
+    @ObservedObject var model: HomeModel
+    @Environment(\.dismiss) private var dismiss
+    private let scope = "settings-hidden"
+
+    var body: some View {
+        ScrollViewReader { proxy in
+            List {
+                Section {
+                    if model.hiddenGames.isEmpty {
+                        Text("No hidden games.")
+                            .foregroundStyle(.secondary)
+                    }
+                    ForEach(model.hiddenGames) { game in
+                        HStack(spacing: 12) {
+                            ArtworkImage(path: game.gridPath, fallbackText: game.name)
+                                .frame(width: 40, height: 60)
+                                .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+                            Text(game.name)
+                                .lineLimit(2)
+                            Spacer()
+                            Button("Show") { model.action("hide", game) }
+                                .buttonStyle(.bordered)
+                        }
+                        .settingsFocus("hidden-\(game.id)", scope: scope) { model.action("hide", game) }
+                    }
+                } footer: {
+                    Text("Hidden games don't appear on Home, in the Library or in Search. Tap Show (or press ✕) to bring one back.\(model.currentHost.map { " Showing games on \($0.name)." } ?? "")")
+                }
+            }
+            .modifier(FocusScrollFollower(proxy: proxy))
+        }
+        .navigationTitle("Hidden Games")
+        .settingsScreen(scope, dismiss: dismiss)
     }
 }
 
@@ -2546,13 +2604,6 @@ struct HostDetailView: View {
                                 Label("Refresh Games", systemImage: "arrow.clockwise")
                             }
                             .settingsFocus("pc-refresh", scope: scope) { model.hostAction("refresh", host) }
-                            Toggle(isOn: Binding(get: { host.showHidden },
-                                                 set: { _ in model.hostAction("toggleHidden", host) })) {
-                                Label("Show Hidden Games", systemImage: "eye")
-                            }
-                            .settingsFocus("pc-hidden", scope: scope, adjust: { delta in
-                                if (delta > 0) != host.showHidden { model.hostAction("toggleHidden", host) }
-                            }) { model.hostAction("toggleHidden", host) }
                         }
                         if !host.online {
                             Button { model.hostAction("wake", host) } label: {
@@ -3917,7 +3968,7 @@ enum GameCollection {
 
     static func entries(model: HomeModel, steam: SteamManager) -> [GameItem] {
         let installed = model.libraryGames
-        let installedSteamIds = Set(installed.compactMap(\.steamAppId))
+        let installedSteamIds = Set(model.games.compactMap(\.steamAppId))
         let steamOnly = (steam.cache?.owned ?? [])
             .filter { !installedSteamIds.contains($0.appid) }
             .map { GameItem.steamOnly(appid: $0.appid, name: $0.name) }
