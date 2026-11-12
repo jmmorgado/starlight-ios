@@ -224,6 +224,17 @@ final class HomeModel: ObservableObject {
             closePC()
             closeGameMenu()
             GameFocus.shared.focusedID = nil
+            // Settings has its own focus scope: the Home/Library cards stay loaded in the
+            // other tabs and would otherwise steal the controller selection
+            if oldValue == .settings {
+                for scope in GameFocus.shared.scopes.reversed() where scope.hasPrefix("settings") {
+                    GameFocus.shared.pop(scope)
+                }
+                GameFocus.shared.focusedID = nil
+            }
+            if tab == .settings {
+                GameFocus.shared.push("settings")
+            }
             if tab == .search {
                 searchFieldFocused = true
             } else if oldValue == .search {
@@ -2432,7 +2443,7 @@ struct SettingsTab: View {
                         } label: {
                             Label("Stream Settings", systemImage: "slider.horizontal.3")
                         }
-                        .settingsFocus("set-stream", scope: "main") { route = "stream" }
+                        .settingsFocus("set-stream", scope: "settings") { route = "stream" }
                     }
 
                     Section("PCs") {
@@ -2447,12 +2458,12 @@ struct SettingsTab: View {
                                         .foregroundStyle(.secondary)
                                 }
                             }
-                            .settingsFocus("set-pc-\(host.id)", scope: "main") { route = "pc-\(host.id)" }
+                            .settingsFocus("set-pc-\(host.id)", scope: "settings") { route = "pc-\(host.id)" }
                         }
                         Button { model.command("addHost") } label: {
                             Label("Add PC by Address…", systemImage: "plus")
                         }
-                        .settingsFocus("set-addpc", scope: "main") { model.command("addHost") }
+                        .settingsFocus("set-addpc", scope: "settings") { model.command("addHost") }
                     }
 
                     Section("Library") {
@@ -2465,7 +2476,7 @@ struct SettingsTab: View {
                                 Text("\(model.hiddenGames.count)").foregroundStyle(.secondary)
                             }
                         }
-                        .settingsFocus("set-hidden", scope: "main") { route = "hidden" }
+                        .settingsFocus("set-hidden", scope: "settings") { route = "hidden" }
                     }
 
                     Section("Accounts") {
@@ -2474,7 +2485,7 @@ struct SettingsTab: View {
                         } label: {
                             SteamSettingsRow()
                         }
-                        .settingsFocus("set-steam", scope: "main") { route = "steam" }
+                        .settingsFocus("set-steam", scope: "settings") { route = "steam" }
                     }
 
                     Section("Appearance") {
@@ -2488,7 +2499,7 @@ struct SettingsTab: View {
                                     .foregroundStyle(.secondary)
                             }
                         }
-                        .settingsFocus("set-artwork", scope: "main") { route = "artwork" }
+                        .settingsFocus("set-artwork", scope: "settings") { route = "artwork" }
                     }
 
                     Section {
