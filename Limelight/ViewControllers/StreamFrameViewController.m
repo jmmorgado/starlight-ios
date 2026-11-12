@@ -48,6 +48,9 @@
     UIActivityIndicatorView *_spinner;
     StreamView *_streamView;
     UIView *_loadingBackground;
+#if !TARGET_OS_TV
+    StarlightStreamMenu *_streamMenu;
+#endif
     UIScrollView *_scrollView;
     BOOL _userIsInteracting;
     CGSize _keyboardSize;
@@ -395,10 +398,109 @@
 }
 
 - (void)edgeSwiped {
+#if !TARGET_OS_TV
+    // Starlight: open the stream menu instead of disconnecting right away
+    if (_exitSwipeRecognizer.state == UIGestureRecognizerStateBegan) {
+        Log(LOG_I, @"User swiped from the edge: showing the stream menu");
+        [self showStreamMenu];
+    }
+#else
     Log(LOG_I, @"User swiped to end stream");
-    
     [self returnToMainFrame];
+#endif
 }
+
+#if !TARGET_OS_TV
+#pragma mark - Stream menu (Starlight)
+
+- (void)streamMenuRequested {
+    if (_streamMenu != nil) {
+        [self hideStreamMenu];
+    }
+    else {
+        [self showStreamMenu];
+    }
+}
+
+- (BOOL)streamMenuVisible {
+    return _streamMenu != nil;
+}
+
+- (void)showStreamMenu {
+    if (_streamMenu != nil) {
+        return;
+    }
+    _streamMenu = [[StarlightStreamMenu alloc] initWithGameName:self.streamConfig.appName ?: @"Game"
+                                                   statsVisible:(_statsUpdateTimer != nil)];
+    __weak StreamFrameViewController* weakSelf = self;
+    _streamMenu.onAction = ^(NSString* action) {
+        [weakSelf streamMenuAction:action];
+    };
+    
+    UIViewController* menuVC = _streamMenu.viewController;
+    [self addChildViewController:menuVC];
+    menuVC.view.frame = self.view.bounds;
+    menuVC.view.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
+    [self.view addSubview:menuVC.view];
+    [menuVC didMoveToParentViewController:self];
+}
+
+- (void)hideStreamMenu {
+    if (_streamMenu == nil) {
+        return;
+    }
+    UIViewController* menuVC = _streamMenu.viewController;
+    _streamMenu = nil;
+    [UIView animateWithDuration:0.2 animations:^{
+        menuVC.view.alpha = 0;
+    } completion:^(BOOL finished) {
+        [menuVC willMoveToParentViewController:nil];
+        [menuVC.view removeFromSuperview];
+        [menuVC removeFromParentViewController];
+    }];
+}
+
+- (void)streamMenuAction:(NSString*)action {
+    if ([action isEqualToString:@"resume"]) {
+        [self hideStreamMenu];
+    }
+    else if ([action isEqualToString:@"keyboard"]) {
+        [self hideStreamMenu];
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.25 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+            [self->_streamView toggleKeyboard];
+        });
+    }
+    else if ([action isEqualToString:@"stats"]) {
+        if (_statsUpdateTimer != nil) {
+            [_statsUpdateTimer invalidate];
+            _statsUpdateTimer = nil;
+            [self updateOverlayText:nil];
+        }
+        else {
+            _statsUpdateTimer = [NSTimer scheduledTimerWithTimeInterval:1.0f
+                                                                 target:self
+                                                               selector:@selector(updateStatsOverlay)
+                                                               userInfo:nil
+                                                                repeats:YES];
+            [self updateStatsOverlay];
+        }
+        [_streamMenu setStatsVisible:(_statsUpdateTimer != nil)];
+    }
+    else if ([action isEqualToString:@"disconnect"]) {
+        [self hideStreamMenu];
+        [self returnToMainFrame];
+    }
+    else if ([action isEqualToString:@"quit"]) {
+        [self hideStreamMenu];
+        // The main screen sends the quit request once the stream has closed
+        UIViewController* root = self.navigationController.viewControllers.firstObject;
+        if ([root isKindOfClass:[MainFrameViewController class]]) {
+            [(MainFrameViewController*)root quitAppAfterStreamOnHostAddress:self.streamConfig.host];
+        }
+        [self returnToMainFrame];
+    }
+}
+#endif
 
 - (void) connectionStarted {
     Log(LOG_I, @"Connection started");

@@ -20,6 +20,9 @@
 @property (weak, nonatomic) IBOutlet UIBarButtonItem *settingsButton;
 #if !TARGET_OS_TV
 @property (weak, nonatomic) IBOutlet UIBarButtonItem *upButton;
+
+// Starlight: quit the game on this PC once the stream screen has closed
+- (void)quitAppAfterStreamOnHostAddress:(NSString*)address;
 #endif
 
 @end

@@ -17,6 +17,11 @@
 - (void) mousePresenceChanged;
 - (void) streamExitRequested;
 
+@optional
+// Starlight: Home button held (or tapped while the menu is open)
+- (void) streamMenuRequested;
+- (BOOL) streamMenuVisible;
+
 @end
 
 @interface ControllerSupport : NSObject

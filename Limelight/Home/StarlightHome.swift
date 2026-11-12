@@ -1683,3 +1683,144 @@ struct ArtworkEditorView: View {
         }
     }
 }
+
+// MARK: - Stream menu (shown over a running stream)
+
+/// Liquid Glass panel opened by swiping from the left edge or holding the controller's Home button.
+@objc(StarlightStreamMenu)
+final class StarlightStreamMenu: NSObject {
+    private let state: StreamMenuState
+    private lazy var hosting: UIHostingController<StreamMenuView> = {
+        let controller = UIHostingController(rootView: StreamMenuView(state: state))
+        controller.view.backgroundColor = .clear
+        controller.overrideUserInterfaceStyle = .dark
+        return controller
+    }()
+
+    /// "resume", "keyboard", "stats", "disconnect", "quit"
+    @objc var onAction: ((String) -> Void)? {
+        didSet { state.onAction = onAction }
+    }
+
+    @objc var viewController: UIViewController { hosting }
+
+    @objc init(gameName: String, statsVisible: Bool) {
+        state = StreamMenuState(gameName: gameName, statsVisible: statsVisible)
+        super.init()
+    }
+
+    @objc func setStatsVisible(_ visible: Bool) {
+        state.statsVisible = visible
+    }
+}
+
+final class StreamMenuState: ObservableObject {
+    let gameName: String
+    @Published var statsVisible: Bool
+    @Published var confirmQuit = false
+    var onAction: ((String) -> Void)?
+
+    init(gameName: String, statsVisible: Bool) {
+        self.gameName = gameName
+        self.statsVisible = statsVisible
+    }
+}
+
+struct StreamMenuView: View {
+    @ObservedObject var state: StreamMenuState
+    @State private var shown = false
+
+    var body: some View {
+        ZStack(alignment: .leading) {
+            // Tap outside the panel to go back to the game
+            Color.black.opacity(shown ? 0.35 : 0)
+                .ignoresSafeArea()
+                .onTapGesture { state.onAction?("resume") }
+                .accessibilityLabel("Back to game")
+                .accessibilityAddTraits(.isButton)
+
+            panel
+                .offset(x: shown ? 0 : -360)
+        }
+        .onAppear {
+            withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) { shown = true }
+        }
+        .confirmationDialog("Quit \(state.gameName)?", isPresented: $state.confirmQuit, titleVisibility: .visible) {
+            Button("Quit Game", role: .destructive) { state.onAction?("quit") }
+        } message: {
+            Text("The game closes on your PC. Unsaved progress may be lost.")
+        }
+    }
+
+    private var panel: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text(state.gameName)
+                .font(.system(size: 20, weight: .bold))
+                .lineLimit(2)
+                .padding(.bottom, 6)
+
+            menuButton("Back to Game", symbol: "play.fill", prominent: true) { state.onAction?("resume") }
+            menuButton("Keyboard", symbol: "keyboard") { state.onAction?("keyboard") }
+            menuButton(state.statsVisible ? "Hide Statistics" : "Show Statistics", symbol: "chart.bar.xaxis") {
+                state.onAction?("stats")
+            }
+
+            Spacer(minLength: 8)
+
+            menuButton("Stop Streaming", symbol: "stop.fill") { state.onAction?("disconnect") }
+            Text("The game keeps running on your PC.")
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+                .padding(.leading, 4)
+            menuButton("Quit Game", symbol: "xmark.circle.fill", destructive: true) { state.confirmQuit = true }
+        }
+        .padding(20)
+        .frame(width: 300)
+        .frame(maxHeight: .infinity, alignment: .top)
+        .modifier(StreamMenuGlass())
+        .padding(.vertical, 12)
+        .padding(.leading, 12)
+    }
+
+    private func menuButton(_ title: String, symbol: String, prominent: Bool = false, destructive: Bool = false,
+                            action: @escaping () -> Void) -> some View {
+        Button(role: destructive ? .destructive : nil, action: action) {
+            Label(title, systemImage: symbol)
+                .font(.system(size: 16, weight: .semibold))
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.vertical, 6)
+        }
+        .modifier(StreamMenuButtonStyle(prominent: prominent, destructive: destructive))
+    }
+}
+
+private struct StreamMenuGlass: ViewModifier {
+    func body(content: Content) -> some View {
+        if #available(iOS 26.0, *) {
+            content.glassEffect(.regular, in: RoundedRectangle(cornerRadius: 28, style: .continuous))
+        } else {
+            content.background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 28, style: .continuous))
+        }
+    }
+}
+
+private struct StreamMenuButtonStyle: ViewModifier {
+    let prominent: Bool
+    let destructive: Bool
+
+    func body(content: Content) -> some View {
+        if #available(iOS 26.0, *) {
+            if prominent {
+                content.buttonStyle(.glassProminent).tint(starlightGold)
+            } else {
+                content.buttonStyle(.glass).tint(destructive ? .red : nil)
+            }
+        } else {
+            if prominent {
+                content.buttonStyle(.borderedProminent).tint(starlightGold)
+            } else {
+                content.buttonStyle(.bordered).tint(destructive ? .red : nil)
+            }
+        }
+    }
+}

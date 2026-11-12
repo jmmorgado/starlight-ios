@@ -65,6 +65,7 @@
     StarlightHomeController* _home;
     NSTimer* _homeRefreshTimer;
     NSString* _homeHostUUID;
+    NSString* _pendingQuitHostAddress;
 #endif
 }
 static NSMutableSet* hostList;
@@ -1503,6 +1504,11 @@ static const NSUInteger kMaxQuickActions = 4;
     
     // Check for a pending deep link launch (cold start or returning from a stream)
     [self handlePendingLaunch:NO];
+    
+#if !TARGET_OS_TV
+    // "Quit Game" from the stream menu
+    [self handlePendingQuitAfterStream];
+#endif
 }
 
 #if !TARGET_OS_TV
@@ -2130,12 +2136,35 @@ static const NSUInteger kMaxQuickActions = 4;
     }];
 }
 
-- (void)quitRunningAppOnHost:(TemporaryHost*)host {
-    TemporaryApp* runningApp = [self findRunningApp:host];
-    if (runningApp == nil) {
+- (void)quitAppAfterStreamOnHostAddress:(NSString*)address {
+    _pendingQuitHostAddress = address;
+}
+
+- (void)handlePendingQuitAfterStream {
+    NSString* address = _pendingQuitHostAddress;
+    _pendingQuitHostAddress = nil;
+    if (address == nil) {
         return;
     }
-    Log(LOG_I, @"Quitting application: %@", runningApp.name);
+    TemporaryHost* target = nil;
+    @synchronized (hostList) {
+        for (TemporaryHost* host in hostList) {
+            if ([host.activeAddress isEqualToString:address] || [host.localAddress isEqualToString:address] ||
+                [host.address isEqualToString:address] || [host.externalAddress isEqualToString:address]) {
+                target = host;
+                break;
+            }
+        }
+    }
+    if (target != nil) {
+        [self quitRunningAppOnHost:target];
+    }
+}
+
+- (void)quitRunningAppOnHost:(TemporaryHost*)host {
+    // Right after a stream the running game may not be refreshed yet, so quit regardless
+    TemporaryApp* runningApp = [self findRunningApp:host];
+    Log(LOG_I, @"Quitting application: %@", runningApp.name ?: @"(running app)");
     [_appManager stopRetrieving];
     [self showLoadingFrame:^{
         dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{

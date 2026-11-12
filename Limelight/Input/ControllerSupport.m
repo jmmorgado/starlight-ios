@@ -321,6 +321,52 @@ static const double MOUSE_SPEED_DIVISOR = 1.25;
     return (_multiController ? _controllerNumbers : 1) | (_oscEnabled ? 1 : 0);
 }
 
+// Starlight: a quick tap sends Guide to the PC; holding opens the stream menu instead
+-(void) handleHomeButton:(Controller*)controller pressed:(BOOL)pressed
+{
+    BOOL canShowMenu = [_delegate respondsToSelector:@selector(streamMenuRequested)];
+    if (!canShowMenu) {
+        UPDATE_BUTTON_FLAG(controller, SPECIAL_FLAG, pressed);
+        return;
+    }
+    
+    if (pressed && !controller.homeButtonDown) {
+        controller.homeButtonDown = YES;
+        controller.homeLongPressFired = NO;
+        dispatch_async(dispatch_get_main_queue(), ^{
+            [controller.homeTimer invalidate];
+            controller.homeTimer = [NSTimer scheduledTimerWithTimeInterval:0.5 repeats:NO block:^(NSTimer* timer) {
+                if (controller.homeButtonDown && !controller.homeLongPressFired) {
+                    controller.homeLongPressFired = YES;
+                    [self->_delegate streamMenuRequested];
+                }
+            }];
+        });
+    }
+    else if (!pressed && controller.homeButtonDown) {
+        controller.homeButtonDown = NO;
+        BOOL wasLongPress = controller.homeLongPressFired;
+        dispatch_async(dispatch_get_main_queue(), ^{
+            [controller.homeTimer invalidate];
+            controller.homeTimer = nil;
+            if (wasLongPress || controller.homeLongPressFired) {
+                return;
+            }
+            // A tap while the menu is open closes it instead of reaching the PC
+            if ([self->_delegate respondsToSelector:@selector(streamMenuVisible)] && [self->_delegate streamMenuVisible]) {
+                [self->_delegate streamMenuRequested];
+                return;
+            }
+            [self setButtonFlag:controller flags:SPECIAL_FLAG];
+            [self updateFinished:controller];
+            dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.1 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+                [self clearButtonFlag:controller flags:SPECIAL_FLAG];
+                [self updateFinished:controller];
+            });
+        });
+    }
+}
+
 -(void) updateFinished:(Controller*)controller
 {
     BOOL exitRequested = NO;
@@ -771,7 +817,7 @@ static const double MOUSE_SPEED_DIVISOR = 1.25;
                 if (@available(iOS 14.0, tvOS 14.0, *)) {
                     // Home/Guide button is optional (only present on Xbox One S and PS4 gamepads)
                     if (gamepad.buttonHome != nil) {
-                        UPDATE_BUTTON_FLAG(limeController, SPECIAL_FLAG, gamepad.buttonHome.pressed);
+                        [self handleHomeButton:limeController pressed:gamepad.buttonHome.pressed];
                     }
                     
                     // Xbox One/Series controllers
