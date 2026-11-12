@@ -263,12 +263,13 @@ typedef NS_ENUM(NSInteger, ArtworkFetchResult) {
         for (NSString* name in uniqueNames) {
             ArtworkFetchResult result = [self fetchArtworkForName:name force:force];
             switch (result) {
-                case ArtworkFetchResultFetched:
+                case ArtworkFetchResultFetched: {
                     fetched++;
                     dispatch_async(dispatch_get_main_queue(), ^{
                         [[NSNotificationCenter defaultCenter] postNotificationName:SteamGridDBArtworkUpdatedNotification object:name];
                     });
                     break;
+                }
                 case ArtworkFetchResultNotFound:
                     notFound++;
                     break;
