@@ -1887,7 +1887,7 @@ struct GameDetailView: View {
                             .secondaryGlassButton()
                             .accessibilityLabel("Game options")
                         }
-
+                    }
                     .padding(.horizontal, geo.safeAreaInsets.leading + 24)
                     .padding(.bottom, 40)
                 }
