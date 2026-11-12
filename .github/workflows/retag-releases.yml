@@ -3,6 +3,10 @@ name: Retag releases
 # One-off: moves every release from a build-N tag to v0.N.0 (same commit, same release object).
 # Releases are never deleted or recreated: the tag is switched with `gh release edit --tag`,
 # and the old tag is deleted only after the release is confirmed on the new one.
+#
+# Needs a repository secret RETAG_TOKEN: a fine-grained personal access token for this repo with
+# Contents (read and write) and Workflows (read and write). GitHub doesn't let the built-in workflow
+# token create tags on commits that change workflow files.
 on:
   push:
     branches:
@@ -25,10 +29,14 @@ jobs:
 
       - name: Move releases to v0.N.0 tags
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ secrets.RETAG_TOKEN }}
           REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
+          if [ -z "$GH_TOKEN" ]; then
+            echo "The RETAG_TOKEN secret is missing"; exit 1
+          fi
+          REMOTE="https://x-access-token:${GH_TOKEN}@github.com/${REPO}.git"
           git fetch --tags --force
           for TAG in $(gh api --paginate "repos/$REPO/releases?per_page=100" --jq '.[].tag_name'); do
             case "$TAG" in build-*) ;; *) echo "Skipping $TAG"; continue ;; esac
@@ -37,10 +45,16 @@ jobs:
             SHA=$(git rev-list -n 1 "refs/tags/$TAG")
             echo "== $TAG -> $NEW ($SHA)"
 
-            # 1+2. Point the existing release at the new tag on the same commit (the release API creates it)
-            gh release edit "$TAG" --repo "$REPO" --tag "$NEW" --target "$SHA" --title "Starlight build $N"
+            # 1. New tag on the same commit
+            if ! git ls-remote --exit-code --tags "$REMOTE" "refs/tags/$NEW" > /dev/null; then
+              git tag -f "$NEW" "$SHA"
+              git push "$REMOTE" "refs/tags/$NEW"
+            fi
 
-            # 3. Only once the release is confirmed on the new tag, and that tag is on the same commit, delete the old one
+            # 2. Point the existing release at it (title kept as "Starlight build N")
+            gh release edit "$TAG" --repo "$REPO" --tag "$NEW" --title "Starlight build $N"
+
+            # 3. Only once the release is confirmed on the new tag, at the same commit, delete the old one
             LINKED=$(gh api "repos/$REPO/releases/tags/$NEW" --jq '.tag_name')
             NEW_SHA=$(gh api "repos/$REPO/commits/$NEW" --jq '.sha')
             if [ "$LINKED" != "$NEW" ] || [ "$NEW_SHA" != "$SHA" ]; then
@@ -53,11 +67,10 @@ jobs:
 
       - name: Fix internal links in release notes
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ secrets.RETAG_TOKEN }}
           REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
-          # Only notes that link to another release need refreshing
           for f in $(grep -l "releases/tag/" .github/release-notes/build-*.md); do
             N=$(basename "$f" .md); N="${N#build-}"
             gh release edit "v0.$N.0" --repo "$REPO" --notes-file "$f"
