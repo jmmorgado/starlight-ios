@@ -53,6 +53,7 @@
     NSArray* _sortedAppList;
     NSCache* _boxArtCache;
     bool _background;
+    BOOL _pendingLaunchFallbackScheduled;
 #if TARGET_OS_TV
     UITapGestureRecognizer* _menuRecognizer;
 #endif
@@ -829,6 +830,20 @@ static NSMutableSet* hostList;
         }]];
     }
     
+#if !TARGET_OS_TV
+    // Copies a moonlightlink:// URL that launches this app directly (for the Shortcuts app)
+    [alertController addAction:[UIAlertAction actionWithTitle:@"Copy Shortcut Link" style:UIAlertActionStyleDefault handler:^(UIAlertAction* action) {
+        NSString* link = [self launchLinkForApp:app];
+        [UIPasteboard generalPasteboard].string = link;
+
+        UIAlertController* copiedAlert = [UIAlertController alertControllerWithTitle:@"Shortcut Link Copied"
+                                                                             message:[NSString stringWithFormat:@"In the Shortcuts app, add an \"Open URLs\" action and paste this link:\n\n%@", link]
+                                                                      preferredStyle:UIAlertControllerStyleAlert];
+        [copiedAlert addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:nil]];
+        [[self activeViewController] presentViewController:copiedAlert animated:YES completion:nil];
+    }]];
+#endif
+
     [alertController addAction:[UIAlertAction actionWithTitle:@"Cancel" style:UIAlertActionStyleCancel handler:nil]];
 
     // these two lines are required for iPad support of UIAlertSheet
@@ -1075,6 +1090,144 @@ static NSMutableSet* hostList;
     }
 }
 
+#pragma mark - Deep link launch (moonlightlink://launch?host=...&app=...)
+
+- (NSString*)launchLinkForApp:(TemporaryApp*)app {
+    NSURLComponents* components = [[NSURLComponents alloc] init];
+    components.scheme = @"moonlightlink";
+    components.host = @"launch";
+    components.queryItems = @[[NSURLQueryItem queryItemWithName:@"host" value:app.host.uuid],
+                              [NSURLQueryItem queryItemWithName:@"app" value:app.id],
+                              // Informational only, makes links readable in Shortcuts
+                              [NSURLQueryItem queryItemWithName:@"name" value:app.name]];
+    return components.URL.absoluteString;
+}
+
+- (void)clearPendingLaunch {
+    AppDelegate* delegate = (AppDelegate*)[UIApplication sharedApplication].delegate;
+    delegate.pendingLaunchHost = nil;
+    delegate.pendingLaunchApp = nil;
+    _pendingLaunchFallbackScheduled = NO;
+}
+
+- (void)showPendingLaunchError:(NSString*)message {
+    UIAlertController* alert = [UIAlertController alertControllerWithTitle:@"Shortcut Launch Failed"
+                                                                   message:message
+                                                            preferredStyle:UIAlertControllerStyleAlert];
+    [alert addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:nil]];
+    [[self activeViewController] presentViewController:alert animated:YES completion:nil];
+}
+
+// Launches the app requested by a deep link once this view is visible.
+// If the host hasn't been found online yet, waits for discovery for a few
+// seconds before trying with the last known address.
+- (void)handlePendingLaunch:(BOOL)force {
+    AppDelegate* delegate = (AppDelegate*)[UIApplication sharedApplication].delegate;
+    NSString* hostParam = delegate.pendingLaunchHost;
+    NSString* appParam = delegate.pendingLaunchApp;
+    if (hostParam == nil || appParam == nil) {
+        return;
+    }
+
+    // Only act while we're the visible view (not streaming, not backgrounded)
+    if (_background || self.view.window == nil) {
+        // Allow the wait to restart when we become visible again
+        _pendingLaunchFallbackScheduled = NO;
+        return;
+    }
+
+    TemporaryHost* host = nil;
+    @synchronized (hostList) {
+        for (TemporaryHost* candidate in hostList) {
+            if ([candidate.uuid caseInsensitiveCompare:hostParam] == NSOrderedSame) {
+                host = candidate;
+                break;
+            }
+        }
+        if (host == nil) {
+            for (TemporaryHost* candidate in hostList) {
+                if ([candidate.name caseInsensitiveCompare:hostParam] == NSOrderedSame) {
+                    host = candidate;
+                    break;
+                }
+            }
+        }
+    }
+
+    if (host == nil) {
+        [self clearPendingLaunch];
+        [self showPendingLaunchError:[NSString stringWithFormat:@"No paired PC matches \"%@\". Add and pair the PC in Moonlight first.", hostParam]];
+        return;
+    }
+
+    if (host.pairState != PairStatePaired && host.serverCert == nil) {
+        [self clearPendingLaunch];
+        [self showPendingLaunchError:[NSString stringWithFormat:@"%@ is not paired with this device.", host.name]];
+        return;
+    }
+
+    TemporaryApp* app = nil;
+    for (TemporaryApp* candidate in host.appList) {
+        if ([candidate.id isEqualToString:appParam]) {
+            app = candidate;
+            break;
+        }
+    }
+    if (app == nil) {
+        for (TemporaryApp* candidate in host.appList) {
+            if ([candidate.name caseInsensitiveCompare:appParam] == NSOrderedSame) {
+                app = candidate;
+                break;
+            }
+        }
+    }
+
+    if (app == nil) {
+        [self clearPendingLaunch];
+        [self showPendingLaunchError:[NSString stringWithFormat:@"\"%@\" was not found on %@. Open the PC in Moonlight once to refresh its app list.", appParam, host.name]];
+        return;
+    }
+
+    if (host.state != StateOnline && !force) {
+        // Give discovery a moment to find the PC and refresh its address and running game.
+        // Discovery doesn't notify us when a known host comes online, so poll its state.
+        if (!_pendingLaunchFallbackScheduled) {
+            _pendingLaunchFallbackScheduled = YES;
+            Log(LOG_I, @"Waiting for %@ to come online before launching %@", host.name, app.name);
+            [self pollPendingLaunchHost:host remainingChecks:12];
+        }
+        return;
+    }
+
+    Log(LOG_I, @"Launching %@ on %@ from deep link", app.name, host.name);
+    [self clearPendingLaunch];
+
+    // Same path as tapping the app: streams immediately, or shows the
+    // resume/quit menu if a different app is already running on the PC
+    [self appClicked:app view:self.view];
+}
+
+// Checks every 0.5s (up to remainingChecks times) whether the host is online,
+// then launches; after the last check it launches anyway with the last known address.
+- (void)pollPendingLaunchHost:(TemporaryHost*)host remainingChecks:(int)remainingChecks {
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.5 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        if (!self->_pendingLaunchFallbackScheduled) {
+            // Launched or cancelled in the meantime
+            return;
+        }
+        if (host.state == StateOnline || remainingChecks <= 1) {
+            [self handlePendingLaunch:YES];
+        }
+        else {
+            [self pollPendingLaunchHost:host remainingChecks:remainingChecks - 1];
+        }
+    });
+}
+
+- (void)handlePendingLaunchNotification {
+    [self handlePendingLaunch:NO];
+}
+
 -(void)handleReturnToForeground
 {
     _background = NO;
@@ -1083,6 +1236,9 @@ static NSMutableSet* hostList;
     
     // Check for a pending shortcut action when returning to foreground
     [self handlePendingShortcutAction];
+
+    // Check for a pending deep link launch
+    [self handlePendingLaunch:NO];
 }
 
 -(void)handleEnterBackground
@@ -1119,6 +1275,14 @@ static NSMutableSet* hostList;
                                              selector: @selector(handleEnterBackground)
                                                  name: UIApplicationWillResignActiveNotification
                                                object: nil];
+
+    [[NSNotificationCenter defaultCenter] addObserver: self
+                                             selector: @selector(handlePendingLaunchNotification)
+                                                 name: @"MoonlightPendingLaunch"
+                                               object: nil];
+
+    // Check for a pending deep link launch (cold start or returning from a stream)
+    [self handlePendingLaunch:NO];
 }
 
 - (void)viewWillAppear:(BOOL)animated
@@ -1193,6 +1357,9 @@ static NSMutableSet* hostList;
             [hostList addObjectsFromArray:hostsCopy];
         }
         [self updateHosts];
+
+        // Discovery may have just found the PC a deep link is waiting for
+        [self handlePendingLaunch:NO];
     });
 }
 

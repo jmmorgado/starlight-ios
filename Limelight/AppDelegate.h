@@ -14,6 +14,10 @@
 @property (strong, nonatomic) NSString *pcUuidToLoad;
 @property (strong, nonatomic) void (^shortcutCompletionHandler)(BOOL);
 
+// Deep link launch request: moonlightlink://launch?host=<PC UUID or name>&app=<app ID or name>
+@property (strong, nonatomic) NSString *pendingLaunchHost;
+@property (strong, nonatomic) NSString *pendingLaunchApp;
+
 @property (readonly, strong, nonatomic) NSManagedObjectContext *managedObjectContext;
 @property (readonly, strong, nonatomic) NSManagedObjectModel *managedObjectModel;
 @property (readonly, strong, nonatomic) NSPersistentStoreCoordinator *persistentStoreCoordinator;

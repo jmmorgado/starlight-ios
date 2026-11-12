@@ -32,6 +32,39 @@ static NSString* DB_NAME = @"Limelight_iOS.sqlite";
     return YES;
 }
 
+// Handles moonlightlink://launch?host=<PC UUID or name>&app=<app ID or name>
+// The launch itself is performed by MainFrameViewController once the host list is available.
+- (BOOL)application:(UIApplication *)application openURL:(NSURL *)url options:(NSDictionary<UIApplicationOpenURLOptionsKey,id> *)options {
+    if (![[url.scheme lowercaseString] isEqualToString:@"moonlightlink"] ||
+        ![[url.host lowercaseString] isEqualToString:@"launch"]) {
+        return NO;
+    }
+
+    NSString* hostParam = nil;
+    NSString* appParam = nil;
+    NSURLComponents* components = [NSURLComponents componentsWithURL:url resolvingAgainstBaseURL:NO];
+    for (NSURLQueryItem* item in components.queryItems) {
+        NSString* name = [item.name lowercaseString];
+        if ([name isEqualToString:@"host"] || [name isEqualToString:@"pc"]) {
+            hostParam = item.value;
+        }
+        else if ([name isEqualToString:@"app"] || [name isEqualToString:@"game"]) {
+            appParam = item.value;
+        }
+    }
+
+    if (hostParam.length == 0 || appParam.length == 0) {
+        Log(LOG_W, @"Ignoring launch URL without host and app: %@", url);
+        return NO;
+    }
+
+    Log(LOG_I, @"Received launch URL for host '%@', app '%@'", hostParam, appParam);
+    _pendingLaunchHost = hostParam;
+    _pendingLaunchApp = appParam;
+    [[NSNotificationCenter defaultCenter] postNotificationName:@"MoonlightPendingLaunch" object:nil];
+    return YES;
+}
+
 #if !TARGET_OS_TV
 - (void)application:(UIApplication *)application performActionForShortcutItem:(UIApplicationShortcutItem *)shortcutItem completionHandler:(void (^)(BOOL succeeded))completionHandler {
     _pcUuidToLoad = (NSString*)[shortcutItem.userInfo objectForKey:@"UUID"];
