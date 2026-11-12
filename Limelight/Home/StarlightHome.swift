@@ -650,6 +650,7 @@ struct HomeRootView: View {
                 }
             }
             .modifier(TabBarMinimizeOnScroll())
+            .modifier(SoftScrollEdge())
         } else {
             TabView(selection: $model.tab) {
                 StarlightStack { HomeTab(model: model).starlightToolbar(model) }
@@ -1659,8 +1660,8 @@ struct HomeTab: View {
     @ObservedObject private var steam = SteamManager.shared
     @ObservedObject private var focus = GameFocus.shared
     @Namespace private var zoom
-    /// Scrolled away from the top: the navigation bar shows "Play Now" over the system scroll-edge blur
-    @State private var scrolled = false
+    /// 0 at the top → 1 after scrolling a little: fades "Play Now" into the navigation bar
+    @State private var titleProgress: Double = 0
 
     var body: some View {
         GeometryReader { geo in
@@ -1692,7 +1693,7 @@ struct HomeTab: View {
                         }
                         // Scroll across the full width so the rows reach the screen edges
                         .ignoresSafeArea(.container, edges: .horizontal)
-                        .modifier(HomeScrollState(scrolled: $scrolled))
+                        .modifier(HomeScrollState(progress: $titleProgress))
                         .onChange(of: focus.focusedID) { id in
                             scroll(to: id, proxy: proxy)
                         }
@@ -1706,7 +1707,13 @@ struct HomeTab: View {
             // and draws its native scroll-edge effect, like Library and Settings
             .background(backdrop)
         }
-        .navigationTitle(scrolled && model.featured != nil ? "Play Now" : "")
+        .toolbar {
+            ToolbarItem(placement: .principal) {
+                Text("Play Now")
+                    .font(.headline)
+                    .opacity(model.featured != nil ? titleProgress : 0)
+            }
+        }
         .modifier(GameDetailDestination(model: model, tab: .home, zoom: zoom))
     }
 
@@ -1754,17 +1761,31 @@ struct HomeTab: View {
     }
 }
 
-/// Whether the Home list has moved away from the top (iOS 18+; earlier versions keep the bar empty)
+/// How far the Home list has moved from the top, as 0…1 over the first 60 pt (iOS 18+; earlier versions keep the bar empty).
+/// Follows the finger continuously, like the system's own large-title collapse.
 struct HomeScrollState: ViewModifier {
-    @Binding var scrolled: Bool
+    @Binding var progress: Double
 
     func body(content: Content) -> some View {
         if #available(iOS 18.0, *) {
-            content.onScrollGeometryChange(for: Bool.self) { geo in
-                geo.contentOffset.y + geo.contentInsets.top > 12
+            content.onScrollGeometryChange(for: Double.self) { geo in
+                let offset = geo.contentOffset.y + geo.contentInsets.top
+                return min(1, max(0, Double(offset - 8) / 60))
             } action: { _, value in
-                withAnimation(.easeInOut(duration: 0.2)) { scrolled = value }
+                progress = (value * 20).rounded() / 20
             }
+        } else {
+            content
+        }
+    }
+}
+
+/// iOS 26: the soft scroll-edge effect (a progressive blur that grows as content slides under the bar)
+/// on every tab, instead of a bar background that switches on
+struct SoftScrollEdge: ViewModifier {
+    func body(content: Content) -> some View {
+        if #available(iOS 26.0, *) {
+            content.scrollEdgeEffectStyle(.soft, for: .top)
         } else {
             content
         }
