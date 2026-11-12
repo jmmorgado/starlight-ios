@@ -51,6 +51,13 @@ o menu normal do Moonlight (retomar / fechar e iniciar).
 
 Se algo falhar (PC não emparelhado, jogo não encontrado), aparece um aviso a explicar.
 
+## Arte dos jogos (SteamGridDB)
+
+1. Em steamgriddb.com, entra com a conta Steam → **Preferences → API** → gera uma chave.
+2. Na Starlight, toca no botão de imagem no topo (**Game Artwork**) e cola a chave.
+3. A app descarrega capa, fundo, logótipo e ícone de cada jogo. Os jogos novos são
+   descarregados automaticamente. A chave fica só no iPhone.
+
 ## Compilar sem Mac (GitHub Actions)
 
 O workflow `.github/workflows/build-ipa.yml` compila automaticamente a cada push

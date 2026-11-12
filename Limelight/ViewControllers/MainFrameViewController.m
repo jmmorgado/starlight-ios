@@ -29,6 +29,9 @@
 
 #if !TARGET_OS_TV
 #import "SettingsViewController.h"
+#if !TARGET_OS_TV
+#import "SteamGridDBManager.h"
+#endif
 #else
 #import <sys/utsname.h>
 #endif
@@ -287,6 +290,11 @@ static NSMutableSet* hostList;
     // This host may be eligible for a shortcut now that the app list
     // has been populated
     [self updateHostShortcuts];
+    
+#if !TARGET_OS_TV
+    // Download SteamGridDB artwork for any games that don't have it yet
+    [self fetchArtworkForHosts:@[host] force:NO completion:nil];
+#endif
 }
 
 - (void)showHostSelectionView {
@@ -959,6 +967,18 @@ static NSMutableSet* hostList;
             }
         });
     }
+    
+#if !TARGET_OS_TV
+    // Game artwork (SteamGridDB) settings
+    UIBarButtonItem* artworkButton = [[UIBarButtonItem alloc] initWithImage:[UIImage systemImageNamed:@"photo.on.rectangle.angled"]
+                                                                      style:UIBarButtonItemStylePlain
+                                                                     target:self
+                                                                     action:@selector(showArtworkSettings)];
+    artworkButton.accessibilityLabel = @"Game Artwork";
+    NSMutableArray* rightItems = [self.navigationItem.rightBarButtonItems mutableCopy] ?: [NSMutableArray array];
+    [rightItems addObject:artworkButton];
+    self.navigationItem.rightBarButtonItems = rightItems;
+#endif
         
 #if !TARGET_OS_TV
     // Set the side bar button action. When it's tapped, it'll show the sidebar.
@@ -1267,6 +1287,25 @@ static NSMutableSet* hostList;
         [subview removeFromSuperview];
     }
     
+#if !TARGET_OS_TV
+    // SteamGridDB hero as a dimmed full-screen background
+    NSString* heroPath = app != nil ? [[SteamGridDBManager sharedManager] cachedPathForAppName:app.name kind:SteamGridDBKindHero] : nil;
+    UIImage* hero = heroPath != nil ? [UIImage imageWithContentsOfFile:heroPath] : nil;
+    if (hero != nil) {
+        UIImageView* heroView = [[UIImageView alloc] initWithFrame:_launchOverlay.bounds];
+        heroView.image = hero;
+        heroView.contentMode = UIViewContentModeScaleAspectFill;
+        heroView.clipsToBounds = YES;
+        heroView.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
+        [_launchOverlay addSubview:heroView];
+        
+        UIView* dim = [[UIView alloc] initWithFrame:_launchOverlay.bounds];
+        dim.backgroundColor = [UIColor colorWithWhite:0 alpha:0.6];
+        dim.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
+        [_launchOverlay addSubview:dim];
+    }
+#endif
+    
     UIStackView* stack = [[UIStackView alloc] init];
     stack.axis = UILayoutConstraintAxisVertical;
     stack.alignment = UIStackViewAlignmentCenter;
@@ -1454,6 +1493,13 @@ static const NSUInteger kMaxQuickActions = 4;
                                                  name: @"StarlightPendingLaunch"
                                                object: nil];
 
+#if !TARGET_OS_TV
+    [[NSNotificationCenter defaultCenter] addObserver: self
+                                             selector: @selector(handleArtworkUpdated:)
+                                                 name: SteamGridDBArtworkUpdatedNotification
+                                               object: nil];
+#endif
+    
     // Check for a pending deep link launch (cold start or returning from a stream)
     [self handlePendingLaunch:NO];
 }
@@ -1583,6 +1629,121 @@ static const NSUInteger kMaxQuickActions = 4;
 }
 
 #if !TARGET_OS_TV
+#pragma mark - Game artwork (SteamGridDB)
+
+- (NSString*)catalogArtPathForApp:(TemporaryApp*)app {
+    SteamGridDBManager* sgdb = [SteamGridDBManager sharedManager];
+    NSString* path = [sgdb cachedPathForAppName:app.name kind:SteamGridDBKindIcon]
+                  ?: [sgdb cachedPathForAppName:app.name kind:SteamGridDBKindGrid]
+                  ?: [AppAssetManager boxArtPathForApp:app];
+    return path ?: @"";
+}
+
+- (void)fetchArtworkForHosts:(NSArray<TemporaryHost*>*)hosts force:(BOOL)force completion:(void (^)(NSUInteger fetched, NSUInteger notFound, NSUInteger failed))completion {
+    SteamGridDBManager* sgdb = [SteamGridDBManager sharedManager];
+    if (![sgdb isConfigured]) {
+        if (completion != nil) {
+            completion(0, 0, 0);
+        }
+        return;
+    }
+    
+    NSMutableArray* names = [NSMutableArray array];
+    for (TemporaryHost* host in hosts) {
+        for (TemporaryApp* app in host.appList) {
+            if (app.name.length > 0) {
+                [names addObject:app.name];
+            }
+        }
+    }
+    [sgdb fetchArtworkForAppNames:names force:force completion:completion];
+}
+
+- (void)handleArtworkUpdated:(NSNotification*)notification {
+    [_boxArtCache removeAllObjects];
+    [self.collectionView reloadData];
+    [self saveGameCatalog];
+}
+
+- (void)showArtworkSettings {
+    SteamGridDBManager* sgdb = [SteamGridDBManager sharedManager];
+    NSString* status = [sgdb isConfigured]
+        ? [NSString stringWithFormat:@"API key set (…%@).", [sgdb.apiKey substringFromIndex:MAX(0, (NSInteger)sgdb.apiKey.length - 4)]]
+        : @"No API key yet.";
+    NSString* message = [NSString stringWithFormat:@"%@\n\nCovers, backgrounds, logos and icons come from SteamGridDB. Get a free API key at steamgriddb.com → Preferences → API, then paste it below.", status];
+    
+    UIAlertController* alert = [UIAlertController alertControllerWithTitle:@"Game Artwork"
+                                                                   message:message
+                                                            preferredStyle:UIAlertControllerStyleAlert];
+    [alert addTextFieldWithConfigurationHandler:^(UITextField* textField) {
+        textField.placeholder = [sgdb isConfigured] ? @"New API key (optional)" : @"SteamGridDB API key";
+        textField.autocorrectionType = UITextAutocorrectionTypeNo;
+        textField.autocapitalizationType = UITextAutocapitalizationTypeNone;
+        textField.secureTextEntry = YES;
+    }];
+    
+    NSArray* allHosts;
+    @synchronized (hostList) {
+        allHosts = [hostList allObjects];
+    }
+    
+    [alert addAction:[UIAlertAction actionWithTitle:@"Save Key & Download" style:UIAlertActionStyleDefault handler:^(UIAlertAction* action) {
+        NSString* entered = alert.textFields.firstObject.text;
+        if (entered.length > 0) {
+            sgdb.apiKey = entered;
+        }
+        if (![sgdb isConfigured]) {
+            return;
+        }
+        [self fetchArtworkForHosts:allHosts force:NO completion:^(NSUInteger fetched, NSUInteger notFound, NSUInteger failed) {
+            [self showArtworkResultFetched:fetched notFound:notFound failed:failed];
+        }];
+    }]];
+    
+    if ([sgdb isConfigured]) {
+        [alert addAction:[UIAlertAction actionWithTitle:@"Re-download All Artwork" style:UIAlertActionStyleDefault handler:^(UIAlertAction* action) {
+            [self fetchArtworkForHosts:allHosts force:YES completion:^(NSUInteger fetched, NSUInteger notFound, NSUInteger failed) {
+                [self->_boxArtCache removeAllObjects];
+                [self.collectionView reloadData];
+                [self saveGameCatalog];
+                [self showArtworkResultFetched:fetched notFound:notFound failed:failed];
+            }];
+        }]];
+        [alert addAction:[UIAlertAction actionWithTitle:@"Remove Key & Artwork" style:UIAlertActionStyleDestructive handler:^(UIAlertAction* action) {
+            sgdb.apiKey = nil;
+            [sgdb clearCache];
+            [self->_boxArtCache removeAllObjects];
+            [self.collectionView reloadData];
+            [self saveGameCatalog];
+        }]];
+    }
+    
+    [alert addAction:[UIAlertAction actionWithTitle:@"Cancel" style:UIAlertActionStyleCancel handler:nil]];
+    [[self activeViewController] presentViewController:alert animated:YES completion:nil];
+}
+
+- (void)showArtworkResultFetched:(NSUInteger)fetched notFound:(NSUInteger)notFound failed:(NSUInteger)failed {
+    NSString* message;
+    if (failed > 0 && fetched == 0) {
+        message = @"Couldn't reach SteamGridDB. Check the API key and your connection.";
+    }
+    else {
+        message = [NSString stringWithFormat:@"Downloaded artwork for %lu game(s).", (unsigned long)fetched];
+        if (notFound > 0) {
+            message = [message stringByAppendingFormat:@" %lu not found on SteamGridDB.", (unsigned long)notFound];
+        }
+        if (failed > 0) {
+            message = [message stringByAppendingFormat:@" %lu failed; try again later.", (unsigned long)failed];
+        }
+        if (fetched == 0 && notFound == 0 && failed == 0) {
+            message = @"All games already have artwork.";
+        }
+    }
+    UIAlertController* done = [UIAlertController alertControllerWithTitle:@"Game Artwork" message:message preferredStyle:UIAlertControllerStyleAlert];
+    [done addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:nil]];
+    [[self activeViewController] presentViewController:done animated:YES completion:nil];
+}
+
 // Snapshot of every paired PC's games for the Shortcuts app / Siri / Spotlight
 // (read by StarlightAppIntents.swift without touching Core Data)
 - (void)saveGameCatalog {
@@ -1600,7 +1761,7 @@ static const NSUInteger kMaxQuickActions = 4;
                                       @"hostName": host.name ?: @"",
                                       @"app": app.id,
                                       @"appName": app.name,
-                                      @"artPath": [AppAssetManager boxArtPathForApp:app] ?: @"" }];
+                                      @"artPath": [self catalogArtPathForApp:app] }];
             }
         }
     }
@@ -1622,6 +1783,25 @@ static const NSUInteger kMaxQuickActions = 4;
 // Square, Home Screen-friendly copy of the game's art, saved to Photos so it can be
 // picked as the icon of a shortcut ("Add to Home Screen" → choose photo)
 - (void)saveIconToPhotosForApp:(TemporaryApp*)app {
+    // A real square icon from SteamGridDB beats cropping the cover
+    NSString* iconPath = [[SteamGridDBManager sharedManager] cachedPathForAppName:app.name kind:SteamGridDBKindIcon];
+    UIImage* sgdbIcon = iconPath != nil ? [UIImage imageWithContentsOfFile:iconPath] : nil;
+    if (sgdbIcon != nil && sgdbIcon.size.width > 0) {
+        CGFloat side = 512;
+        UIGraphicsImageRendererFormat* iconFormat = [UIGraphicsImageRendererFormat preferredFormat];
+        iconFormat.scale = 1;
+        iconFormat.opaque = YES;
+        UIGraphicsImageRenderer* iconRenderer = [[UIGraphicsImageRenderer alloc] initWithSize:CGSizeMake(side, side) format:iconFormat];
+        UIImage* icon = [iconRenderer imageWithActions:^(UIGraphicsImageRendererContext* context) {
+            // Opaque black behind transparent icons so the Home Screen doesn't show white corners
+            [[UIColor blackColor] setFill];
+            UIRectFill(CGRectMake(0, 0, side, side));
+            [sgdbIcon drawInRect:CGRectMake(0, 0, side, side)];
+        }];
+        UIImageWriteToSavedPhotosAlbum(icon, self, @selector(iconImage:didFinishSavingWithError:contextInfo:), NULL);
+        return;
+    }
+    
     UIImage* boxArt = [MainFrameViewController loadBoxArtForCaching:app];
     if (boxArt == nil) {
         UIAlertController* alert = [UIAlertController alertControllerWithTitle:@"No Artwork"
@@ -1719,7 +1899,17 @@ static const NSUInteger kMaxQuickActions = 4;
 + (UIImage*) loadBoxArtForCaching:(TemporaryApp*)app {
     UIImage* boxArt;
     
-    NSData* imageData = [NSData dataWithContentsOfFile:[AppAssetManager boxArtPathForApp:app]];
+    NSData* imageData = nil;
+#if !TARGET_OS_TV
+    // Prefer the SteamGridDB cover when one has been downloaded
+    NSString* gridPath = [[SteamGridDBManager sharedManager] cachedPathForAppName:app.name kind:SteamGridDBKindGrid];
+    if (gridPath != nil) {
+        imageData = [NSData dataWithContentsOfFile:gridPath];
+    }
+#endif
+    if (imageData == nil) {
+        imageData = [NSData dataWithContentsOfFile:[AppAssetManager boxArtPathForApp:app]];
+    }
     if (imageData == nil) {
         // No box art on disk
         return nil;

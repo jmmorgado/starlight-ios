@@ -7,6 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		5A7A1C0000000000000000B3 /* SteamGridDBManager.m in Sources */ = {isa = PBXBuildFile; fileRef = 5A7A1C0000000000000000B2 /* SteamGridDBManager.m */; };
 		5A7A1C0000000000000000A2 /* StarlightAppIntents.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5A7A1C0000000000000000A1 /* StarlightAppIntents.swift */; };
 		693B3A9B218638CD00982F7B /* Settings.bundle in Resources */ = {isa = PBXBuildFile; fileRef = 693B3A9A218638CD00982F7B /* Settings.bundle */; };
 		98181BE92791277400E43572 /* libSDL2.a in Frameworks */ = {isa = PBXBuildFile; fileRef = 98181BE82791275D00E43572 /* libSDL2.a */; };
@@ -171,6 +172,8 @@
 /* End PBXContainerItemProxy section */
 
 /* Begin PBXFileReference section */
+		5A7A1C0000000000000000B1 /* SteamGridDBManager.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = SteamGridDBManager.h; sourceTree = "<group>"; };
+		5A7A1C0000000000000000B2 /* SteamGridDBManager.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; path = SteamGridDBManager.m; sourceTree = "<group>"; };
 		5A7A1C0000000000000000A1 /* StarlightAppIntents.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = StarlightAppIntents.swift; sourceTree = "<group>"; };
 		566E9D2B2770B23A00EF7BFE /* Moonlight v1.7.xcdatamodel */ = {isa = PBXFileReference; lastKnownFileType = wrapper.xcdatamodel; path = "Moonlight v1.7.xcdatamodel"; sourceTree = "<group>"; };
 		693B3A9A218638CD00982F7B /* Settings.bundle */ = {isa = PBXFileReference; lastKnownFileType = "wrapper.plug-in"; path = Settings.bundle; sourceTree = "<group>"; };
@@ -660,6 +663,8 @@
 		FB9AFD331A7D876F00872C98 /* AppList */ = {
 			isa = PBXGroup;
 			children = (
+				5A7A1C0000000000000000B1 /* SteamGridDBManager.h */,
+				5A7A1C0000000000000000B2 /* SteamGridDBManager.m */,
 				FBD3494119FC9C04002D2A60 /* AppAssetManager.h */,
 				FBD3494219FC9C04002D2A60 /* AppAssetManager.m */,
 				FB9AFD301A7D867C00872C98 /* AppAssetRetriever.h */,
@@ -896,6 +901,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				5A7A1C0000000000000000B3 /* SteamGridDBManager.m in Sources */,
 				5A7A1C0000000000000000A2 /* StarlightAppIntents.swift in Sources */,
 				FB290D0719B2C406004C83CF /* Limelight.xcdatamodeld in Sources */,
 				9819CC22254F180F008A7C8E /* AbsoluteTouchHandler.m in Sources */,
