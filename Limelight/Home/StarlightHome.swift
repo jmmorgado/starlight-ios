@@ -319,6 +319,17 @@ final class HomeModel: ObservableObject {
         if collapsed != tabBarCollapsedByScroll { tabBarCollapsedByScroll = collapsed }
     }
 
+    /// The game the controller is on: the focused cover in Library/Search, the featured game on Home
+    var focusedOrFeaturedGame: GameItem? {
+        if tab != .home, let id = GameFocus.shared.focusedID {
+            for prefix in ["lib-", "search-"] where id.hasPrefix(prefix) {
+                let gameId = String(id.dropFirst(prefix.count))
+                if let game = games.first(where: { $0.id == gameId }) { return game }
+            }
+        }
+        return tab == .home ? featured : nil
+    }
+
     /// Controller input on the Starlight screens
     func handlePad(_ event: GamepadInput.Event) {
         let focus = GameFocus.shared
@@ -347,7 +358,11 @@ final class HomeModel: ObservableObject {
         case .search: openSearch(fromController: true)
         case .pc: togglePC()
         case .options:
-            break
+            if gameMenu != nil {
+                closeGameMenu()
+            } else if let game = focusedOrFeaturedGame {
+                openGameMenu(game)
+            }
         case .previousTab: switchTab(by: -1)
         case .nextTab: switchTab(by: 1)
         }
@@ -528,6 +543,7 @@ struct HomeRootView: View {
                     StarlightStack { NativeSearchScreen(model: model) }
                 }
             }
+            .modifier(TabBarMinimizeOnScroll())
         } else {
             TabView(selection: $model.tab) {
                 StarlightStack { HomeTab(model: model).starlightToolbar(model) }
@@ -547,6 +563,17 @@ struct HomeRootView: View {
                     .tabItem { Label(StarlightTab.search.title, systemImage: StarlightTab.search.symbol) }
                     .tag(StarlightTab.search)
             }
+        }
+    }
+}
+
+/// iOS 26: the tab bar shrinks to the selected tab's icon while scrolling down, like Photos
+struct TabBarMinimizeOnScroll: ViewModifier {
+    func body(content: Content) -> some View {
+        if #available(iOS 26.0, *) {
+            content.tabBarMinimizeBehavior(.onScrollDown)
+        } else {
+            content
         }
     }
 }
@@ -628,16 +655,14 @@ private struct FocusedSearch: View {
 }
 
 /// The PC button in the navigation bar: a native menu (opens with the system animation).
-/// With a controller connected it opens the navigable PC panel instead, and shows □.
+/// With a controller connected it shows □, and □ opens the navigable PC panel (system menus can't be driven by a controller).
 struct PCToolbarButton: View {
     @ObservedObject var model: HomeModel
     @ObservedObject private var device = DeviceStatus.shared
 
     var body: some View {
-        if device.controllerConnected {
-            Button { model.togglePC() } label: { label }
-                .accessibilityLabel(accessibility)
-        } else {
+        // Always the system menu on touch; □ on the controller opens the navigable PC panel
+        Group {
             Menu {
                 if !model.pairedHosts.isEmpty {
                     Section("Your PCs") {
@@ -725,6 +750,7 @@ enum PadGlyph {
 
     static var search: String { pad?.buttonY.sfSymbolsName ?? "triangle.circle" }
     static var pc: String { pad?.buttonX.sfSymbolsName ?? "square.circle" }
+    static var confirm: String { pad?.buttonA.sfSymbolsName ?? "a.circle" }
     static var options: String { pad?.buttonMenu.sfSymbolsName ?? "line.3.horizontal.circle" }
     static var leftShoulder: String { pad?.leftShoulder.sfSymbolsName ?? "l1.rectangle.roundedbottom" }
     static var rightShoulder: String { pad?.rightShoulder.sfSymbolsName ?? "r1.rectangle.roundedbottom" }
@@ -1403,6 +1429,8 @@ struct HomeTab: View {
     var body: some View {
         GeometryReader { geo in
             let compact = geo.size.height < 440
+            let leading = geo.safeAreaInsets.leading + 24
+            let trailing = geo.safeAreaInsets.trailing + 24
             ZStack(alignment: .top) {
                 backdrop
 
@@ -1410,22 +1438,24 @@ struct HomeTab: View {
                     ScrollViewReader { proxy in
                         ScrollView(.vertical, showsIndicators: false) {
                             VStack(alignment: .leading, spacing: compact ? 14 : 22) {
-                                ScrollOffsetReader()
-
                                 FeaturedSection(game: featured, model: model, compact: compact)
+                                    .padding(.leading, leading)
+                                    .padding(.trailing, trailing)
                                     .id("section-featured")
 
-                                GameRow(id: "continue", title: "Continue Playing", games: model.continueGames, model: model, compact: compact)
+                                GameRow(id: "continue", title: "Continue Playing", games: model.continueGames, model: model,
+                                        compact: compact, leadingInset: leading, trailingInset: trailing)
                                     .id("section-continue")
 
-                                GameRow(id: "all", title: "All Games", games: model.libraryGames, model: model, compact: compact)
+                                GameRow(id: "all", title: "All Games", games: model.libraryGames, model: model,
+                                        compact: compact, leadingInset: leading, trailingInset: trailing)
                                     .id("section-all")
                             }
-                            .padding(.horizontal, 24)
                             .padding(.top, 4)
-                            .padding(.bottom, 90)
+                            .padding(.bottom, 40)
                         }
-                        .trackScroll(model)
+                        // Scroll across the full width so the rows reach the screen edges
+                        .ignoresSafeArea(.container, edges: .horizontal)
                         .onChange(of: focus.focusedID) { id in
                             scroll(to: id, proxy: proxy)
                         }
@@ -1528,15 +1558,21 @@ struct FeaturedSection: View {
 
             HStack(spacing: 10) {
                 Button { model.launch(game) } label: {
-                    Label(game.running ? "Resume" : "Play", systemImage: "play.fill")
-                        .font(.system(size: 16, weight: .bold))
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 3)
+                    HStack(spacing: 8) {
+                        Label(game.running ? "Resume" : "Play", systemImage: "play.fill")
+                        if device.controllerConnected {
+                            Image(systemName: PadGlyph.confirm)
+                                .font(.system(size: 16, weight: .regular))
+                                .opacity(0.6)
+                        }
+                    }
+                    .font(.system(size: 16, weight: .bold))
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 3)
                 }
                 .primaryGlassButton()
                 .tint(.white)
                 .foregroundStyle(.black)
-                .gameFocus("featured-play", corner: 22) { model.launch(game) }
 
                 if game.running {
                     Button(role: .destructive) { model.action("quit", game) } label: {
@@ -1547,17 +1583,20 @@ struct FeaturedSection: View {
                     }
                     .secondaryGlassButton()
                     .tint(.red)
-                    .gameFocus("featured-quit", corner: 22) { model.action("quit", game) }
                 }
 
                 if device.controllerConnected {
                     Button { model.openGameMenu(game) } label: {
-                        Image(systemName: "ellipsis")
-                            .font(.system(size: 16, weight: .semibold))
-                            .frame(width: 22, height: 22)
+                        HStack(spacing: 8) {
+                            Image(systemName: "ellipsis")
+                                .font(.system(size: 16, weight: .semibold))
+                            Image(systemName: PadGlyph.options)
+                                .font(.system(size: 16, weight: .regular))
+                                .opacity(0.7)
+                        }
+                        .frame(height: 22)
                     }
                     .secondaryGlassButton()
-                    .gameFocus("featured-more", corner: 22) { model.openGameMenu(game) }
                     .accessibilityLabel("Game options")
                 } else {
                     Menu {
@@ -1596,6 +1635,8 @@ struct GameRow: View {
     @ObservedObject var model: HomeModel
     @ObservedObject private var focus = GameFocus.shared
     let compact: Bool
+    var leadingInset: CGFloat = 24
+    var trailingInset: CGFloat = 24
     var portrait: Bool = false
 
     private var prefix: String { "card-\(id)-" }
@@ -1604,6 +1645,7 @@ struct GameRow: View {
         VStack(alignment: .leading, spacing: 8) {
             Text(title)
                 .font(.system(size: 15, weight: .bold))
+                .padding(.leading, leadingInset)
             ScrollViewReader { proxy in
                 ScrollView(.horizontal, showsIndicators: false) {
                     // Not lazy: every card needs a frame for controller navigation
@@ -1628,8 +1670,11 @@ struct GameRow: View {
                         }
                     }
                     .padding(.vertical, 8)
-                    .padding(.horizontal, 6)
+                    .padding(.leading, leadingInset)
+                    .padding(.trailing, trailingInset)
+                    .modifier(RowScrollTargetLayout())
                 }
+                .modifier(RowSnapping())
                 .onChange(of: focus.focusedID) { focused in
                     guard let focused = focused, focused.hasPrefix(prefix) else { return }
                     let gameId = String(focused.dropFirst(prefix.count))
@@ -1645,6 +1690,27 @@ struct GameRow: View {
                     }
                 }
             }
+        }
+    }
+}
+
+/// iOS 17+: rows settle on a card edge, like the App Store
+struct RowScrollTargetLayout: ViewModifier {
+    func body(content: Content) -> some View {
+        if #available(iOS 17.0, *) {
+            content.scrollTargetLayout()
+        } else {
+            content
+        }
+    }
+}
+
+struct RowSnapping: ViewModifier {
+    func body(content: Content) -> some View {
+        if #available(iOS 17.0, *) {
+            content.scrollTargetBehavior(.viewAligned)
+        } else {
+            content
         }
     }
 }

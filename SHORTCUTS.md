@@ -10,7 +10,7 @@
 - **Barra de abas (nativa):** Home, Library e Settings; a **pesquisa** é o botão redondo em baixo à direita, que expande no campo de pesquisa. Com comando, L1/R1 mudam de aba.
 
 ## Navegar com comando
-- **Cruz / stick esquerdo:** mexer · **✕:** escolher · **○:** voltar
+- **Cruz / stick esquerdo:** mexer entre os jogos · **✕:** jogar · **Options:** opções do jogo (•••) · **○:** voltar
 - **△:** pesquisa · **□:** PC · **L1/R1:** mudar de aba
 - No stream: **Options + Share** (toque) = Guide no PC; mantidos 1 s = painel do stream.
 - **Settings:** ecrãs nativos para **Stream Settings**, cada **PC** (emparelhar, acordar, atualizar jogos,
