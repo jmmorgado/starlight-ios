@@ -170,6 +170,12 @@ struct GameItem: Identifiable, Equatable {
     }
 }
 
+struct GameDetailRoute: Equatable {
+    let gameId: String
+    let source: String
+    let tab: StarlightTab
+}
+
 final class HomeModel: ObservableObject {
     @Published var hosts: [HostItem] = []
     @Published var selectedHost: String?
@@ -196,6 +202,7 @@ final class HomeModel: ObservableObject {
         didSet {
             guard tab != oldValue else { return }
             previousTab = oldValue
+            detail = nil
             closePC()
             closeGameMenu()
             GameFocus.shared.focusedID = nil
@@ -209,6 +216,8 @@ final class HomeModel: ObservableObject {
     var previousTab: StarlightTab = .home
     @Published var pcExpanded = false
     @Published var gameMenu: GameItem?
+    /// The game page that's open (zoom transition from the card it was opened from)
+    @Published var detail: GameDetailRoute?
     @Published var tabBarFocused = false
     @Published var tabBarFlash = false
     @Published var tabBarCollapsedByScroll = false
@@ -224,6 +233,25 @@ final class HomeModel: ObservableObject {
         if newTab != tab {
             tab = newTab
         }
+    }
+
+    func openDetail(_ game: GameItem, source: String) {
+        guard #available(iOS 16.0, *) else {
+            launch(game)
+            return
+        }
+        closePC()
+        closeGameMenu()
+        detail = GameDetailRoute(gameId: game.id, source: source, tab: tab)
+    }
+
+    func closeDetail() {
+        detail = nil
+    }
+
+    var detailGame: GameItem? {
+        guard let route = detail else { return nil }
+        return games.first { $0.id == route.gameId }
     }
 
     func togglePC() { pcExpanded ? closePC() : openPC() }
@@ -321,6 +349,7 @@ final class HomeModel: ObservableObject {
 
     /// The game the controller is on: the focused cover in Library/Search, the featured game on Home
     var focusedOrFeaturedGame: GameItem? {
+        if let game = detailGame { return game }
         if tab != .home, let id = GameFocus.shared.focusedID {
             for prefix in ["lib-", "search-"] where id.hasPrefix(prefix) {
                 let gameId = String(id.dropFirst(prefix.count))
@@ -350,6 +379,8 @@ final class HomeModel: ObservableObject {
                 closeGameMenu()
             } else if pcExpanded {
                 closePC()
+            } else if detail != nil {
+                closeDetail()
             } else if tabBarFocused {
                 unfocusTabBar()
             } else if tab == .search {
@@ -363,6 +394,8 @@ final class HomeModel: ObservableObject {
             } else if let game = focusedOrFeaturedGame {
                 openGameMenu(game)
             }
+        case .play:
+            if gameMenu == nil, !pcExpanded, let game = focusedOrFeaturedGame { launch(game) }
         case .previousTab: switchTab(by: -1)
         case .nextTab: switchTab(by: 1)
         }
@@ -751,6 +784,7 @@ enum PadGlyph {
     static var search: String { pad?.buttonY.sfSymbolsName ?? "triangle.circle" }
     static var pc: String { pad?.buttonX.sfSymbolsName ?? "square.circle" }
     static var confirm: String { pad?.buttonA.sfSymbolsName ?? "a.circle" }
+    static var play: String { pad?.rightTrigger.sfSymbolsName ?? "r2.rectangle.roundedtop" }
     static var options: String { pad?.buttonMenu.sfSymbolsName ?? "line.3.horizontal.circle" }
     static var leftShoulder: String { pad?.leftShoulder.sfSymbolsName ?? "l1.rectangle.roundedbottom" }
     static var rightShoulder: String { pad?.rightShoulder.sfSymbolsName ?? "r1.rectangle.roundedbottom" }
@@ -903,7 +937,7 @@ extension View {
 final class GamepadInput {
     static let shared = GamepadInput()
 
-    enum Event { case up, down, left, right, confirm, back, search, pc, options, previousTab, nextTab }
+    enum Event { case up, down, left, right, confirm, back, search, pc, options, previousTab, nextTab, play }
 
     var handler: ((Event) -> Void)?
     private var timer: Timer?
@@ -950,6 +984,7 @@ final class GamepadInput {
         if pad.buttonMenu.isPressed { down.insert("menu") }
         if pad.leftShoulder.isPressed { down.insert("l1") }
         if pad.rightShoulder.isPressed { down.insert("r1") }
+        if pad.rightTrigger.isPressed { down.insert("r2") }
 
         let pressed = down.subtracting(previous)
         previous = down
@@ -957,7 +992,7 @@ final class GamepadInput {
         let map: [(String, Event)] = [
             ("up", .up), ("down", .down), ("left", .left), ("right", .right),
             ("a", .confirm), ("b", .back), ("y", .search), ("x", .pc),
-            ("menu", .options), ("l1", .previousTab), ("r1", .nextTab)
+            ("menu", .options), ("l1", .previousTab), ("r1", .nextTab), ("r2", .play)
         ]
         for (key, event) in map where pressed.contains(key) {
             handler?(event)
@@ -1425,6 +1460,7 @@ struct EmptyStateView: View {
 struct HomeTab: View {
     @ObservedObject var model: HomeModel
     @ObservedObject private var focus = GameFocus.shared
+    @Namespace private var zoom
 
     var body: some View {
         GeometryReader { geo in
@@ -1444,11 +1480,11 @@ struct HomeTab: View {
                                     .id("section-featured")
 
                                 GameRow(id: "continue", title: "Continue Playing", games: model.continueGames, model: model,
-                                        compact: compact, leadingInset: leading, trailingInset: trailing)
+                                        compact: compact, leadingInset: leading, trailingInset: trailing, zoom: zoom)
                                     .id("section-continue")
 
                                 GameRow(id: "all", title: "All Games", games: model.libraryGames, model: model,
-                                        compact: compact, leadingInset: leading, trailingInset: trailing)
+                                        compact: compact, leadingInset: leading, trailingInset: trailing, zoom: zoom)
                                     .id("section-all")
                             }
                             .padding(.top, 4)
@@ -1465,6 +1501,7 @@ struct HomeTab: View {
                 }
             }
         }
+        .modifier(GameDetailDestination(model: model, tab: .home, zoom: zoom))
     }
 
     private func scroll(to id: String?, proxy: ScrollViewProxy) {
@@ -1561,7 +1598,7 @@ struct FeaturedSection: View {
                     HStack(spacing: 8) {
                         Label(game.running ? "Resume" : "Play", systemImage: "play.fill")
                         if device.controllerConnected {
-                            Image(systemName: PadGlyph.confirm)
+                            Image(systemName: PadGlyph.play)
                                 .font(.system(size: 16, weight: .regular))
                                 .opacity(0.6)
                         }
@@ -1624,6 +1661,7 @@ struct GameRow: View {
     let compact: Bool
     var leadingInset: CGFloat = 24
     var trailingInset: CGFloat = 24
+    var zoom: Namespace.ID? = nil
     var portrait: Bool = false
 
     private var prefix: String { "card-\(id)-" }
@@ -1642,18 +1680,10 @@ struct GameRow: View {
                                      selected: game.id == model.featured?.id && model.featuredRow == id,
                                      portrait: portrait,
                                      height: portrait ? (compact ? 150 : 180) : (compact ? 84 : 110))
-                                .onTapGesture {
-                                    if game.id == model.featured?.id && model.featuredRow == id {
-                                        model.launch(game)
-                                    } else {
-                                        withAnimation(.easeInOut(duration: 0.25)) {
-                                            model.featuredId = game.id
-                                            model.featuredRow = id
-                                        }
-                                    }
-                                }
+                                .modifier(ZoomSource(id: prefix + game.id, zoom: zoom))
+                                .onTapGesture { model.openDetail(game, source: prefix + game.id) }
                                 .contextMenu { GameMenuItems(game: game, model: model) }
-                                .gameFocus(prefix + game.id) { model.launch(game) }
+                                .gameFocus(prefix + game.id) { model.openDetail(game, source: prefix + game.id) }
                         }
                     }
                     .padding(.vertical, 8)
@@ -1680,6 +1710,228 @@ struct GameRow: View {
         }
     }
 }
+
+// MARK: - Game page (opens with the native zoom transition from its card)
+
+/// iOS 18: the card is the source of the zoom transition
+struct ZoomSource: ViewModifier {
+    let id: String
+    let zoom: Namespace.ID?
+
+    func body(content: Content) -> some View {
+        if #available(iOS 18.0, *), let zoom = zoom {
+            content.matchedTransitionSource(id: id, in: zoom)
+        } else {
+            content
+        }
+    }
+}
+
+struct ZoomDestination: ViewModifier {
+    let id: String
+    let zoom: Namespace.ID
+
+    func body(content: Content) -> some View {
+        if #available(iOS 18.0, *) {
+            content.navigationTransition(.zoom(sourceID: id, in: zoom))
+        } else {
+            content
+        }
+    }
+}
+
+/// Pushes the game page in this tab's navigation stack
+struct GameDetailDestination: ViewModifier {
+    @ObservedObject var model: HomeModel
+    let tab: StarlightTab
+    let zoom: Namespace.ID
+
+    func body(content: Content) -> some View {
+        if #available(iOS 16.0, *) {
+            content.navigationDestination(isPresented: Binding(
+                get: { model.detail?.tab == tab },
+                set: { presented in
+                    if !presented && model.detail?.tab == tab { model.detail = nil }
+                }
+            )) {
+                if let route = model.detail, let game = model.games.first(where: { $0.id == route.gameId }) {
+                    GameDetailView(model: model, game: game)
+                        .modifier(ZoomDestination(id: route.source, zoom: zoom))
+                }
+            }
+        } else {
+            content
+        }
+    }
+}
+
+struct GameDetailView: View {
+    @ObservedObject var model: HomeModel
+    @ObservedObject private var device = DeviceStatus.shared
+    let game: GameItem
+
+    private struct Option: Identifiable {
+        let id: String
+        let title: String
+        let symbol: String
+        var destructive = false
+    }
+
+    private var options: [Option] {
+        var list = [
+            Option(id: "pin", title: game.pinned ? "Unpin" : "Pin to App Icon", symbol: game.pinned ? "pin.slash" : "pin"),
+            Option(id: "copyLink", title: "Copy Shortcut Link", symbol: "link"),
+            Option(id: "saveIcon", title: "Save Icon to Photos", symbol: "photo"),
+            Option(id: "editArtwork", title: "Edit Artwork…", symbol: "photo.on.rectangle.angled"),
+            Option(id: "hide", title: game.hidden ? "Show Game" : "Hide Game", symbol: game.hidden ? "eye" : "eye.slash")
+        ]
+        if game.running {
+            list.append(Option(id: "quit", title: "Quit Game", symbol: "xmark.circle", destructive: true))
+        }
+        return list
+    }
+
+    private var subtitle: String {
+        var parts: [String] = []
+        if !game.hostName.isEmpty { parts.append(game.hostName) }
+        if let last = game.lastPlayed {
+            let formatter = RelativeDateTimeFormatter()
+            formatter.unitsStyle = .full
+            parts.append("Played " + formatter.localizedString(for: last, relativeTo: Date()))
+        } else {
+            parts.append("Not played yet")
+        }
+        return parts.joined(separator: " · ")
+    }
+
+    var body: some View {
+        GeometryReader { geo in
+            let heroHeight = max(220, geo.size.height * 0.62)
+            ScrollView(.vertical, showsIndicators: false) {
+                VStack(alignment: .leading, spacing: 18) {
+                    hero(height: heroHeight)
+
+                    VStack(alignment: .leading, spacing: 18) {
+                        HStack(spacing: 10) {
+                            Button { model.launch(game) } label: {
+                                HStack(spacing: 8) {
+                                    Label(game.running ? "Resume" : "Play", systemImage: "play.fill")
+                                    if device.controllerConnected {
+                                        Image(systemName: PadGlyph.play)
+                                            .font(.system(size: 16, weight: .regular))
+                                            .opacity(0.6)
+                                    }
+                                }
+                                .font(.system(size: 17, weight: .bold))
+                                .padding(.horizontal, 14)
+                                .padding(.vertical, 5)
+                            }
+                            .primaryGlassButton()
+                            .tint(.white)
+                            .foregroundStyle(.black)
+                            .gameFocus("detail-play", scope: "detail", corner: 24) { model.launch(game) }
+
+                            if game.running {
+                                Button(role: .destructive) { model.action("quit", game) } label: {
+                                    Label("Quit", systemImage: "xmark")
+                                        .font(.system(size: 17, weight: .semibold))
+                                        .padding(.horizontal, 8)
+                                        .padding(.vertical, 5)
+                                }
+                                .secondaryGlassButton()
+                                .tint(.red)
+                                .gameFocus("detail-quit", scope: "detail", corner: 24) { model.action("quit", game) }
+                            }
+                        }
+
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("Options")
+                                .font(.system(size: 15, weight: .bold))
+                                .padding(.bottom, 4)
+                            ForEach(options) { option in
+                                Button { run(option.id) } label: {
+                                    Label(option.title, systemImage: option.symbol)
+                                        .font(.system(size: 15, weight: .medium))
+                                        .foregroundStyle(option.destructive ? Color.red : Color.white)
+                                        .frame(maxWidth: 360, alignment: .leading)
+                                        .padding(.horizontal, 14)
+                                        .padding(.vertical, 11)
+                                        .contentShape(Rectangle())
+                                }
+                                .buttonStyle(.plain)
+                                .modifier(PanelGlass(corner: 14))
+                                .gameFocus("detail-\(option.id)", scope: "detail", corner: 14) { run(option.id) }
+                            }
+                        }
+                    }
+                    .padding(.horizontal, geo.safeAreaInsets.leading + 24)
+                    .padding(.bottom, 40)
+                }
+            }
+            .ignoresSafeArea(.container, edges: [.top, .horizontal])
+        }
+        .background(Color.black.ignoresSafeArea())
+        .navigationBarTitleDisplayMode(.inline)
+        .onAppear { GameFocus.shared.push("detail") }
+        .onDisappear { GameFocus.shared.pop("detail") }
+    }
+
+    private func hero(height: CGFloat) -> some View {
+        ZStack(alignment: .bottomLeading) {
+            Color.clear
+                .overlay(
+                    ArtworkImage(path: game.heroPath ?? game.gridPath, fallbackText: "")
+                )
+                .clipped()
+            LinearGradient(colors: [.clear, .black.opacity(0.35), .black], startPoint: .center, endPoint: .bottom)
+            VStack(alignment: .leading, spacing: 8) {
+                if let logo = ArtworkCache.shared.image(game.logoPath) {
+                    Image(uiImage: logo)
+                        .resizable()
+                        .aspectRatio(contentMode: .fit)
+                        .frame(maxWidth: 380, maxHeight: 110, alignment: .leading)
+                        .shadow(color: .black.opacity(0.5), radius: 8)
+                        .accessibilityLabel(game.name)
+                } else {
+                    Text(game.name)
+                        .font(.system(size: 36, weight: .heavy))
+                        .lineLimit(2)
+                }
+                HStack(spacing: 8) {
+                    if game.running {
+                        HStack(spacing: 6) {
+                            Circle().fill(.green).frame(width: 8, height: 8)
+                            Text("Running on PC").font(.system(size: 12, weight: .semibold))
+                        }
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 5)
+                        .glassCapsule()
+                    }
+                    Text(subtitle)
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundStyle(.white.opacity(0.85))
+                }
+            }
+            .padding(.horizontal, 48)
+            .padding(.bottom, 16)
+        }
+        .frame(maxWidth: .infinity)
+        .frame(height: height)
+        .clipped()
+    }
+
+    private func run(_ id: String) {
+        if id == "editArtwork" {
+            model.editingGame = game
+        } else {
+            model.action(id, game)
+            if id == "quit" || id == "hide" {
+                model.closeDetail()
+            }
+        }
+    }
+}
+
 
 /// iOS 17+: rows settle on a card edge, like the App Store
 struct RowScrollTargetLayout: ViewModifier {
@@ -1770,15 +2022,17 @@ struct GameCard: View {
 
 struct LibraryTab: View {
     @ObservedObject var model: HomeModel
+    @Namespace private var zoom
 
     var body: some View {
         Group {
             if model.games.isEmpty {
                 EmptyStateView(model: model)
             } else {
-                GameGrid(prefix: "lib", games: model.libraryGames, model: model)
+                GameGrid(prefix: "lib", games: model.libraryGames, model: model, zoom: zoom)
             }
         }
+        .modifier(GameDetailDestination(model: model, tab: .library, zoom: zoom))
     }
 }
 
@@ -1787,6 +2041,7 @@ struct GameGrid: View {
     let prefix: String
     let games: [GameItem]
     @ObservedObject var model: HomeModel
+    var zoom: Namespace.ID? = nil
     @ObservedObject private var focus = GameFocus.shared
 
     private let cardWidth: CGFloat = 120
@@ -1811,13 +2066,14 @@ struct GameGrid: View {
                             ForEach(row) { game in
                                 VStack(alignment: .leading, spacing: 6) {
                                     GameCard(game: game, selected: false, portrait: true, height: 180)
-                                        .gameFocus("\(prefix)-\(game.id)") { model.launch(game) }
+                                        .modifier(ZoomSource(id: "\(prefix)-\(game.id)", zoom: zoom))
+                                        .gameFocus("\(prefix)-\(game.id)") { model.openDetail(game, source: "\(prefix)-\(game.id)") }
                                     Text(game.name)
                                         .font(.system(size: 12.5, weight: .semibold))
                                         .lineLimit(1)
                                 }
                                 .frame(width: cardWidth)
-                                .onTapGesture { model.launch(game) }
+                                .onTapGesture { model.openDetail(game, source: "\(prefix)-\(game.id)") }
                                 .contextMenu { GameMenuItems(game: game, model: model) }
                             }
                         }
@@ -1843,6 +2099,7 @@ struct GameGrid: View {
 
 struct SearchTab: View {
     @ObservedObject var model: HomeModel
+    @Namespace private var zoom
 
     private var results: [GameItem] {
         let all = model.libraryGames
@@ -1865,9 +2122,10 @@ struct SearchTab: View {
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
-                GameGrid(prefix: "search", games: results, model: model)
+                GameGrid(prefix: "search", games: results, model: model, zoom: zoom)
             }
         }
+        .modifier(GameDetailDestination(model: model, tab: .search, zoom: zoom))
     }
 }
 
