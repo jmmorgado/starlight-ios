@@ -26,20 +26,43 @@ static NSString* DB_NAME = @"Limelight_iOS.sqlite";
 #if !TARGET_OS_TV
     UIApplicationShortcutItem* shortcut = [launchOptions valueForKey:UIApplicationLaunchOptionsShortcutItemKey];
     if (shortcut != nil) {
-        _pcUuidToLoad = (NSString*)[shortcut.userInfo objectForKey:@"UUID"];
+        [self handleShortcutItem:shortcut];
     }
 #endif
+    
+    // Cold start from a starlight:// link: queue the launch before any UI loads,
+    // so the main screen never shows
+    NSURL* launchURL = [launchOptions valueForKey:UIApplicationLaunchOptionsURLKey];
+    if (launchURL != nil) {
+        [self queueLaunchFromURL:launchURL];
+    }
     return YES;
 }
 
-// Handles starlight://launch?host=<PC UUID or name>&app=<app ID or name>
-// The launch itself is performed by MainFrameViewController once the host list is available.
-- (BOOL)application:(UIApplication *)application openURL:(NSURL *)url options:(NSDictionary<UIApplicationOpenURLOptionsKey,id> *)options {
+#if !TARGET_OS_TV
+// "PC" items open a PC's app list; "App" items (pinned games) launch straight into a stream
+- (void)handleShortcutItem:(UIApplicationShortcutItem*)shortcutItem {
+    if ([shortcutItem.type isEqualToString:@"App"]) {
+        NSString* hostParam = [shortcutItem.userInfo objectForKey:@"host"];
+        NSString* appParam = [shortcutItem.userInfo objectForKey:@"app"];
+        if (hostParam != nil && appParam != nil) {
+            _pendingLaunchHost = hostParam;
+            _pendingLaunchApp = appParam;
+            [[NSNotificationCenter defaultCenter] postNotificationName:@"StarlightPendingLaunch" object:nil];
+        }
+    }
+    else {
+        _pcUuidToLoad = (NSString*)[shortcutItem.userInfo objectForKey:@"UUID"];
+    }
+}
+#endif
+
+- (BOOL)queueLaunchFromURL:(NSURL*)url {
     if (![[url.scheme lowercaseString] isEqualToString:@"starlight"] ||
         ![[url.host lowercaseString] isEqualToString:@"launch"]) {
         return NO;
     }
-
+    
     NSString* hostParam = nil;
     NSString* appParam = nil;
     NSURLComponents* components = [NSURLComponents componentsWithURL:url resolvingAgainstBaseURL:NO];
@@ -52,12 +75,12 @@ static NSString* DB_NAME = @"Limelight_iOS.sqlite";
             appParam = item.value;
         }
     }
-
+    
     if (hostParam.length == 0 || appParam.length == 0) {
         Log(LOG_W, @"Ignoring launch URL without host and app: %@", url);
         return NO;
     }
-
+    
     Log(LOG_I, @"Received launch URL for host '%@', app '%@'", hostParam, appParam);
     _pendingLaunchHost = hostParam;
     _pendingLaunchApp = appParam;
@@ -65,9 +88,20 @@ static NSString* DB_NAME = @"Limelight_iOS.sqlite";
     return YES;
 }
 
+// Handles starlight://launch?host=<PC UUID or name>&app=<app ID or name>
+// The launch itself is performed by MainFrameViewController once the host list is available.
+- (BOOL)application:(UIApplication *)application openURL:(NSURL *)url options:(NSDictionary<UIApplicationOpenURLOptionsKey,id> *)options {
+    return [self queueLaunchFromURL:url];
+}
+
 #if !TARGET_OS_TV
 - (void)application:(UIApplication *)application performActionForShortcutItem:(UIApplicationShortcutItem *)shortcutItem completionHandler:(void (^)(BOOL succeeded))completionHandler {
-    _pcUuidToLoad = (NSString*)[shortcutItem.userInfo objectForKey:@"UUID"];
+    if ([shortcutItem.type isEqualToString:@"App"]) {
+        [self handleShortcutItem:shortcutItem];
+        completionHandler(YES);
+        return;
+    }
+    [self handleShortcutItem:shortcutItem];
     _shortcutCompletionHandler = completionHandler;
 }
 #endif

@@ -54,6 +54,7 @@
     NSCache* _boxArtCache;
     bool _background;
     BOOL _pendingLaunchFallbackScheduled;
+    UIView* _launchOverlay;
 #if TARGET_OS_TV
     UITapGestureRecognizer* _menuRecognizer;
 #endif
@@ -831,6 +832,11 @@ static NSMutableSet* hostList;
     }
     
 #if !TARGET_OS_TV
+    // Pins the game to the app icon's long-press menu for one-tap launches
+    [alertController addAction:[UIAlertAction actionWithTitle:([self isAppPinned:app] ? @"Unpin from App Icon" : @"Pin to App Icon") style:UIAlertActionStyleDefault handler:^(UIAlertAction* action) {
+        [self togglePinForApp:app];
+    }]];
+    
     // Copies a starlight:// URL that launches this app directly (for the Shortcuts app)
     [alertController addAction:[UIAlertAction actionWithTitle:@"Copy Shortcut Link" style:UIAlertActionStyleDefault handler:^(UIAlertAction* action) {
         NSString* link = [self launchLinkForApp:app];
@@ -937,6 +943,17 @@ static NSMutableSet* hostList;
 - (void)viewDidLoad
 {
     [super viewDidLoad];
+    
+    // Launched from a pinned game or starlight:// link: never show the main screen
+    AppDelegate* launchDelegate = (AppDelegate*)[UIApplication sharedApplication].delegate;
+    if (launchDelegate.pendingLaunchHost != nil && launchDelegate.pendingLaunchApp != nil) {
+        dispatch_async(dispatch_get_main_queue(), ^{
+            AppDelegate* delegate = (AppDelegate*)[UIApplication sharedApplication].delegate;
+            if (delegate.pendingLaunchHost != nil && self->_launchOverlay == nil) {
+                [self showLaunchOverlayForApp:nil];
+            }
+        });
+    }
         
 #if !TARGET_OS_TV
     // Set the side bar button action. When it's tapped, it'll show the sidebar.
@@ -1111,6 +1128,7 @@ static NSMutableSet* hostList;
 }
 
 - (void)showPendingLaunchError:(NSString*)message {
+    [self hideLaunchOverlay];
     UIAlertController* alert = [UIAlertController alertControllerWithTitle:@"Shortcut Launch Failed"
                                                                    message:message
                                                             preferredStyle:UIAlertControllerStyleAlert];
@@ -1156,7 +1174,7 @@ static NSMutableSet* hostList;
 
     if (host == nil) {
         [self clearPendingLaunch];
-        [self showPendingLaunchError:[NSString stringWithFormat:@"No paired PC matches \"%@\". Add and pair the PC in Moonlight first.", hostParam]];
+        [self showPendingLaunchError:[NSString stringWithFormat:@"No paired PC matches \"%@\". Add and pair the PC in Starlight first.", hostParam]];
         return;
     }
 
@@ -1184,17 +1202,20 @@ static NSMutableSet* hostList;
 
     if (app == nil) {
         [self clearPendingLaunch];
-        [self showPendingLaunchError:[NSString stringWithFormat:@"\"%@\" was not found on %@. Open the PC in Moonlight once to refresh its app list.", appParam, host.name]];
+        [self showPendingLaunchError:[NSString stringWithFormat:@"\"%@\" was not found on %@. Open the PC in Starlight once to refresh its app list.", appParam, host.name]];
         return;
     }
 
+    // Cover the main screen with a start screen for this app
+    [self showLaunchOverlayForApp:app];
+    
     if (host.state != StateOnline && !force) {
         // Give discovery a moment to find the PC and refresh its address and running game.
         // Discovery doesn't notify us when a known host comes online, so poll its state.
         if (!_pendingLaunchFallbackScheduled) {
             _pendingLaunchFallbackScheduled = YES;
             Log(LOG_I, @"Waiting for %@ to come online before launching %@", host.name, app.name);
-            [self pollPendingLaunchHost:host remainingChecks:12];
+            [self pollPendingLaunchHost:host remainingChecks:6];
         }
         return;
     }
@@ -1202,12 +1223,156 @@ static NSMutableSet* hostList;
     Log(LOG_I, @"Launching %@ on %@ from deep link", app.name, host.name);
     [self clearPendingLaunch];
 
-    // Same path as tapping the app: streams immediately, or shows the
-    // resume/quit menu if a different app is already running on the PC
-    [self appClicked:app view:self.view];
+    TemporaryApp* runningApp = [self findRunningApp:host];
+    if (runningApp == nil || [runningApp.id isEqualToString:app.id]) {
+        // Start (or resume) straight away, keeping the start screen up until the stream view appears
+        [_appManager stopRetrieving];
+        [self prepareToStreamApp:app];
+        [self performSegueWithIdentifier:@"createStreamFrame" sender:nil];
+    }
+    else {
+        // A different app is running on the PC: show the usual resume/quit menu
+        [self hideLaunchOverlay];
+        [self appClicked:app view:self.view];
+    }
 }
 
-// Checks every 0.5s (up to remainingChecks times) whether the host is online,
+#pragma mark - Launch start screen
+
+// Full-screen start screen shown while a deep link / pinned game launches,
+// so the main screen is never visible. app may be nil before the host list is checked.
+- (void)showLaunchOverlayForApp:(TemporaryApp*)app {
+    UIView* container = self.navigationController.view ?: self.view;
+    if (container == nil) {
+        return;
+    }
+    
+    if (_launchOverlay == nil) {
+        _launchOverlay = [[UIView alloc] initWithFrame:container.bounds];
+        _launchOverlay.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
+        _launchOverlay.backgroundColor = [UIColor blackColor];
+        [container addSubview:_launchOverlay];
+    }
+    else {
+        [container bringSubviewToFront:_launchOverlay];
+    }
+    
+    // Rebuild the contents (cheap) so a later call with the resolved app fills in art and names
+    for (UIView* subview in [_launchOverlay.subviews copy]) {
+        [subview removeFromSuperview];
+    }
+    
+    UIStackView* stack = [[UIStackView alloc] init];
+    stack.axis = UILayoutConstraintAxisVertical;
+    stack.alignment = UIStackViewAlignmentCenter;
+    stack.spacing = 14;
+    stack.translatesAutoresizingMaskIntoConstraints = NO;
+    [_launchOverlay addSubview:stack];
+    [NSLayoutConstraint activateConstraints:@[
+        [stack.centerXAnchor constraintEqualToAnchor:_launchOverlay.centerXAnchor],
+        [stack.centerYAnchor constraintEqualToAnchor:_launchOverlay.centerYAnchor],
+        [stack.leadingAnchor constraintGreaterThanOrEqualToAnchor:_launchOverlay.leadingAnchor constant:24],
+        [stack.trailingAnchor constraintLessThanOrEqualToAnchor:_launchOverlay.trailingAnchor constant:-24],
+    ]];
+    
+    UIImage* boxArt = app != nil ? [MainFrameViewController loadBoxArtForCaching:app] : nil;
+    if (boxArt != nil) {
+        UIImageView* artView = [[UIImageView alloc] initWithImage:boxArt];
+        artView.contentMode = UIViewContentModeScaleAspectFill;
+        artView.clipsToBounds = YES;
+        artView.layer.cornerRadius = 14;
+        artView.translatesAutoresizingMaskIntoConstraints = NO;
+        CGFloat height = MIN(220, container.bounds.size.height * 0.45);
+        CGFloat ratio = boxArt.size.height > 0 ? boxArt.size.width / boxArt.size.height : 0.75;
+        [NSLayoutConstraint activateConstraints:@[
+            [artView.heightAnchor constraintEqualToConstant:height],
+            [artView.widthAnchor constraintEqualToConstant:height * ratio],
+        ]];
+        [stack addArrangedSubview:artView];
+    }
+    
+    UILabel* title = [[UILabel alloc] init];
+    title.text = app != nil ? [NSString stringWithFormat:@"Starting %@", app.name] : @"Starting stream";
+    title.textColor = [UIColor whiteColor];
+    title.font = [UIFont systemFontOfSize:22 weight:UIFontWeightBold];
+    title.textAlignment = NSTextAlignmentCenter;
+    title.numberOfLines = 2;
+    [stack addArrangedSubview:title];
+    
+    if (app != nil) {
+        UILabel* subtitle = [[UILabel alloc] init];
+        subtitle.text = [NSString stringWithFormat:@"Connecting to %@…", app.host.name];
+        subtitle.textColor = [UIColor colorWithWhite:1.0 alpha:0.7];
+        subtitle.font = [UIFont systemFontOfSize:15 weight:UIFontWeightRegular];
+        subtitle.textAlignment = NSTextAlignmentCenter;
+        [stack addArrangedSubview:subtitle];
+    }
+    
+    UIActivityIndicatorView* spinner = [[UIActivityIndicatorView alloc] initWithActivityIndicatorStyle:UIActivityIndicatorViewStyleLarge];
+    spinner.color = [UIColor whiteColor];
+    [spinner startAnimating];
+    [stack addArrangedSubview:spinner];
+}
+
+- (void)hideLaunchOverlay {
+    [_launchOverlay removeFromSuperview];
+    _launchOverlay = nil;
+}
+
+#pragma mark - Pinned games (app icon quick actions)
+
+static NSString* const kPinnedAppsKey = @"StarlightPinnedApps";
+static const NSUInteger kMaxQuickActions = 4;
+
+- (NSArray<NSDictionary*>*)pinnedApps {
+    NSArray* pinned = [[NSUserDefaults standardUserDefaults] arrayForKey:kPinnedAppsKey];
+    return pinned ?: @[];
+}
+
+- (BOOL)isAppPinned:(TemporaryApp*)app {
+    for (NSDictionary* entry in [self pinnedApps]) {
+        if ([entry[@"host"] isEqualToString:app.host.uuid] && [entry[@"app"] isEqualToString:app.id]) {
+            return YES;
+        }
+    }
+    return NO;
+}
+
+- (void)togglePinForApp:(TemporaryApp*)app {
+    NSMutableArray* pinned = [[self pinnedApps] mutableCopy];
+    for (NSDictionary* entry in [pinned copy]) {
+        if ([entry[@"host"] isEqualToString:app.host.uuid] && [entry[@"app"] isEqualToString:app.id]) {
+            [pinned removeObject:entry];
+            [[NSUserDefaults standardUserDefaults] setObject:pinned forKey:kPinnedAppsKey];
+            [self updateHostShortcuts];
+            return;
+        }
+    }
+    
+    if (pinned.count >= kMaxQuickActions) {
+        UIAlertController* alert = [UIAlertController alertControllerWithTitle:@"Pin Limit Reached"
+                                                                       message:[NSString stringWithFormat:@"iOS shows up to %lu items in the app icon menu. Unpin a game first.", (unsigned long)kMaxQuickActions]
+                                                                preferredStyle:UIAlertControllerStyleAlert];
+        [alert addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:nil]];
+        [[self activeViewController] presentViewController:alert animated:YES completion:nil];
+        return;
+    }
+    
+    [pinned addObject:@{ @"host": app.host.uuid,
+                         @"app": app.id,
+                         @"appName": app.name ?: @"",
+                         @"hostName": app.host.name ?: @"" }];
+    [[NSUserDefaults standardUserDefaults] setObject:pinned forKey:kPinnedAppsKey];
+    [self updateHostShortcuts];
+    
+    UIAlertController* alert = [UIAlertController alertControllerWithTitle:@"Pinned to App Icon"
+                                                                   message:[NSString stringWithFormat:@"Long-press the Starlight icon on the Home Screen and tap \"%@\" to start streaming it directly.", app.name]
+                                                            preferredStyle:UIAlertControllerStyleAlert];
+    [alert addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:nil]];
+    [[self activeViewController] presentViewController:alert animated:YES completion:nil];
+}
+
+// Checks every 0.5s (up to remainingChecks times, ~3s) whether the host is online,
 // then launches; after the last check it launches anyway with the last known address.
 - (void)pollPendingLaunchHost:(TemporaryHost*)host remainingChecks:(int)remainingChecks {
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.5 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
@@ -1225,6 +1390,9 @@ static NSMutableSet* hostList;
 }
 
 - (void)handlePendingLaunchNotification {
+    if (!_background && self.view.window != nil) {
+        [self showLaunchOverlayForApp:nil];
+    }
     [self handlePendingLaunch:NO];
 }
 
@@ -1307,6 +1475,9 @@ static NSMutableSet* hostList;
 {
     [super viewDidDisappear:animated];
     
+    // The stream view is up (or we left for another reason): drop the start screen
+    [self hideLaunchOverlay];
+    
     // when discovery stops, we must create a new instance because
     // you cannot restart an NSOperation when it is finished
     [_discMan stopDiscovery];
@@ -1367,8 +1538,25 @@ static NSMutableSet* hostList;
 #if !TARGET_OS_TV
     NSMutableArray* quickActions = [[NSMutableArray alloc] init];
     
+    // Pinned games come first and launch straight into a stream
+    for (NSDictionary* entry in [self pinnedApps]) {
+        if (quickActions.count >= kMaxQuickActions) {
+            break;
+        }
+        UIApplicationShortcutItem* shortcut = [[UIApplicationShortcutItem alloc]
+                                               initWithType:@"App"
+                                               localizedTitle:entry[@"appName"]
+                                               localizedSubtitle:entry[@"hostName"]
+                                               icon:[UIApplicationShortcutIcon iconWithType:UIApplicationShortcutIconTypePlay]
+                                               userInfo:@{ @"host": entry[@"host"], @"app": entry[@"app"] }];
+        [quickActions addObject:shortcut];
+    }
+    
     @synchronized (hostList) {
         for (TemporaryHost* host in hostList) {
+            if (quickActions.count >= kMaxQuickActions) {
+                break;
+            }
             // Pair state may be unknown if we haven't polled it yet, but the app list
             // count will persist from paired PCs
             if ([host.appList count] > 0) {

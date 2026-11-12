@@ -19,6 +19,15 @@ starlight://launch?host=<PC>&app=<jogo>
 Espaços e acentos têm de ir codificados (`%20` para espaço). O mais fácil é não escrever
 o link à mão: ver abaixo.
 
+## Fixar um jogo no ícone da app (o mais rápido)
+
+1. Na app, mantém o dedo em cima do jogo → **Pin to App Icon**.
+2. No ecrã principal do iPhone, mantém o dedo no ícone da **Starlight**: o jogo aparece no menu.
+3. Tocar nele abre logo o ecrã de arranque com a arte do jogo e entra no stream,
+   sem passar pelo ecrã principal da app.
+
+Até 4 jogos (limite do iOS). Para tirar: **Unpin from App Icon** no mesmo menu.
+
 ## Como criar um atalho
 
 1. Abre a app, entra no PC e **mantém o dedo em cima do jogo**.
@@ -26,8 +35,8 @@ o link à mão: ver abaixo.
 3. Na app **Atalhos**: novo atalho → ação **Abrir URLs** → cola o link.
 4. Dá-lhe nome e ícone e, se quiseres, **Adicionar ao ecrã principal**.
 
-Ao tocar no atalho, a app abre, espera até ~6 segundos que o PC apareça na rede
-e arranca logo o stream desse jogo. Se já estiver outro jogo a correr no PC, aparece
+Ao tocar no atalho, a app abre diretamente num ecrã de arranque com a arte do jogo,
+espera até ~3 segundos que o PC apareça na rede e entra no stream. Se já estiver outro jogo a correr no PC, aparece
 o menu normal do Moonlight (retomar / fechar e iniciar).
 
 Se algo falhar (PC não emparelhado, jogo não encontrado), aparece um aviso a explicar.
