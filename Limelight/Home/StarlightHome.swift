@@ -1659,15 +1659,15 @@ struct HomeTab: View {
     @ObservedObject private var steam = SteamManager.shared
     @ObservedObject private var focus = GameFocus.shared
     @Namespace private var zoom
+    /// Scrolled away from the top: the navigation bar shows "Play Now" over the system scroll-edge blur
+    @State private var scrolled = false
 
     var body: some View {
         GeometryReader { geo in
             let compact = geo.size.height < 440
             let leading = geo.safeAreaInsets.leading + 24
             let trailing = geo.safeAreaInsets.trailing + 24
-            ZStack(alignment: .top) {
-                backdrop
-
+            Group {
                 if let featured = model.featured {
                     ScrollViewReader { proxy in
                         ScrollView(.vertical, showsIndicators: false) {
@@ -1692,6 +1692,7 @@ struct HomeTab: View {
                         }
                         // Scroll across the full width so the rows reach the screen edges
                         .ignoresSafeArea(.container, edges: .horizontal)
+                        .modifier(HomeScrollState(scrolled: $scrolled))
                         .onChange(of: focus.focusedID) { id in
                             scroll(to: id, proxy: proxy)
                         }
@@ -1700,7 +1701,12 @@ struct HomeTab: View {
                     EmptyStateView(model: model)
                 }
             }
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+            // Behind the content (not beside it) so the navigation bar finds the scroll view
+            // and draws its native scroll-edge effect, like Library and Settings
+            .background(backdrop)
         }
+        .navigationTitle(scrolled && model.featured != nil ? "Play Now" : "")
         .modifier(GameDetailDestination(model: model, tab: .home, zoom: zoom))
     }
 
@@ -1745,6 +1751,23 @@ struct HomeTab: View {
         }
         .ignoresSafeArea()
         .animation(.easeInOut(duration: 0.35), value: model.featured?.id)
+    }
+}
+
+/// Whether the Home list has moved away from the top (iOS 18+; earlier versions keep the bar empty)
+struct HomeScrollState: ViewModifier {
+    @Binding var scrolled: Bool
+
+    func body(content: Content) -> some View {
+        if #available(iOS 18.0, *) {
+            content.onScrollGeometryChange(for: Bool.self) { geo in
+                geo.contentOffset.y + geo.contentInsets.top > 12
+            } action: { _, value in
+                withAnimation(.easeInOut(duration: 0.2)) { scrolled = value }
+            }
+        } else {
+            content
+        }
     }
 }
 
