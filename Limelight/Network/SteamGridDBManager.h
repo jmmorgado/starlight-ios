@@ -39,7 +39,25 @@ extern NSString* const SteamGridDBKindIcon;   // square icon
                           force:(BOOL)force
                      completion:(nullable void (^)(NSUInteger fetched, NSUInteger notFound, NSUInteger failed))completion;
 
+// Removes all artwork and manual choices
 - (void)clearCache;
+
+#pragma mark - Manual artwork choices (completions run on the main queue)
+
+// The SteamGridDB game this name is matched to: @{ @"id", @"name" }, or nil
+- (nullable NSDictionary*)matchForAppName:(NSString*)name;
+
+// Searches SteamGridDB games. Results: @[ @{ @"id", @"name", @"year" (may be empty), @"verified" } ], nil on failure
+- (void)searchGames:(NSString*)term completion:(void (^)(NSArray<NSDictionary*>* _Nullable results))completion;
+
+// Artwork available for the matched game: @[ @{ @"url", @"thumb" } ], nil on failure
+- (void)artworkOptionsForAppName:(NSString*)name kind:(NSString*)kind completion:(void (^)(NSArray<NSDictionary*>* _Nullable options))completion;
+
+// Matches the name to a specific SteamGridDB game (kept for future downloads) and downloads its artwork
+- (void)setMatchForAppName:(NSString*)name gameId:(NSString*)gameId gameName:(NSString*)gameName completion:(nullable void (^)(BOOL ok))completion;
+
+// Uses a specific image for one kind (kept for future downloads)
+- (void)setArtworkForAppName:(NSString*)name kind:(NSString*)kind url:(NSString*)url completion:(nullable void (^)(BOOL ok))completion;
 
 @end
 

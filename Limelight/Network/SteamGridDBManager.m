@@ -14,6 +14,8 @@ NSString* const SteamGridDBKindIcon = @"icon";
 static NSString* const kApiKeyDefaultsKey = @"StarlightSteamGridDBKey";
 static NSString* const kApiBase = @"https://www.steamgriddb.com/api/v2/";
 static NSString* const kNoMatchMarker = @"none";
+static NSString* const kMatchOverridesKey = @"StarlightSteamGridDBMatchOverrides";   // name key -> { id, name }
+static NSString* const kArtOverridesKey = @"StarlightSteamGridDBArtOverrides";       // name key -> { kind: url }
 
 @implementation SteamGridDBManager {
     dispatch_queue_t _workQueue;
@@ -101,6 +103,33 @@ static NSString* const kNoMatchMarker = @"none";
 
 - (void)clearCache {
     [[NSFileManager defaultManager] removeItemAtPath:[self cacheRoot] error:nil];
+    [[NSUserDefaults standardUserDefaults] removeObjectForKey:kMatchOverridesKey];
+    [[NSUserDefaults standardUserDefaults] removeObjectForKey:kArtOverridesKey];
+}
+
+- (NSDictionary*)matchOverrideForName:(NSString*)name {
+    NSDictionary* all = [[NSUserDefaults standardUserDefaults] dictionaryForKey:kMatchOverridesKey];
+    NSDictionary* entry = all[[self keyForName:name]];
+    return [entry isKindOfClass:[NSDictionary class]] ? entry : nil;
+}
+
+- (NSDictionary*)artOverridesForName:(NSString*)name {
+    NSDictionary* all = [[NSUserDefaults standardUserDefaults] dictionaryForKey:kArtOverridesKey];
+    NSDictionary* entry = all[[self keyForName:name]];
+    return [entry isKindOfClass:[NSDictionary class]] ? entry : @{};
+}
+
+- (NSString*)endpointForKind:(NSString*)kind gameId:(NSString*)gameId {
+    if ([kind isEqualToString:SteamGridDBKindGrid]) {
+        return [NSString stringWithFormat:@"grids/game/%@?dimensions=600x900&types=static", gameId];
+    }
+    if ([kind isEqualToString:SteamGridDBKindHero]) {
+        return [NSString stringWithFormat:@"heroes/game/%@?types=static", gameId];
+    }
+    if ([kind isEqualToString:SteamGridDBKindLogo]) {
+        return [NSString stringWithFormat:@"logos/game/%@?types=static&mimes=image/png", gameId];
+    }
+    return [NSString stringWithFormat:@"icons/game/%@?types=static&mimes=image/png", gameId];
 }
 
 // Host entries that aren't games and would only produce wrong matches
@@ -199,10 +228,18 @@ typedef NS_ENUM(NSInteger, ArtworkFetchResult) {
         return ArtworkFetchResultSkipped;
     }
 
-    NSString* term = [name stringByAddingPercentEncodingWithAllowedCharacters:[NSCharacterSet URLHostAllowedCharacterSet]];
-    term = [term stringByReplacingOccurrencesOfString:@"/" withString:@"%2F"];
     NSInteger status = 0;
-    NSArray* matches = [self apiGet:[NSString stringWithFormat:@"search/autocomplete/%@", term] statusCode:&status];
+    NSArray* matches;
+    NSDictionary* manual = [self matchOverrideForName:name];
+    if (manual[@"id"] != nil) {
+        // The user picked the game by hand
+        matches = @[manual];
+    }
+    else {
+        NSString* term = [name stringByAddingPercentEncodingWithAllowedCharacters:[NSCharacterSet URLHostAllowedCharacterSet]];
+        term = [term stringByReplacingOccurrencesOfString:@"/" withString:@"%2F"];
+        matches = [self apiGet:[NSString stringWithFormat:@"search/autocomplete/%@", term] statusCode:&status];
+    }
     if (matches == nil) {
         Log(LOG_W, @"SteamGridDB search failed for %@ (HTTP %ld)", name, (long)status);
         return ArtworkFetchResultFailed;
@@ -224,23 +261,137 @@ typedef NS_ENUM(NSInteger, ArtworkFetchResult) {
     NSDictionary* info = @{ @"id": gameId, @"name": match[@"name"] ?: @"", @"query": name };
     [[NSJSONSerialization dataWithJSONObject:info options:0 error:nil] writeToFile:[dir stringByAppendingPathComponent:@"match.json"] atomically:YES];
 
-    NSDictionary<NSString*, NSString*>* endpoints = @{
-        SteamGridDBKindGrid: [NSString stringWithFormat:@"grids/game/%@?dimensions=600x900&types=static", gameId],
-        SteamGridDBKindHero: [NSString stringWithFormat:@"heroes/game/%@?types=static", gameId],
-        SteamGridDBKindLogo: [NSString stringWithFormat:@"logos/game/%@?types=static&mimes=image/png", gameId],
-        SteamGridDBKindIcon: [NSString stringWithFormat:@"icons/game/%@?types=static&mimes=image/png", gameId],
-    };
-
+    NSDictionary* chosen = [self artOverridesForName:name];
     BOOL gotAny = NO;
     for (NSString* kind in @[SteamGridDBKindGrid, SteamGridDBKindHero, SteamGridDBKindLogo, SteamGridDBKindIcon]) {
-        NSArray* items = [self apiGet:endpoints[kind] statusCode:NULL];
-        if (items.count > 0 && [self downloadFirstOf:items toPath:[dir stringByAppendingPathComponent:kind]]) {
+        NSString* path = [dir stringByAppendingPathComponent:kind];
+        NSString* chosenURL = chosen[kind];
+        if ([chosenURL isKindOfClass:[NSString class]] && [self downloadFirstOf:@[@{ @"url": chosenURL }] toPath:path]) {
+            gotAny = YES;
+            continue;
+        }
+        NSArray* items = [self apiGet:[self endpointForKind:kind gameId:gameId] statusCode:NULL];
+        if (items.count > 0 && [self downloadFirstOf:items toPath:path]) {
             gotAny = YES;
         }
     }
 
     Log(LOG_I, @"SteamGridDB artwork for %@ -> %@ (%@)", name, match[@"name"], gotAny ? @"ok" : @"no images");
     return gotAny ? ArtworkFetchResultFetched : ArtworkFetchResultNotFound;
+}
+
+#pragma mark - Manual choices
+
+- (NSDictionary*)matchForAppName:(NSString*)name {
+    if (name.length == 0) {
+        return nil;
+    }
+    NSData* data = [NSData dataWithContentsOfFile:[[self directoryForName:name] stringByAppendingPathComponent:@"match.json"]];
+    NSDictionary* info = data != nil ? [NSJSONSerialization JSONObjectWithData:data options:0 error:nil] : nil;
+    if ([info isKindOfClass:[NSDictionary class]] && info[@"id"] != nil) {
+        return info;
+    }
+    return [self matchOverrideForName:name];
+}
+
+- (void)searchGames:(NSString*)term completion:(void (^)(NSArray<NSDictionary*>*))completion {
+    NSString* trimmed = [term stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
+    if (![self isConfigured] || trimmed.length == 0) {
+        dispatch_async(dispatch_get_main_queue(), ^{ completion(trimmed.length == 0 ? @[] : nil); });
+        return;
+    }
+    dispatch_async(_workQueue, ^{
+        NSString* encoded = [trimmed stringByAddingPercentEncodingWithAllowedCharacters:[NSCharacterSet URLHostAllowedCharacterSet]];
+        encoded = [encoded stringByReplacingOccurrencesOfString:@"/" withString:@"%2F"];
+        NSArray* items = [self apiGet:[NSString stringWithFormat:@"search/autocomplete/%@", encoded] statusCode:NULL];
+        NSMutableArray* results = items != nil ? [NSMutableArray array] : nil;
+        for (NSDictionary* item in items) {
+            if (![item isKindOfClass:[NSDictionary class]] || item[@"id"] == nil) {
+                continue;
+            }
+            NSString* year = @"";
+            id released = item[@"release_date"];
+            if ([released isKindOfClass:[NSNumber class]] && [released doubleValue] > 0) {
+                NSDateComponents* parts = [[NSCalendar currentCalendar] components:NSCalendarUnitYear
+                                                                          fromDate:[NSDate dateWithTimeIntervalSince1970:[released doubleValue]]];
+                year = [NSString stringWithFormat:@"%ld", (long)parts.year];
+            }
+            [results addObject:@{ @"id": [NSString stringWithFormat:@"%@", item[@"id"]],
+                                  @"name": [item[@"name"] isKindOfClass:[NSString class]] ? item[@"name"] : @"",
+                                  @"year": year,
+                                  @"verified": @([item[@"verified"] boolValue]) }];
+        }
+        dispatch_async(dispatch_get_main_queue(), ^{ completion(results); });
+    });
+}
+
+- (void)artworkOptionsForAppName:(NSString*)name kind:(NSString*)kind completion:(void (^)(NSArray<NSDictionary*>*))completion {
+    NSString* gameId = [self matchForAppName:name][@"id"];
+    if (![self isConfigured] || gameId == nil) {
+        dispatch_async(dispatch_get_main_queue(), ^{ completion(@[]); });
+        return;
+    }
+    gameId = [NSString stringWithFormat:@"%@", gameId];
+    dispatch_async(_workQueue, ^{
+        NSArray* items = [self apiGet:[self endpointForKind:kind gameId:gameId] statusCode:NULL];
+        NSMutableArray* options = items != nil ? [NSMutableArray array] : nil;
+        for (NSDictionary* item in items) {
+            if (![item isKindOfClass:[NSDictionary class]] || ![item[@"url"] isKindOfClass:[NSString class]]) {
+                continue;
+            }
+            NSString* thumb = [item[@"thumb"] isKindOfClass:[NSString class]] ? item[@"thumb"] : item[@"url"];
+            [options addObject:@{ @"url": item[@"url"], @"thumb": thumb }];
+            if (options.count >= 40) {
+                break;
+            }
+        }
+        dispatch_async(dispatch_get_main_queue(), ^{ completion(options); });
+    });
+}
+
+- (void)setMatchForAppName:(NSString*)name gameId:(NSString*)gameId gameName:(NSString*)gameName completion:(void (^)(BOOL))completion {
+    NSString* key = [self keyForName:name];
+    NSUserDefaults* defaults = [NSUserDefaults standardUserDefaults];
+    NSMutableDictionary* matches = [[defaults dictionaryForKey:kMatchOverridesKey] mutableCopy] ?: [NSMutableDictionary dictionary];
+    matches[key] = @{ @"id": gameId, @"name": gameName ?: @"" };
+    [defaults setObject:matches forKey:kMatchOverridesKey];
+    // Images picked for the previous game no longer apply
+    NSMutableDictionary* art = [[defaults dictionaryForKey:kArtOverridesKey] mutableCopy];
+    [art removeObjectForKey:key];
+    [defaults setObject:art ?: @{} forKey:kArtOverridesKey];
+
+    dispatch_async(_workQueue, ^{
+        ArtworkFetchResult result = [self fetchArtworkForName:name force:YES];
+        dispatch_async(dispatch_get_main_queue(), ^{
+            [[NSNotificationCenter defaultCenter] postNotificationName:SteamGridDBArtworkUpdatedNotification object:name];
+            if (completion != nil) {
+                completion(result == ArtworkFetchResultFetched);
+            }
+        });
+    });
+}
+
+- (void)setArtworkForAppName:(NSString*)name kind:(NSString*)kind url:(NSString*)url completion:(void (^)(BOOL))completion {
+    NSString* key = [self keyForName:name];
+    NSUserDefaults* defaults = [NSUserDefaults standardUserDefaults];
+    NSMutableDictionary* art = [[defaults dictionaryForKey:kArtOverridesKey] mutableCopy] ?: [NSMutableDictionary dictionary];
+    NSMutableDictionary* entry = [[self artOverridesForName:name] mutableCopy];
+    entry[kind] = url;
+    art[key] = entry;
+    [defaults setObject:art forKey:kArtOverridesKey];
+
+    dispatch_async(_workQueue, ^{
+        NSString* dir = [self directoryForName:name];
+        [[NSFileManager defaultManager] createDirectoryAtPath:dir withIntermediateDirectories:YES attributes:nil error:nil];
+        [[NSFileManager defaultManager] removeItemAtPath:[dir stringByAppendingPathComponent:kNoMatchMarker] error:nil];
+        BOOL ok = [self downloadFirstOf:@[@{ @"url": url }] toPath:[dir stringByAppendingPathComponent:kind]];
+        dispatch_async(dispatch_get_main_queue(), ^{
+            [[NSNotificationCenter defaultCenter] postNotificationName:SteamGridDBArtworkUpdatedNotification object:name];
+            if (completion != nil) {
+                completion(ok);
+            }
+        });
+    });
 }
 
 #pragma mark - Public fetch

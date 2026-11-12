@@ -1809,6 +1809,9 @@ static const NSUInteger kMaxQuickActions = 4;
     _home.onSaveSettings = ^(NSDictionary<NSString*, id>* settings) {
         [weakSelf homeSaveStreamSettings:settings];
     };
+    _home.artworkRequest = ^(NSString* action, NSDictionary<NSString*, id>* params, void (^reply)(NSDictionary<NSString*, id>*)) {
+        [weakSelf homeArtworkRequest:action params:params reply:reply];
+    };
     
     UIViewController* homeVC = _home.viewController;
     [self addChildViewController:homeVC];
@@ -1926,6 +1929,15 @@ static const NSUInteger kMaxQuickActions = 4;
                 grid = [fm fileExistsAtPath:boxArt] ? boxArt : @"";
             }
             NSNumber* played = lastPlayed[[NSString stringWithFormat:@"%@|%@", current.uuid, app.id]];
+            NSString* hero = [sgdb cachedPathForAppName:app.name kind:SteamGridDBKindHero] ?: @"";
+            NSString* logo = [sgdb cachedPathForAppName:app.name kind:SteamGridDBKindLogo] ?: @"";
+            // Changes when artwork is replaced in place, so the UI reloads the images
+            double artStamp = 0;
+            for (NSString* path in @[grid, hero, logo]) {
+                if (path.length > 0) {
+                    artStamp += [[[fm attributesOfItemAtPath:path error:nil] fileModificationDate] timeIntervalSince1970];
+                }
+            }
             [apps addObject:@{ @"host": current.uuid,
                                @"hostName": current.name ?: @"",
                                @"app": app.id,
@@ -1934,8 +1946,9 @@ static const NSUInteger kMaxQuickActions = 4;
                                @"pinIndex": @(pinIndex),
                                @"hidden": @(app.hidden),
                                @"gridPath": grid,
-                               @"heroPath": [sgdb cachedPathForAppName:app.name kind:SteamGridDBKindHero] ?: @"",
-                               @"logoPath": [sgdb cachedPathForAppName:app.name kind:SteamGridDBKindLogo] ?: @"",
+                               @"heroPath": hero,
+                               @"logoPath": logo,
+                               @"artStamp": @(artStamp),
                                @"lastPlayed": played ?: @0 }];
         }
     }
@@ -2201,6 +2214,42 @@ static const NSUInteger kMaxQuickActions = 4;
         [self.collectionView reloadData];
         [self saveGameCatalog];
         [self pushHomeState];
+    }
+}
+
+// Manual SteamGridDB choices from the Edit Artwork screen
+- (void)homeArtworkRequest:(NSString*)action params:(NSDictionary<NSString*, id>*)params reply:(void (^)(NSDictionary<NSString*, id>*))reply {
+    SteamGridDBManager* sgdb = [SteamGridDBManager sharedManager];
+    NSString* name = [params[@"name"] isKindOfClass:[NSString class]] ? params[@"name"] : @"";
+    
+    if ([action isEqualToString:@"info"]) {
+        NSDictionary* match = [sgdb matchForAppName:name];
+        reply(@{ @"configured": @([sgdb isConfigured]),
+                 @"matchId": match[@"id"] != nil ? [NSString stringWithFormat:@"%@", match[@"id"]] : @"",
+                 @"matchName": match[@"name"] ?: @"" });
+    }
+    else if ([action isEqualToString:@"search"]) {
+        [sgdb searchGames:params[@"term"] ?: @"" completion:^(NSArray<NSDictionary*>* results) {
+            reply(results != nil ? @{ @"results": results } : @{ @"error": @YES });
+        }];
+    }
+    else if ([action isEqualToString:@"options"]) {
+        [sgdb artworkOptionsForAppName:name kind:params[@"kind"] ?: SteamGridDBKindGrid completion:^(NSArray<NSDictionary*>* options) {
+            reply(options != nil ? @{ @"options": options } : @{ @"error": @YES });
+        }];
+    }
+    else if ([action isEqualToString:@"setMatch"]) {
+        [sgdb setMatchForAppName:name gameId:params[@"gameId"] ?: @"" gameName:params[@"gameName"] ?: @"" completion:^(BOOL ok) {
+            reply(@{ @"ok": @(ok) });
+        }];
+    }
+    else if ([action isEqualToString:@"setImage"]) {
+        [sgdb setArtworkForAppName:name kind:params[@"kind"] ?: SteamGridDBKindGrid url:params[@"url"] ?: @"" completion:^(BOOL ok) {
+            reply(@{ @"ok": @(ok) });
+        }];
+    }
+    else {
+        reply(@{});
     }
 }
 

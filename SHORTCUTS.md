@@ -90,3 +90,13 @@ Com Apple ID grátis a app expira ao fim de 7 dias: basta reinstalar o mesmo `.i
 (os dados ficam) ou usar o refresh automático do Sideloadly/AltStore.
 
 Com conta de programador (99 USD/ano) a assinatura dura 1 ano.
+
+## Corrigir a arte de um jogo
+
+Se a SteamGridDB escolher a versão errada de um jogo (ex.: Ocarina of Time da N64 em vez de outra edição):
+
+1. **•••** no jogo (ou mantém o dedo em cima dele) → **Edit Artwork…**
+2. Em **Game**, pesquisa e escolhe o jogo certo.
+3. Opcional: escolhe o **Background**, a **Cover** e o **Logo** que preferires entre as opções disponíveis.
+
+A escolha fica guardada e é respeitada mesmo quando se volta a descarregar a arte.
