@@ -30,6 +30,17 @@ final class StarlightHomeController: NSObject {
 
     @objc var viewController: UIViewController { hosting }
 
+    override init() {
+        super.init()
+        let homeModel = model
+        GamepadInput.shared.handler = { [weak homeModel] event in homeModel?.handlePad(event) }
+    }
+
+    /// On while the Starlight screens are visible, off during a stream
+    @objc func setControllerInputActive(_ active: Bool) {
+        GamepadInput.shared.active = active
+    }
+
     /// (hostUUID) – choose a PC (pairs it if needed)
     @objc var onSelectHost: ((String) -> Void)? {
         didSet { model.onSelectHost = onSelectHost }
@@ -180,6 +191,157 @@ final class HomeModel: ObservableObject {
     var onSaveSettings: (([String: Any]) -> Void)?
     var artworkRequest: ((String, [String: Any], @escaping ([String: Any]) -> Void) -> Void)?
 
+    // Navigation state
+    @Published var tab: StarlightTab = .home
+    var previousTab: StarlightTab = .home
+    @Published var pcExpanded = false
+    @Published var gameMenu: GameItem?
+    @Published var tabBarFocused = false
+    @Published var tabBarFlash = false
+    @Published var tabBarCollapsedByScroll = false
+    @Published var searchQuery = ""
+    @Published var searchFieldFocused = false
+    private var lastScrollOffset: CGFloat = 0
+    private var flashWork: DispatchWorkItem?
+
+    func select(_ newTab: StarlightTab) {
+        closePC()
+        closeGameMenu()
+        unfocusTabBar()
+        if newTab != tab {
+            previousTab = tab
+            tab = newTab
+            tabBarCollapsedByScroll = false
+            lastScrollOffset = 0
+            GameFocus.shared.focusedID = nil
+        }
+    }
+
+    func togglePC() { pcExpanded ? closePC() : openPC() }
+
+    func openPC() {
+        closeGameMenu()
+        unfocusTabBar()
+        pcExpanded = true
+        GameFocus.shared.push("pc")
+    }
+
+    func closePC() {
+        guard pcExpanded else { return }
+        pcExpanded = false
+        GameFocus.shared.pop("pc")
+    }
+
+    func openGameMenu(_ game: GameItem) {
+        closePC()
+        gameMenu = game
+        GameFocus.shared.push("menu")
+    }
+
+    func closeGameMenu() {
+        guard gameMenu != nil else { return }
+        gameMenu = nil
+        GameFocus.shared.pop("menu")
+    }
+
+    func openSearch(fromController: Bool) {
+        closePC()
+        closeGameMenu()
+        unfocusTabBar()
+        if tab != .search {
+            previousTab = tab
+            tab = .search
+        }
+        if fromController {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { GameFocus.shared.focus("search-field") }
+        } else {
+            searchFieldFocused = true
+        }
+    }
+
+    func expandTabBar() {
+        if DeviceStatus.shared.controllerConnected {
+            focusTabBar()
+        } else {
+            tabBarCollapsedByScroll = false
+        }
+    }
+
+    func focusTabBar() {
+        guard !tabBarFocused else { return }
+        closePC()
+        closeGameMenu()
+        tabBarFocused = true
+        GameFocus.shared.push("tabbar")
+        let current = tab
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) {
+            if StarlightTab.barTabs.contains(current) { GameFocus.shared.focus("tab-\(current.rawValue)") }
+        }
+    }
+
+    func unfocusTabBar() {
+        guard tabBarFocused else { return }
+        tabBarFocused = false
+        GameFocus.shared.pop("tabbar")
+    }
+
+    func switchTab(by delta: Int) {
+        let tabs = StarlightTab.barTabs
+        let index = tabs.firstIndex(of: tab) ?? 0
+        select(tabs[(index + delta + tabs.count) % tabs.count])
+        flashWork?.cancel()
+        tabBarFlash = true
+        let work = DispatchWorkItem { [weak self] in self?.tabBarFlash = false }
+        flashWork = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5, execute: work)
+    }
+
+    func scrolled(to offset: CGFloat) {
+        var collapsed = tabBarCollapsedByScroll
+        if offset < lastScrollOffset - 6 && offset < -20 {
+            collapsed = true
+        } else if offset > lastScrollOffset + 6 || offset > -20 {
+            collapsed = false
+        }
+        lastScrollOffset = offset
+        if collapsed != tabBarCollapsedByScroll { tabBarCollapsedByScroll = collapsed }
+    }
+
+    /// Controller input on the Starlight screens
+    func handlePad(_ event: GamepadInput.Event) {
+        let focus = GameFocus.shared
+        if editingGame != nil {
+            if event == .back { editingGame = nil }
+            return
+        }
+        switch event {
+        case .up: focus.move(.up)
+        case .down: focus.move(.down)
+        case .left: focus.move(.left)
+        case .right: focus.move(.right)
+        case .confirm: focus.activate()
+        case .back:
+            if searchFieldFocused {
+                searchFieldFocused = false
+            } else if gameMenu != nil {
+                closeGameMenu()
+            } else if pcExpanded {
+                closePC()
+            } else if tabBarFocused {
+                unfocusTabBar()
+            } else if tab == .search {
+                select(previousTab == .search ? .home : previousTab)
+            }
+        case .search: openSearch(fromController: true)
+        case .pc: togglePC()
+        case .options:
+            if tabBarFocused { unfocusTabBar() } else { focusTabBar() }
+        case .previousTab: switchTab(by: -1)
+        case .nextTab: switchTab(by: 1)
+        }
+    }
+
+
     var currentHost: HostItem? { hosts.first { $0.id == selectedHost } }
     var pairedHosts: [HostItem] { hosts.filter { $0.paired } }
     var networkHosts: [HostItem] { hosts.filter { !$0.paired } }
@@ -280,11 +442,57 @@ private extension View {
 
 // MARK: - Root
 
+enum StarlightTab: String, CaseIterable {
+    case home, library, settings, search
+
+    var title: String {
+        switch self {
+        case .home: return "Home"
+        case .library: return "Library"
+        case .settings: return "Settings"
+        case .search: return "Search"
+        }
+    }
+
+    var symbol: String {
+        switch self {
+        case .home: return "house.fill"
+        case .library: return "square.grid.2x2.fill"
+        case .settings: return "gearshape.fill"
+        case .search: return "magnifyingglass"
+        }
+    }
+
+    /// The tabs shown in the tab bar (Search has its own button at the top)
+    static let barTabs: [StarlightTab] = [.home, .library, .settings]
+}
+
 struct HomeRootView: View {
     @ObservedObject var model: HomeModel
+    @ObservedObject private var focus = GameFocus.shared
 
     var body: some View {
-        tabs
+        ZStack(alignment: .bottomLeading) {
+            content
+                .safeAreaInset(edge: .top, spacing: 0) {
+                    TopBar(model: model)
+                }
+
+            StarlightTabBar(model: model)
+                .padding(.leading, 20)
+                .padding(.bottom, 6)
+
+            if model.pcExpanded {
+                PCDropdown(model: model)
+            }
+
+            if let game = model.gameMenu {
+                GameActionPanel(model: model, game: game)
+            }
+        }
+        .onPreferenceChange(FocusFrameKey.self) { entries in
+            GameFocus.shared.entries = entries
+        }
         .tint(starlightGold)
         .preferredColorScheme(.dark)
         .sheet(item: $model.editingGame) { game in
@@ -292,57 +500,615 @@ struct HomeRootView: View {
                 .preferredColorScheme(.dark)
         }
     }
+
+    @ViewBuilder
+    private var content: some View {
+        switch model.tab {
+        case .home: HomeTab(model: model)
+        case .library: LibraryTab(model: model)
+        case .settings: SettingsTab(model: model)
+        case .search: SearchTab(model: model)
+        }
+    }
 }
 
-extension HomeRootView {
-    @ViewBuilder
-    var tabs: some View {
-        if #available(iOS 18.0, *) {
-            // iOS 26 shows the search tab as its own button at the bottom right (like Photos)
-            TabView {
-                Tab("Home", systemImage: "house.fill") { HomeTab(model: model) }
-                Tab("Library", systemImage: "square.grid.2x2.fill") { LibraryTab(model: model) }
-                Tab("Settings", systemImage: "gearshape.fill") { SettingsTab(model: model) }
-                Tab("Search", systemImage: "magnifyingglass", role: .search) { SearchTab(model: model) }
+// MARK: - Controller glyphs
+
+/// The connected controller's own button symbols (✕ ○ △ □ on PlayStation, A B Y X on Xbox)
+enum PadGlyph {
+    static var pad: GCExtendedGamepad? {
+        GCController.current?.extendedGamepad ?? GCController.controllers().first(where: { $0.extendedGamepad != nil })?.extendedGamepad
+    }
+
+    static var search: String { pad?.buttonY.sfSymbolsName ?? "triangle.circle" }
+    static var pc: String { pad?.buttonX.sfSymbolsName ?? "square.circle" }
+    static var options: String { pad?.buttonMenu.sfSymbolsName ?? "line.3.horizontal.circle" }
+    static var leftShoulder: String { pad?.leftShoulder.sfSymbolsName ?? "l1.rectangle.roundedbottom" }
+    static var rightShoulder: String { pad?.rightShoulder.sfSymbolsName ?? "r1.rectangle.roundedbottom" }
+}
+
+// MARK: - Focus engine (controller navigation)
+
+struct FocusEntry: Equatable {
+    let id: String
+    let scope: String
+    let rect: CGRect
+}
+
+struct FocusFrameKey: PreferenceKey {
+    static var defaultValue: [FocusEntry] = []
+    static func reduce(value: inout [FocusEntry], nextValue: () -> [FocusEntry]) {
+        value.append(contentsOf: nextValue())
+    }
+}
+
+/// Spatial focus for game controllers: elements report their frames, the D-pad moves to the
+/// nearest element in that direction within the active scope (main screen, PC menu, game menu, tab bar).
+final class GameFocus: ObservableObject {
+    static let shared = GameFocus()
+
+    enum Direction { case up, down, left, right }
+
+    @Published var focusedID: String?
+    @Published private(set) var scopes: [String] = []
+    var entries: [FocusEntry] = []
+    private var actions: [String: () -> Void] = [:]
+    private var saved: [String: String] = [:]
+
+    var activeScope: String { scopes.last ?? "main" }
+
+    func register(_ id: String, _ action: @escaping () -> Void) -> Bool {
+        actions[id] = action
+        return true
+    }
+
+    func push(_ scope: String) {
+        guard scopes.last != scope else { return }
+        saved[activeScope] = focusedID
+        scopes.append(scope)
+        focusedID = nil
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) { [weak self] in
+            if self?.focusedID == nil { self?.focusFirst() }
+        }
+    }
+
+    func pop(_ scope: String) {
+        guard let index = scopes.lastIndex(of: scope) else { return }
+        scopes.remove(at: index)
+        focusedID = saved[activeScope]
+    }
+
+    func focus(_ id: String) { focusedID = id }
+
+    private var candidates: [FocusEntry] {
+        entries.filter { $0.scope == activeScope && $0.rect.width > 0 }
+    }
+
+    func focusFirst() {
+        let sorted = candidates.sorted {
+            abs($0.rect.minY - $1.rect.minY) > 8 ? $0.rect.minY < $1.rect.minY : $0.rect.minX < $1.rect.minX
+        }
+        focusedID = sorted.first?.id
+    }
+
+    func move(_ direction: Direction) {
+        let list = candidates
+        guard !list.isEmpty else { return }
+        guard let current = list.first(where: { $0.id == focusedID }) else {
+            focusFirst()
+            return
+        }
+        let from = CGPoint(x: current.rect.midX, y: current.rect.midY)
+        var best: (FocusEntry, CGFloat)?
+        for entry in list where entry.id != current.id {
+            let to = CGPoint(x: entry.rect.midX, y: entry.rect.midY)
+            let dx = to.x - from.x
+            let dy = to.y - from.y
+            let primary: CGFloat
+            let secondary: CGFloat
+            switch direction {
+            case .right: primary = dx; secondary = abs(dy)
+            case .left: primary = -dx; secondary = abs(dy)
+            case .down: primary = dy; secondary = abs(dx)
+            case .up: primary = -dy; secondary = abs(dx)
+            }
+            guard primary > 4 else { continue }
+            // Stay in the same row/column when possible
+            let score = primary + secondary * (direction == .left || direction == .right ? 4 : 1.2)
+            if best == nil || score < best!.1 {
+                best = (entry, score)
+            }
+        }
+        if let target = best?.0 {
+            focusedID = target.id
+        }
+    }
+
+    func activate() {
+        guard let id = focusedID, candidates.contains(where: { $0.id == id }) else {
+            focusFirst()
+            return
+        }
+        actions[id]?()
+    }
+}
+
+struct GameFocusModifier: ViewModifier {
+    let id: String
+    let scope: String
+    let corner: CGFloat
+    let action: () -> Void
+    @ObservedObject private var focus = GameFocus.shared
+    @ObservedObject private var device = DeviceStatus.shared
+
+    func body(content: Content) -> some View {
+        let _ = focus.register(id, action)
+        let focused = device.controllerConnected && focus.activeScope == scope && focus.focusedID == id
+        content
+            .background(
+                GeometryReader { geo in
+                    Color.clear.preference(key: FocusFrameKey.self,
+                                           value: [FocusEntry(id: id, scope: scope, rect: geo.frame(in: .global))])
+                }
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: corner + 3, style: .continuous)
+                    .stroke(starlightGold, lineWidth: focused ? 3 : 0)
+                    .padding(-4)
+            )
+            .scaleEffect(focused ? 1.04 : 1)
+            .animation(.easeOut(duration: 0.12), value: focused)
+            .id(id)
+    }
+}
+
+extension View {
+    /// Makes the view reachable with the controller's D-pad; ✕ runs `action`
+    func gameFocus(_ id: String, scope: String = "main", corner: CGFloat = 16, action: @escaping () -> Void) -> some View {
+        modifier(GameFocusModifier(id: id, scope: scope, corner: corner, action: action))
+    }
+}
+
+/// Reads the controller while the Starlight screens are on top (not during a stream, where
+/// Moonlight's ControllerSupport takes over). Polling keeps it independent from those handlers.
+final class GamepadInput {
+    static let shared = GamepadInput()
+
+    enum Event { case up, down, left, right, confirm, back, search, pc, options, previousTab, nextTab }
+
+    var handler: ((Event) -> Void)?
+    private var timer: Timer?
+    private var previous: Set<String> = []
+    private var heldDirection: String?
+    private var nextRepeat = Date.distantFuture
+
+    var active = false {
+        didSet {
+            guard active != oldValue else { return }
+            timer?.invalidate()
+            timer = nil
+            previous = []
+            heldDirection = nil
+            if active {
+                disableSystemGestures()
+                timer = Timer.scheduledTimer(withTimeInterval: 1.0 / 60.0, repeats: true) { [weak self] _ in self?.poll() }
+            }
+        }
+    }
+
+    private func disableSystemGestures() {
+        for controller in GCController.controllers() {
+            for element in controller.physicalInputProfile.allElements {
+                element.preferredSystemGestureState = .disabled
+            }
+        }
+    }
+
+    private func poll() {
+        guard let pad = PadGlyph.pad else {
+            previous = []
+            return
+        }
+        var down: Set<String> = []
+        if pad.dpad.up.isPressed || pad.leftThumbstick.yAxis.value > 0.6 { down.insert("up") }
+        if pad.dpad.down.isPressed || pad.leftThumbstick.yAxis.value < -0.6 { down.insert("down") }
+        if pad.dpad.left.isPressed || pad.leftThumbstick.xAxis.value < -0.6 { down.insert("left") }
+        if pad.dpad.right.isPressed || pad.leftThumbstick.xAxis.value > 0.6 { down.insert("right") }
+        if pad.buttonA.isPressed { down.insert("a") }
+        if pad.buttonB.isPressed { down.insert("b") }
+        if pad.buttonX.isPressed { down.insert("x") }
+        if pad.buttonY.isPressed { down.insert("y") }
+        if pad.buttonMenu.isPressed { down.insert("menu") }
+        if pad.leftShoulder.isPressed { down.insert("l1") }
+        if pad.rightShoulder.isPressed { down.insert("r1") }
+
+        let pressed = down.subtracting(previous)
+        previous = down
+
+        let map: [(String, Event)] = [
+            ("up", .up), ("down", .down), ("left", .left), ("right", .right),
+            ("a", .confirm), ("b", .back), ("y", .search), ("x", .pc),
+            ("menu", .options), ("l1", .previousTab), ("r1", .nextTab)
+        ]
+        for (key, event) in map where pressed.contains(key) {
+            handler?(event)
+        }
+
+        // Holding a direction repeats it
+        let directions = ["up", "down", "left", "right"]
+        if let held = directions.first(where: { down.contains($0) }) {
+            if pressed.contains(held) || held != heldDirection {
+                heldDirection = held
+                nextRepeat = Date().addingTimeInterval(0.4)
+            } else if Date() >= nextRepeat {
+                nextRepeat = Date().addingTimeInterval(0.12)
+                if let event = map.first(where: { $0.0 == held })?.1 { handler?(event) }
             }
         } else {
-            TabView {
-                HomeTab(model: model)
-                    .tabItem { Label("Home", systemImage: "house.fill") }
-                LibraryTab(model: model)
-                    .tabItem { Label("Library", systemImage: "square.grid.2x2.fill") }
-                SettingsTab(model: model)
-                    .tabItem { Label("Settings", systemImage: "gearshape.fill") }
-                SearchTab(model: model)
-                    .tabItem { Label("Search", systemImage: "magnifyingglass") }
-            }
+            heldDirection = nil
         }
     }
 }
 
-// MARK: - Top bar: PC on the left, status on the right
+// MARK: - Top bar: PC, search, status
 
-private extension View {
-    /// PC picker on the leading side and the status cluster on the trailing side of the navigation bar
-    func starlightTopBar(model: HomeModel) -> some View {
-        self.toolbar {
-            ToolbarItem(placement: .navigationBarLeading) {
-                HostMenu(model: model, inToolbar: true)
-            }
-            ToolbarItem(placement: .navigationBarTrailing) {
-                StatusCluster()
-            }
+struct TopBar: View {
+    @ObservedObject var model: HomeModel
+
+    var body: some View {
+        HStack(spacing: 10) {
+            PCButton(model: model)
+            SearchButton(model: model)
+            Spacer(minLength: 8)
+            StatusCluster()
         }
+        .padding(.horizontal, 20)
+        .padding(.top, 6)
+        .padding(.bottom, 6)
+    }
+}
+
+struct PCButton: View {
+    @ObservedObject var model: HomeModel
+    @ObservedObject private var device = DeviceStatus.shared
+
+    var body: some View {
+        Button { model.togglePC() } label: {
+            HStack(spacing: 8) {
+                ZStack(alignment: .bottomTrailing) {
+                    Image(systemName: "desktopcomputer")
+                        .font(.system(size: 17, weight: .semibold))
+                    Circle()
+                        .fill(statusColor)
+                        .frame(width: 9, height: 9)
+                        .overlay(Circle().stroke(.black.opacity(0.6), lineWidth: 1.5))
+                        .offset(x: 3, y: 2)
+                }
+                if model.pcExpanded {
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text(model.currentHost?.name ?? "Choose a PC")
+                            .font(.system(size: 14, weight: .semibold))
+                            .lineLimit(1)
+                        Text(statusText)
+                            .font(.system(size: 11))
+                            .foregroundStyle(.secondary)
+                    }
+                    .transition(.opacity.combined(with: .move(edge: .leading)))
+                }
+                if device.controllerConnected {
+                    Image(systemName: PadGlyph.pc)
+                        .font(.system(size: 15, weight: .regular))
+                        .foregroundStyle(.secondary)
+                } else {
+                    Image(systemName: model.pcExpanded ? "chevron.up" : "chevron.down")
+                        .font(.system(size: 10, weight: .bold))
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .foregroundStyle(.white)
+            .padding(.horizontal, 12)
+            .frame(height: 40)
+            .glassCapsule()
+        }
+        .buttonStyle(.plain)
+        .gameFocus("pc-button", corner: 20) { model.togglePC() }
+        .accessibilityLabel("PC: \(model.currentHost?.name ?? "none"), \(statusText)")
+        .animation(.spring(response: 0.3, dampingFraction: 0.85), value: model.pcExpanded)
     }
 
-    func starlightStatusOnly() -> some View {
-        self.toolbar {
-            ToolbarItem(placement: .navigationBarTrailing) {
-                StatusCluster()
+    private var statusColor: Color {
+        guard let host = model.currentHost else { return .gray }
+        if !host.paired { return .orange }
+        return host.online ? .green : .gray
+    }
+
+    private var statusText: String {
+        guard let host = model.currentHost else { return model.hosts.isEmpty ? "No PCs yet" : "Tap to choose" }
+        return !host.paired ? "Not paired" : (host.online ? "Online" : "Offline")
+    }
+}
+
+struct SearchButton: View {
+    @ObservedObject var model: HomeModel
+    @ObservedObject private var device = DeviceStatus.shared
+
+    var body: some View {
+        Button { model.openSearch(fromController: false) } label: {
+            HStack(spacing: 8) {
+                Image(systemName: "magnifyingglass")
+                    .font(.system(size: 15, weight: .semibold))
+                Text("Search game")
+                    .font(.system(size: 15, weight: .semibold))
+                if device.controllerConnected {
+                    Image(systemName: PadGlyph.search)
+                        .font(.system(size: 15, weight: .regular))
+                        .foregroundStyle(.secondary)
+                }
             }
+            .foregroundStyle(.white)
+            .padding(.horizontal, 14)
+            .frame(height: 40)
+            .glassCapsule()
+        }
+        .buttonStyle(.plain)
+        .gameFocus("search-button", corner: 20) { model.openSearch(fromController: true) }
+    }
+}
+
+/// The PC list that drops down from the PC button
+struct PCDropdown: View {
+    @ObservedObject var model: HomeModel
+
+    var body: some View {
+        ZStack(alignment: .topLeading) {
+            Color.black.opacity(0.001)
+                .ignoresSafeArea()
+                .onTapGesture { model.closePC() }
+
+            VStack(alignment: .leading, spacing: 6) {
+                if !model.pairedHosts.isEmpty {
+                    sectionTitle("Your PCs")
+                    ForEach(model.pairedHosts) { host in
+                        row("pc-host-\(host.id)",
+                            title: host.name + (host.online ? "" : " · offline"),
+                            symbol: host.id == model.selectedHost ? "checkmark" : "desktopcomputer") {
+                            model.closePC()
+                            model.onSelectHost?(host.id)
+                        }
+                    }
+                }
+                if !model.networkHosts.isEmpty {
+                    sectionTitle("On Your Network")
+                    ForEach(model.networkHosts) { host in
+                        row("pc-net-\(host.id)", title: "\(host.name) · pair", symbol: "link") {
+                            model.closePC()
+                            model.onSelectHost?(host.id)
+                        }
+                    }
+                }
+                Divider().padding(.vertical, 2)
+                if let host = model.currentHost, host.paired {
+                    row("pc-refresh", title: "Refresh Games", symbol: "arrow.clockwise") {
+                        model.closePC()
+                        model.hostAction("refresh", host)
+                    }
+                }
+                row("pc-add", title: "Add PC by Address…", symbol: "plus") {
+                    model.closePC()
+                    model.command("addHost")
+                }
+            }
+            .padding(12)
+            .frame(width: 280)
+            .modifier(PanelGlass(corner: 22))
+            .padding(.leading, 20)
+            .padding(.top, 56)
+        }
+        .transition(.opacity)
+    }
+
+    private func sectionTitle(_ text: String) -> some View {
+        Text(text)
+            .font(.system(size: 12, weight: .semibold))
+            .foregroundStyle(.secondary)
+            .padding(.horizontal, 8)
+            .padding(.top, 4)
+    }
+
+    private func row(_ id: String, title: String, symbol: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Label(title, systemImage: symbol)
+                .font(.system(size: 15, weight: .medium))
+                .foregroundStyle(.white)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 9)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .gameFocus(id, scope: "pc", corner: 12, action: action)
+    }
+}
+
+/// Game options as a navigable panel (used instead of the system menu when a controller is connected)
+struct GameActionPanel: View {
+    @ObservedObject var model: HomeModel
+    let game: GameItem
+
+    private struct Item: Identifiable {
+        let id: String
+        let title: String
+        let symbol: String
+        var destructive = false
+    }
+
+    private var items: [Item] {
+        var list = [
+            Item(id: "pin", title: game.pinned ? "Unpin" : "Pin", symbol: game.pinned ? "pin.slash" : "pin"),
+            Item(id: "copyLink", title: "Copy Shortcut Link", symbol: "link"),
+            Item(id: "saveIcon", title: "Save Icon to Photos", symbol: "photo"),
+            Item(id: "editArtwork", title: "Edit Artwork…", symbol: "photo.on.rectangle.angled"),
+            Item(id: "hide", title: game.hidden ? "Show Game" : "Hide Game", symbol: game.hidden ? "eye" : "eye.slash")
+        ]
+        if game.running {
+            list.append(Item(id: "quit", title: "Quit Game", symbol: "xmark.circle", destructive: true))
+        }
+        return list
+    }
+
+    var body: some View {
+        ZStack {
+            Color.black.opacity(0.45)
+                .ignoresSafeArea()
+                .onTapGesture { model.closeGameMenu() }
+
+            VStack(alignment: .leading, spacing: 6) {
+                Text(game.name)
+                    .font(.system(size: 18, weight: .bold))
+                    .lineLimit(2)
+                    .padding(.horizontal, 10)
+                    .padding(.bottom, 4)
+                ForEach(items) { item in
+                    Button { run(item.id) } label: {
+                        Label(item.title, systemImage: item.symbol)
+                            .font(.system(size: 15, weight: .medium))
+                            .foregroundStyle(item.destructive ? Color.red : Color.white)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 9)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .gameFocus("menu-\(item.id)", scope: "menu", corner: 12) { run(item.id) }
+                }
+            }
+            .padding(14)
+            .frame(width: 300)
+            .modifier(PanelGlass(corner: 24))
+        }
+        .transition(.opacity)
+    }
+
+    private func run(_ id: String) {
+        model.closeGameMenu()
+        if id == "editArtwork" {
+            model.editingGame = game
+        } else {
+            model.action(id, game)
         }
     }
 }
+
+struct PanelGlass: ViewModifier {
+    let corner: CGFloat
+
+    func body(content: Content) -> some View {
+        if #available(iOS 26.0, *) {
+            content.glassEffect(.regular, in: RoundedRectangle(cornerRadius: corner, style: .continuous))
+        } else {
+            content.background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: corner, style: .continuous))
+        }
+    }
+}
+
+// MARK: - Tab bar
+
+/// Home / Library / Settings. Collapses to the current tab's icon when scrolling down or when a
+/// controller is connected (then it also shows the Options glyph). Options focuses it, L1/R1 switch tabs.
+struct StarlightTabBar: View {
+    @ObservedObject var model: HomeModel
+    @ObservedObject private var device = DeviceStatus.shared
+
+    private var expanded: Bool {
+        if model.tabBarFocused || model.tabBarFlash { return true }
+        if device.controllerConnected { return false }
+        return !model.tabBarCollapsedByScroll
+    }
+
+    var body: some View {
+        Group {
+            if expanded {
+                HStack(spacing: 4) {
+                    if device.controllerConnected {
+                        Image(systemName: PadGlyph.leftShoulder)
+                            .font(.system(size: 16))
+                            .foregroundStyle(.secondary)
+                            .padding(.horizontal, 6)
+                    }
+                    ForEach(StarlightTab.barTabs, id: \.self) { tab in
+                        Button { model.select(tab) } label: {
+                            HStack(spacing: 6) {
+                                Image(systemName: tab.symbol)
+                                Text(tab.title)
+                            }
+                            .font(.system(size: 15, weight: .semibold))
+                            .foregroundStyle(model.tab == tab ? starlightGold : .white)
+                            .padding(.horizontal, 14)
+                            .frame(height: 40)
+                            .background(model.tab == tab ? Color.white.opacity(0.14) : .clear, in: Capsule())
+                            .contentShape(Capsule())
+                        }
+                        .buttonStyle(.plain)
+                        .gameFocus("tab-\(tab.rawValue)", scope: "tabbar", corner: 20) { model.select(tab) }
+                    }
+                    if device.controllerConnected {
+                        Image(systemName: PadGlyph.rightShoulder)
+                            .font(.system(size: 16))
+                            .foregroundStyle(.secondary)
+                            .padding(.horizontal, 6)
+                    }
+                }
+                .padding(5)
+                .glassCapsule()
+                .transition(.scale(scale: 0.6, anchor: .leading).combined(with: .opacity))
+            } else {
+                Button { model.expandTabBar() } label: {
+                    HStack(spacing: 8) {
+                        Image(systemName: model.tab.symbol)
+                            .font(.system(size: 17, weight: .semibold))
+                            .foregroundStyle(starlightGold)
+                        if device.controllerConnected {
+                            Image(systemName: PadGlyph.options)
+                                .font(.system(size: 16))
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                    .padding(.horizontal, 14)
+                    .frame(height: 46)
+                    .glassCapsule()
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("\(model.tab.title) tab, show tabs")
+                .transition(.scale(scale: 0.6, anchor: .leading).combined(with: .opacity))
+            }
+        }
+        .animation(.spring(response: 0.35, dampingFraction: 0.85), value: expanded)
+    }
+}
+
+/// Reports the scroll position so the tab bar can collapse when scrolling down
+struct ScrollOffsetKey: PreferenceKey {
+    static var defaultValue: CGFloat = 0
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) { value = nextValue() }
+}
+
+struct ScrollOffsetReader: View {
+    var body: some View {
+        GeometryReader { geo in
+            Color.clear.preference(key: ScrollOffsetKey.self, value: geo.frame(in: .named("starlightScroll")).minY)
+        }
+        .frame(height: 0)
+    }
+}
+
+extension View {
+    func trackScroll(_ model: HomeModel) -> some View {
+        self.coordinateSpace(name: "starlightScroll")
+            .onPreferenceChange(ScrollOffsetKey.self) { model.scrolled(to: $0) }
+    }
+}
+
+// MARK: - Status cluster
 
 /// Clock, game controller, network and battery. iPhone hides the system status bar in landscape,
 /// so the app shows its own (like game consoles and Backbone do), drawn with SF Symbols.
@@ -350,6 +1116,7 @@ final class DeviceStatus: ObservableObject {
     static let shared = DeviceStatus()
 
     enum Network { case wifi, cellular, wired, none }
+    enum ControllerBrand { case playstation, xbox, other }
 
     @Published var now = Date()
     @Published var batteryLevel: Float = -1
@@ -357,6 +1124,7 @@ final class DeviceStatus: ObservableObject {
     @Published var network: Network = .none
     @Published var controllerConnected = false
     @Published var controllerBattery: Float?
+    @Published var controllerBrand: ControllerBrand = .other
 
     private let monitor = NWPathMonitor()
     private var timer: Timer?
@@ -405,6 +1173,14 @@ final class DeviceStatus: ObservableObject {
     private func refreshControllers() {
         let controllers = GCController.controllers().filter { $0.extendedGamepad != nil || $0.microGamepad != nil }
         controllerConnected = !controllers.isEmpty
+        let category = (controllers.first?.productCategory ?? "").lowercased()
+        if category.contains("dualsense") || category.contains("dualshock") || category.contains("playstation") {
+            controllerBrand = .playstation
+        } else if category.contains("xbox") {
+            controllerBrand = .xbox
+        } else {
+            controllerBrand = .other
+        }
         if let level = controllers.compactMap({ $0.battery?.batteryLevel }).first, level > 0 {
             controllerBattery = level
         } else {
@@ -445,6 +1221,14 @@ struct StatusCluster: View {
         }
     }
 
+    private var controllerSymbol: String {
+        switch status.controllerBrand {
+        case .playstation: return "playstation.logo"
+        case .xbox: return "xbox.logo"
+        case .other: return "gamecontroller.fill"
+        }
+    }
+
     var body: some View {
         // Same layout as console-style launchers: clock, then controller, network and battery icons
         HStack(spacing: 12) {
@@ -452,7 +1236,7 @@ struct StatusCluster: View {
                 .font(.system(size: 15, weight: .semibold))
                 .monospacedDigit()
             if status.controllerConnected {
-                Image(systemName: "gamecontroller.fill")
+                Image(systemName: controllerSymbol)
                     .accessibilityLabel(status.controllerBattery.map { "Controller connected, battery \(Int(($0 * 100).rounded())) percent" } ?? "Controller connected")
             }
             Image(systemName: networkSymbol)
@@ -465,112 +1249,13 @@ struct StatusCluster: View {
         .foregroundStyle(.white)
         .lineLimit(1)
         .fixedSize()
-        .padding(.horizontal, 6)
-        .padding(.vertical, 2)
-        .modifier(HostMenuBackground(inToolbar: true))
+        .padding(.horizontal, 16)
+        .frame(height: 40)
+        .glassCapsule()
     }
 }
 
 // MARK: - Shared pieces
-
-struct HostMenu: View {
-    @ObservedObject var model: HomeModel
-    /// In a navigation bar iOS 26 already wraps the item in Liquid Glass, so don't add a second capsule
-    var inToolbar = false
-
-    var body: some View {
-        Menu {
-            if !model.pairedHosts.isEmpty {
-                Section("Your PCs") {
-                    ForEach(model.pairedHosts) { host in
-                        Button {
-                            model.onSelectHost?(host.id)
-                        } label: {
-                            Label(host.name + (host.online ? "" : " · offline"),
-                                  systemImage: host.id == model.selectedHost ? "checkmark" : "desktopcomputer")
-                        }
-                    }
-                }
-            }
-            if !model.networkHosts.isEmpty {
-                Section("On Your Network") {
-                    ForEach(model.networkHosts) { host in
-                        Button {
-                            model.onSelectHost?(host.id)
-                        } label: {
-                            Label("\(host.name) · tap to pair", systemImage: "link")
-                        }
-                    }
-                }
-            }
-            Section {
-                if let host = model.currentHost, host.paired {
-                    Button { model.hostAction("refresh", host) } label: {
-                        Label("Refresh Games", systemImage: "arrow.clockwise")
-                    }
-                }
-                Button { model.command("addHost") } label: {
-                    Label("Add PC by Address…", systemImage: "plus")
-                }
-            }
-        } label: {
-            HStack(spacing: 10) {
-                Image(systemName: "desktopcomputer")
-                    .font(.system(size: 17, weight: .semibold))
-                VStack(alignment: .leading, spacing: 1) {
-                    Text(model.currentHost?.name ?? "Choose a PC")
-                        .font(.system(size: 15, weight: .semibold))
-                    HStack(spacing: 5) {
-                        Circle()
-                            .fill(statusColor)
-                            .frame(width: 7, height: 7)
-                        Text(statusText)
-                            .font(.system(size: 11))
-                            .foregroundStyle(.secondary)
-                    }
-                }
-                Image(systemName: "chevron.down")
-                    .font(.system(size: 12, weight: .bold))
-                    .foregroundStyle(.secondary)
-            }
-            .foregroundStyle(.white)
-            .padding(.horizontal, inToolbar ? 6 : 14)
-            .padding(.vertical, inToolbar ? 2 : 8)
-            .modifier(HostMenuBackground(inToolbar: inToolbar))
-        }
-        .accessibilityLabel("Choose PC, current: \(model.currentHost?.name ?? "none")")
-    }
-
-    private var statusColor: Color {
-        guard let host = model.currentHost else { return .gray }
-        if !host.paired { return .orange }
-        return host.online ? .green : .gray
-    }
-
-    private var statusText: String {
-        guard let host = model.currentHost else { return model.hosts.isEmpty ? "No PCs yet" : "Tap to choose" }
-        let others = model.hosts.count - 1
-        var text = !host.paired ? "Not paired" : (host.online ? "Online" : "Offline")
-        if others > 0 { text += " · \(others) more" }
-        return text
-    }
-}
-
-private struct HostMenuBackground: ViewModifier {
-    let inToolbar: Bool
-
-    func body(content: Content) -> some View {
-        if inToolbar {
-            if #available(iOS 26.0, *) {
-                content
-            } else {
-                content.background(.ultraThinMaterial, in: Capsule())
-            }
-        } else {
-            content.glassCapsule()
-        }
-    }
-}
 
 struct ArtworkImage: View {
     let path: String?
@@ -677,34 +1362,37 @@ struct EmptyStateView: View {
 
 struct HomeTab: View {
     @ObservedObject var model: HomeModel
+    @ObservedObject private var focus = GameFocus.shared
 
     var body: some View {
-        NavigationView {
-            content
-                .navigationBarTitleDisplayMode(.inline)
-                .starlightTopBar(model: model)
-        }
-        .navigationViewStyle(.stack)
-    }
-
-    private var content: some View {
         GeometryReader { geo in
-            let compact = geo.size.height < 500
+            let compact = geo.size.height < 440
             ZStack(alignment: .top) {
-                backdrop(size: geo.size)
+                backdrop
 
                 if let featured = model.featured {
-                    ScrollView(.vertical, showsIndicators: false) {
-                        VStack(alignment: .leading, spacing: compact ? 14 : 22) {
-                            FeaturedSection(game: featured, model: model, compact: compact)
+                    ScrollViewReader { proxy in
+                        ScrollView(.vertical, showsIndicators: false) {
+                            VStack(alignment: .leading, spacing: compact ? 14 : 22) {
+                                ScrollOffsetReader()
 
-                            GameRow(id: "continue", title: "Continue Playing", games: model.continueGames, model: model, compact: compact)
+                                FeaturedSection(game: featured, model: model, compact: compact)
+                                    .id("section-featured")
 
-                            GameRow(id: "all", title: "All Games", games: model.libraryGames, model: model, compact: compact)
+                                GameRow(id: "continue", title: "Continue Playing", games: model.continueGames, model: model, compact: compact)
+                                    .id("section-continue")
+
+                                GameRow(id: "all", title: "All Games", games: model.libraryGames, model: model, compact: compact)
+                                    .id("section-all")
+                            }
+                            .padding(.horizontal, 24)
+                            .padding(.top, 4)
+                            .padding(.bottom, 90)
                         }
-                        .padding(.horizontal, 24)
-                        .padding(.top, 8)
-                        .padding(.bottom, 24)
+                        .trackScroll(model)
+                        .onChange(of: focus.focusedID) { id in
+                            scroll(to: id, proxy: proxy)
+                        }
                     }
                 } else {
                     EmptyStateView(model: model)
@@ -713,8 +1401,26 @@ struct HomeTab: View {
         }
     }
 
-    @ViewBuilder
-    private func backdrop(size: CGSize) -> some View {
+    private func scroll(to id: String?, proxy: ScrollViewProxy) {
+        guard let id = id else { return }
+        let section: String?
+        if id.hasPrefix("card-continue-") {
+            section = "section-continue"
+        } else if id.hasPrefix("card-all-") {
+            section = "section-all"
+        } else if id.hasPrefix("featured-") || id == "pc-button" || id == "search-button" {
+            section = "section-featured"
+        } else {
+            section = nil
+        }
+        if let section = section {
+            withAnimation(.easeInOut(duration: 0.25)) {
+                proxy.scrollTo(section, anchor: section == "section-featured" ? .top : .center)
+            }
+        }
+    }
+
+    private var backdrop: some View {
         ZStack {
             Color.black
             if let featured = model.featured, let hero = ArtworkCache.shared.image(featured.heroPath ?? featured.gridPath) {
@@ -742,6 +1448,7 @@ struct HomeTab: View {
 struct FeaturedSection: View {
     let game: GameItem
     @ObservedObject var model: HomeModel
+    @ObservedObject private var device = DeviceStatus.shared
     let compact: Bool
 
     var body: some View {
@@ -793,6 +1500,7 @@ struct FeaturedSection: View {
                 .primaryGlassButton()
                 .tint(.white)
                 .foregroundStyle(.black)
+                .gameFocus("featured-play", corner: 22) { model.launch(game) }
 
                 if game.running {
                     Button(role: .destructive) { model.action("quit", game) } label: {
@@ -803,20 +1511,32 @@ struct FeaturedSection: View {
                     }
                     .secondaryGlassButton()
                     .tint(.red)
+                    .gameFocus("featured-quit", corner: 22) { model.action("quit", game) }
                 }
 
-                Menu {
-                    GameMenuItems(game: game, model: model)
-                } label: {
-                    Image(systemName: "ellipsis")
-                        .font(.system(size: 16, weight: .semibold))
-                        .frame(width: 22, height: 22)
+                if device.controllerConnected {
+                    Button { model.openGameMenu(game) } label: {
+                        Image(systemName: "ellipsis")
+                            .font(.system(size: 16, weight: .semibold))
+                            .frame(width: 22, height: 22)
+                    }
+                    .secondaryGlassButton()
+                    .gameFocus("featured-more", corner: 22) { model.openGameMenu(game) }
+                    .accessibilityLabel("Game options")
+                } else {
+                    Menu {
+                        GameMenuItems(game: game, model: model)
+                    } label: {
+                        Image(systemName: "ellipsis")
+                            .font(.system(size: 16, weight: .semibold))
+                            .frame(width: 22, height: 22)
+                    }
+                    .secondaryGlassButton()
+                    .accessibilityLabel("Game options")
                 }
-                .secondaryGlassButton()
-                .accessibilityLabel("Game options")
             }
         }
-        .padding(.top, compact ? 0 : 20)
+        .padding(.top, compact ? 0 : 12)
     }
 
     private var subtitle: String {
@@ -838,35 +1558,56 @@ struct GameRow: View {
     let title: String
     let games: [GameItem]
     @ObservedObject var model: HomeModel
+    @ObservedObject private var focus = GameFocus.shared
     let compact: Bool
     var portrait: Bool = false
+
+    private var prefix: String { "card-\(id)-" }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             Text(title)
                 .font(.system(size: 15, weight: .bold))
-            ScrollView(.horizontal, showsIndicators: false) {
-                LazyHStack(spacing: 12) {
-                    ForEach(games) { game in
-                        GameCard(game: game,
-                                 selected: game.id == model.featured?.id && model.featuredRow == id,
-                                 portrait: portrait,
-                                 height: portrait ? (compact ? 150 : 180) : (compact ? 84 : 110))
-                            .onTapGesture {
-                                if game.id == model.featured?.id && model.featuredRow == id {
-                                    model.launch(game)
-                                } else {
-                                    withAnimation(.easeInOut(duration: 0.25)) {
-                                        model.featuredId = game.id
-                                        model.featuredRow = id
+            ScrollViewReader { proxy in
+                ScrollView(.horizontal, showsIndicators: false) {
+                    // Not lazy: every card needs a frame for controller navigation
+                    HStack(spacing: 14) {
+                        ForEach(games) { game in
+                            GameCard(game: game,
+                                     selected: game.id == model.featured?.id && model.featuredRow == id,
+                                     portrait: portrait,
+                                     height: portrait ? (compact ? 150 : 180) : (compact ? 84 : 110))
+                                .onTapGesture {
+                                    if game.id == model.featured?.id && model.featuredRow == id {
+                                        model.launch(game)
+                                    } else {
+                                        withAnimation(.easeInOut(duration: 0.25)) {
+                                            model.featuredId = game.id
+                                            model.featuredRow = id
+                                        }
                                     }
                                 }
-                            }
-                            .contextMenu { GameMenuItems(game: game, model: model) }
+                                .contextMenu { GameMenuItems(game: game, model: model) }
+                                .gameFocus(prefix + game.id) { model.launch(game) }
+                        }
+                    }
+                    .padding(.vertical, 8)
+                    .padding(.horizontal, 6)
+                }
+                .onChange(of: focus.focusedID) { focused in
+                    guard let focused = focused, focused.hasPrefix(prefix) else { return }
+                    let gameId = String(focused.dropFirst(prefix.count))
+                    withAnimation(.easeInOut(duration: 0.2)) {
+                        proxy.scrollTo(focused, anchor: .center)
+                    }
+                    // Moving onto a card features it, like tapping it
+                    if model.featuredId != gameId || model.featuredRow != id {
+                        withAnimation(.easeInOut(duration: 0.25)) {
+                            model.featuredId = gameId
+                            model.featuredRow = id
+                        }
                     }
                 }
-                .padding(.vertical, 6)
-                .padding(.horizontal, 2)
             }
         }
     }
@@ -942,84 +1683,134 @@ struct LibraryTab: View {
     @ObservedObject var model: HomeModel
 
     var body: some View {
-        NavigationView {
-            Group {
-                if model.games.isEmpty {
-                    EmptyStateView(model: model)
-                } else {
-                    GameGrid(games: model.libraryGames, model: model)
-                }
+        Group {
+            if model.games.isEmpty {
+                EmptyStateView(model: model)
+            } else {
+                GameGrid(prefix: "lib", games: model.libraryGames, model: model)
             }
-            .navigationTitle("Library")
-            .navigationBarTitleDisplayMode(.inline)
-            .starlightTopBar(model: model)
         }
-        .navigationViewStyle(.stack)
     }
 }
 
-/// Portrait covers in a grid (Library and Search)
+/// Portrait covers in a grid (Library and Search). Not lazy, so every cover can be reached with the controller.
 struct GameGrid: View {
+    let prefix: String
     let games: [GameItem]
     @ObservedObject var model: HomeModel
+    @ObservedObject private var focus = GameFocus.shared
+
+    private let cardWidth: CGFloat = 120
+    private let spacing: CGFloat = 18
+
+    private var columns: Int {
+        let width = UIScreen.main.bounds.width - 100
+        return max(2, Int((width + spacing) / (cardWidth + spacing)))
+    }
+
+    private var rows: [[GameItem]] {
+        stride(from: 0, to: games.count, by: columns).map { Array(games[$0..<min($0 + columns, games.count)]) }
+    }
 
     var body: some View {
-        ScrollView {
-            LazyVGrid(columns: [GridItem(.adaptive(minimum: 120, maximum: 160), spacing: 16)], spacing: 18) {
-                ForEach(games) { game in
-                    VStack(alignment: .leading, spacing: 6) {
-                        GameCard(game: game, selected: false, portrait: true, height: 180)
-                        Text(game.name)
-                            .font(.system(size: 12.5, weight: .semibold))
-                            .lineLimit(1)
+        ScrollViewReader { proxy in
+            ScrollView(.vertical, showsIndicators: false) {
+                VStack(alignment: .leading, spacing: 18) {
+                    ScrollOffsetReader()
+                    ForEach(Array(rows.enumerated()), id: \.offset) { _, row in
+                        HStack(alignment: .top, spacing: spacing) {
+                            ForEach(row) { game in
+                                VStack(alignment: .leading, spacing: 6) {
+                                    GameCard(game: game, selected: false, portrait: true, height: 180)
+                                        .gameFocus("\(prefix)-\(game.id)") { model.launch(game) }
+                                    Text(game.name)
+                                        .font(.system(size: 12.5, weight: .semibold))
+                                        .lineLimit(1)
+                                }
+                                .frame(width: cardWidth)
+                                .onTapGesture { model.launch(game) }
+                                .contextMenu { GameMenuItems(game: game, model: model) }
+                            }
+                        }
                     }
-                    .frame(width: 120)
-                    .onTapGesture { model.launch(game) }
-                    .contextMenu { GameMenuItems(game: game, model: model) }
+                }
+                .padding(.horizontal, 24)
+                .padding(.top, 8)
+                .padding(.bottom, 90)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .trackScroll(model)
+            .onChange(of: focus.focusedID) { focused in
+                guard let focused = focused, focused.hasPrefix("\(prefix)-") else { return }
+                withAnimation(.easeInOut(duration: 0.2)) {
+                    proxy.scrollTo(focused, anchor: .center)
                 }
             }
-            .padding(20)
         }
     }
 }
 
-// MARK: - Search tab
+// MARK: - Search
 
 struct SearchTab: View {
     @ObservedObject var model: HomeModel
-    @State private var query = ""
+    @FocusState private var fieldFocused: Bool
 
     private var results: [GameItem] {
         let all = model.libraryGames
-        let trimmed = query.trimmingCharacters(in: .whitespaces)
+        let trimmed = model.searchQuery.trimmingCharacters(in: .whitespaces)
         guard !trimmed.isEmpty else { return all }
         return all.filter { $0.name.localizedCaseInsensitiveContains(trimmed) }
     }
 
     var body: some View {
-        NavigationView {
-            Group {
-                if model.games.isEmpty {
-                    EmptyStateView(model: model)
-                } else if results.isEmpty {
-                    VStack(spacing: 10) {
-                        Image(systemName: "magnifyingglass")
-                            .font(.system(size: 34, weight: .light))
-                            .foregroundStyle(.secondary)
-                        Text("No games match \u{201C}\(query)\u{201D}")
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 8) {
+                Image(systemName: "magnifyingglass")
+                    .foregroundStyle(.secondary)
+                TextField("Games on \(model.currentHost?.name ?? "your PC")", text: $model.searchQuery)
+                    .focused($fieldFocused)
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled()
+                    .submitLabel(.search)
+                    .onSubmit { model.searchFieldFocused = false }
+                if !model.searchQuery.isEmpty {
+                    Button { model.searchQuery = "" } label: {
+                        Image(systemName: "xmark.circle.fill")
                             .foregroundStyle(.secondary)
                     }
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                } else {
-                    GameGrid(games: results, model: model)
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Clear search")
                 }
             }
-            .navigationTitle("Search")
-            .navigationBarTitleDisplayMode(.inline)
-            .starlightTopBar(model: model)
-            .searchable(text: $query, prompt: "Games on \(model.currentHost?.name ?? "your PC")")
+            .font(.system(size: 16))
+            .padding(.horizontal, 16)
+            .frame(height: 44)
+            .glassCapsule()
+            .gameFocus("search-field", corner: 22) { model.searchFieldFocused = true }
+            .padding(.horizontal, 24)
+            .padding(.top, 4)
+
+            if model.games.isEmpty {
+                EmptyStateView(model: model)
+            } else if results.isEmpty {
+                VStack(spacing: 10) {
+                    Image(systemName: "magnifyingglass")
+                        .font(.system(size: 34, weight: .light))
+                        .foregroundStyle(.secondary)
+                    Text("No games match \u{201C}\(model.searchQuery)\u{201D}")
+                        .foregroundStyle(.secondary)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                GameGrid(prefix: "search", games: results, model: model)
+            }
         }
-        .navigationViewStyle(.stack)
+        .onAppear { fieldFocused = model.searchFieldFocused }
+        .onChange(of: model.searchFieldFocused) { fieldFocused = $0 }
+        .onChange(of: fieldFocused) { focused in
+            if model.searchFieldFocused != focused { model.searchFieldFocused = focused }
+        }
     }
 }
 
@@ -1092,7 +1883,7 @@ struct SettingsTab: View {
             }
             .navigationTitle("Settings")
             .navigationBarTitleDisplayMode(.inline)
-            .starlightStatusOnly()
+            .safeAreaInset(edge: .bottom) { Color.clear.frame(height: 56) }
         }
         .navigationViewStyle(.stack)
     }
@@ -1800,12 +2591,6 @@ struct StreamMenuView: View {
             panel
                 .offset(x: shown ? 0 : -360)
 
-            if device.controllerConnected {
-                ControllerHints()
-                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing)
-                    .padding(20)
-                    .opacity(shown ? 1 : 0)
-            }
         }
         .onAppear {
             withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) { shown = true }
@@ -1867,47 +2652,6 @@ struct StreamMenuView: View {
         )
         .scaleEffect(focused ? 1.03 : 1)
         .accessibilityAddTraits(focused ? .isSelected : [])
-    }
-}
-
-/// Bottom-right legend with the connected controller's own button glyphs (✕ / ○ on PlayStation, A / B on Xbox)
-struct ControllerHints: View {
-    private var symbols: (select: String, back: String) {
-        let pad = GCController.current?.extendedGamepad ?? GCController.controllers().first?.extendedGamepad
-        let select = pad?.buttonA.sfSymbolsName ?? "a.circle"
-        let back = pad?.buttonB.sfSymbolsName ?? "b.circle"
-        return (select, back)
-    }
-
-    var body: some View {
-        HStack(spacing: 18) {
-            hint(symbols.select, "Select")
-            hint(symbols.back, "Back")
-        }
-        .font(.system(size: 15, weight: .semibold))
-        .foregroundStyle(.white)
-        .padding(.horizontal, 16)
-        .padding(.vertical, 10)
-        .modifier(StreamMenuHintGlass())
-        .accessibilityElement(children: .combine)
-    }
-
-    private func hint(_ symbol: String, _ title: String) -> some View {
-        HStack(spacing: 6) {
-            Image(systemName: symbol)
-                .font(.system(size: 20, weight: .regular))
-            Text(title)
-        }
-    }
-}
-
-private struct StreamMenuHintGlass: ViewModifier {
-    func body(content: Content) -> some View {
-        if #available(iOS 26.0, *) {
-            content.glassEffect(.regular, in: Capsule())
-        } else {
-            content.background(.ultraThinMaterial, in: Capsule())
-        }
     }
 }
 

@@ -1497,6 +1497,8 @@ static const NSUInteger kMaxQuickActions = 4;
     // Keep the home screen's PC/game state fresh (online status, running game)
     [_homeRefreshTimer invalidate];
     if (_home != nil) {
+        // Controller navigation on the Starlight screens (the stream takes over the controller while it runs)
+        [_home setControllerInputActive:YES];
         [self pushHomeState];
         _homeRefreshTimer = [NSTimer scheduledTimerWithTimeInterval:2.0 target:self selector:@selector(pushHomeState) userInfo:nil repeats:YES];
     }
@@ -1554,6 +1556,7 @@ static const NSUInteger kMaxQuickActions = 4;
 #if !TARGET_OS_TV
     [_homeRefreshTimer invalidate];
     _homeRefreshTimer = nil;
+    [_home setControllerInputActive:NO];
 #endif
     
     // when discovery stops, we must create a new instance because
