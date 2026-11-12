@@ -650,7 +650,6 @@ struct HomeRootView: View {
                 }
             }
             .modifier(TabBarMinimizeOnScroll())
-            .modifier(SoftScrollEdge())
         } else {
             TabView(selection: $model.tab) {
                 StarlightStack { HomeTab(model: model).starlightToolbar(model) }
@@ -1774,18 +1773,6 @@ struct HomeScrollState: ViewModifier {
             } action: { _, value in
                 progress = (value * 20).rounded() / 20
             }
-        } else {
-            content
-        }
-    }
-}
-
-/// iOS 26: the soft scroll-edge effect (a progressive blur that grows as content slides under the bar)
-/// on every tab, instead of a bar background that switches on
-struct SoftScrollEdge: ViewModifier {
-    func body(content: Content) -> some View {
-        if #available(iOS 26.0, *) {
-            content.scrollEdgeEffectStyle(.soft, for: .top)
         } else {
             content
         }
