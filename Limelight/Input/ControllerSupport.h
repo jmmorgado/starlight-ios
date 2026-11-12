@@ -18,9 +18,11 @@
 - (void) streamExitRequested;
 
 @optional
-// Starlight: Home button held (or tapped while the menu is open)
+// Starlight: Start+Select held toggles the stream menu; while it's open the controller navigates it
 - (void) streamMenuRequested;
 - (BOOL) streamMenuVisible;
+// "up", "down", "select", "back"
+- (void) streamMenuNavigate:(NSString*)action;
 
 @end
 

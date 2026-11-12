@@ -1330,7 +1330,7 @@ static NSMutableSet* hostList;
     [_launchOverlay addSubview:spinner];
     
     UILabel* tip = [[UILabel alloc] init];
-    tip.text = @"Tip: Swipe from the left edge to disconnect from your PC";
+    tip.text = @"Tip: Swipe from the left edge or hold Start + Select for the stream menu";
     tip.textColor = [UIColor whiteColor];
     tip.textAlignment = NSTextAlignmentCenter;
     tip.translatesAutoresizingMaskIntoConstraints = NO;

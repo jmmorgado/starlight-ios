@@ -321,50 +321,119 @@ static const double MOUSE_SPEED_DIVISOR = 1.25;
     return (_multiController ? _controllerNumbers : 1) | (_oscEnabled ? 1 : 0);
 }
 
-// Starlight: a quick tap sends Guide to the PC; holding opens the stream menu instead
--(void) handleHomeButton:(Controller*)controller pressed:(BOOL)pressed
+// Starlight: Start+Select tapped together sends Guide to the PC; held for a second it toggles the stream menu.
+// Returns the button flags to send to the PC (Start/Select are held back while the combo is down).
+-(int) handleMenuCombo:(Controller*)controller flags:(int)flags
 {
-    BOOL canShowMenu = [_delegate respondsToSelector:@selector(streamMenuRequested)];
-    if (!canShowMenu) {
-        UPDATE_BUTTON_FLAG(controller, SPECIAL_FLAG, pressed);
-        return;
+    if (![_delegate respondsToSelector:@selector(streamMenuRequested)]) {
+        return flags;
     }
     
-    if (pressed && !controller.homeButtonDown) {
-        controller.homeButtonDown = YES;
-        controller.homeLongPressFired = NO;
+    BOOL bothDown = (flags & PLAY_FLAG) && (flags & BACK_FLAG);
+    if (bothDown && !controller.comboActive) {
+        controller.comboActive = YES;
+        controller.comboFired = NO;
         dispatch_async(dispatch_get_main_queue(), ^{
-            [controller.homeTimer invalidate];
-            controller.homeTimer = [NSTimer scheduledTimerWithTimeInterval:0.5 repeats:NO block:^(NSTimer* timer) {
-                if (controller.homeButtonDown && !controller.homeLongPressFired) {
-                    controller.homeLongPressFired = YES;
+            [controller.comboTimer invalidate];
+            controller.comboTimer = [NSTimer scheduledTimerWithTimeInterval:1.0 repeats:NO block:^(NSTimer* timer) {
+                if (controller.comboActive && !controller.comboFired) {
+                    controller.comboFired = YES;
                     [self->_delegate streamMenuRequested];
                 }
             }];
         });
     }
-    else if (!pressed && controller.homeButtonDown) {
-        controller.homeButtonDown = NO;
-        BOOL wasLongPress = controller.homeLongPressFired;
-        dispatch_async(dispatch_get_main_queue(), ^{
-            [controller.homeTimer invalidate];
-            controller.homeTimer = nil;
-            if (wasLongPress || controller.homeLongPressFired) {
-                return;
-            }
-            // A tap while the menu is open closes it instead of reaching the PC
-            if ([self->_delegate respondsToSelector:@selector(streamMenuVisible)] && [self->_delegate streamMenuVisible]) {
-                [self->_delegate streamMenuRequested];
-                return;
-            }
-            [self setButtonFlag:controller flags:SPECIAL_FLAG];
-            [self updateFinished:controller];
-            dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.1 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-                [self clearButtonFlag:controller flags:SPECIAL_FLAG];
-                [self updateFinished:controller];
+    
+    if (controller.comboActive) {
+        if (!(flags & PLAY_FLAG) && !(flags & BACK_FLAG)) {
+            controller.comboActive = NO;
+            BOOL fired = controller.comboFired;
+            dispatch_async(dispatch_get_main_queue(), ^{
+                [controller.comboTimer invalidate];
+                controller.comboTimer = nil;
+                if (!fired && !controller.comboFired) {
+                    [self sendGuideTap:controller];
+                }
             });
+        }
+        flags &= ~(PLAY_FLAG | BACK_FLAG);
+    }
+    return flags;
+}
+
+// Called on the main queue
+-(void) sendGuideTap:(Controller*)controller
+{
+    if ([_delegate respondsToSelector:@selector(streamMenuVisible)] && [_delegate streamMenuVisible]) {
+        return;
+    }
+    controller.guideTapInProgress = YES;
+    [self updateFinished:controller];
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.1 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        controller.guideTapInProgress = NO;
+        [self updateFinished:controller];
+    });
+}
+
+// While the stream menu is open the controller drives it and nothing reaches the PC.
+// Returns YES if the input was consumed by the menu.
+-(BOOL) handleMenuNavigation:(Controller*)controller flags:(int)flags stickY:(short)stickY
+{
+    BOOL visible = [_delegate respondsToSelector:@selector(streamMenuVisible)] && [_delegate streamMenuVisible];
+    if (!visible) {
+        if (controller.menuWasVisible) {
+            controller.menuWasVisible = NO;
+        }
+        return NO;
+    }
+    
+    if (!controller.menuWasVisible) {
+        // Just opened: buttons already held don't count as presses, and the PC sees everything released
+        controller.menuWasVisible = YES;
+        controller.menuPrevFlags = flags;
+        controller.menuStickDirection = 0;
+        return YES;
+    }
+    
+    int pressed = flags & ~controller.menuPrevFlags;
+    controller.menuPrevFlags = flags;
+    
+    // Bottom face button confirms, right face button goes back (whatever the A/B swap setting maps them to)
+    int confirmFlag = _swapABXYButtons ? B_FLAG : A_FLAG;
+    int backFlag = _swapABXYButtons ? A_FLAG : B_FLAG;
+    
+    NSString* action = nil;
+    if (pressed & UP_FLAG) {
+        action = @"up";
+    }
+    else if (pressed & DOWN_FLAG) {
+        action = @"down";
+    }
+    else if (pressed & confirmFlag) {
+        action = @"select";
+    }
+    else if (pressed & backFlag) {
+        action = @"back";
+    }
+    
+    // Left stick acts like the D-pad (one step per push)
+    int direction = stickY > 16000 ? 1 : (stickY < -16000 ? -1 : 0);
+    if (direction != controller.menuStickDirection) {
+        controller.menuStickDirection = direction;
+        if (direction == 1 && action == nil) {
+            action = @"up";
+        }
+        else if (direction == -1 && action == nil) {
+            action = @"down";
+        }
+    }
+    
+    if (action != nil && [_delegate respondsToSelector:@selector(streamMenuNavigate:)]) {
+        dispatch_async(dispatch_get_main_queue(), ^{
+            [self->_delegate streamMenuNavigate:action];
         });
     }
+    return YES;
 }
 
 -(void) updateFinished:(Controller*)controller
@@ -398,6 +467,17 @@ static const double MOUSE_SPEED_DIVISOR = 1.25;
                 leftStickY = MAX_MAGNITUDE(leftStickY, controller.mergedWithController.lastLeftStickY);
                 rightStickX = MAX_MAGNITUDE(rightStickX, controller.mergedWithController.lastRightStickX);
                 rightStickY = MAX_MAGNITUDE(rightStickY, controller.mergedWithController.lastRightStickY);
+            }
+            
+            // Starlight: stream menu combo and menu navigation
+            buttonFlags = [self handleMenuCombo:controller flags:buttonFlags];
+            if (controller.guideTapInProgress) {
+                buttonFlags |= SPECIAL_FLAG;
+            }
+            if ([self handleMenuNavigation:controller flags:buttonFlags stickY:leftStickY]) {
+                buttonFlags = 0;
+                leftTrigger = rightTrigger = 0;
+                leftStickX = leftStickY = rightStickX = rightStickY = 0;
             }
             
             // Player 1 is always present for OSC
@@ -817,7 +897,7 @@ static const double MOUSE_SPEED_DIVISOR = 1.25;
                 if (@available(iOS 14.0, tvOS 14.0, *)) {
                     // Home/Guide button is optional (only present on Xbox One S and PS4 gamepads)
                     if (gamepad.buttonHome != nil) {
-                        [self handleHomeButton:limeController pressed:gamepad.buttonHome.pressed];
+                        UPDATE_BUTTON_FLAG(limeController, SPECIAL_FLAG, gamepad.buttonHome.pressed);
                     }
                     
                     // Xbox One/Series controllers
@@ -1026,6 +1106,10 @@ static const double MOUSE_SPEED_DIVISOR = 1.25;
             Controller* limeController = [[Controller alloc] init];
             limeController.playerIndex = i;
             limeController.supportedEmulationFlags = EMULATING_SPECIAL | EMULATING_SELECT;
+            if ([_delegate respondsToSelector:@selector(streamMenuRequested)]) {
+                // Starlight handles Start+Select itself (tap = Guide, hold = stream menu)
+                limeController.supportedEmulationFlags &= ~EMULATING_SPECIAL;
+            }
             limeController.gamepad = controller;
 
             // If this is player 0, it shares state with the OSC

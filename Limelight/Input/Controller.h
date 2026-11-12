@@ -30,10 +30,14 @@ typedef struct {
 @property (nonatomic)                   short lastRightStickX;
 @property (nonatomic)                   short lastRightStickY;
 
-// Starlight: Home button tap = Guide on the PC, hold = stream menu
-@property (nonatomic)                   BOOL homeButtonDown;
-@property (nonatomic)                   BOOL homeLongPressFired;
-@property (nonatomic)                   NSTimer* _Nullable homeTimer;
+// Starlight: Start+Select tap = Guide on the PC, hold = stream menu; menu navigation state
+@property (nonatomic)                   BOOL comboActive;
+@property (nonatomic)                   BOOL comboFired;
+@property (nonatomic)                   NSTimer* _Nullable comboTimer;
+@property (nonatomic)                   BOOL guideTapInProgress;
+@property (nonatomic)                   BOOL menuWasVisible;
+@property (nonatomic)                   int menuPrevFlags;
+@property (nonatomic)                   int menuStickDirection;
 
 @property (nonatomic)                   controller_touch_context_t primaryTouch;
 @property (nonatomic)                   controller_touch_context_t secondaryTouch;
