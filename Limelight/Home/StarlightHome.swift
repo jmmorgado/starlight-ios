@@ -1585,30 +1585,17 @@ struct FeaturedSection: View {
                     .tint(.red)
                 }
 
-                if device.controllerConnected {
-                    Button { model.openGameMenu(game) } label: {
-                        HStack(spacing: 8) {
-                            Image(systemName: "ellipsis")
-                                .font(.system(size: 16, weight: .semibold))
-                            Image(systemName: PadGlyph.options)
-                                .font(.system(size: 16, weight: .regular))
-                                .opacity(0.7)
-                        }
-                        .frame(height: 22)
-                    }
-                    .secondaryGlassButton()
-                    .accessibilityLabel("Game options")
-                } else {
-                    Menu {
-                        GameMenuItems(game: game, model: model)
-                    } label: {
-                        Image(systemName: "ellipsis")
-                            .font(.system(size: 16, weight: .semibold))
-                            .frame(width: 22, height: 22)
-                    }
-                    .secondaryGlassButton()
-                    .accessibilityLabel("Game options")
+                // Always the system menu on touch. With a controller the button shows the Options glyph,
+                // and pressing Options opens the navigable version (system menus can't be driven by a controller).
+                Menu {
+                    GameMenuItems(game: game, model: model)
+                } label: {
+                    Image(systemName: device.controllerConnected ? PadGlyph.options : "ellipsis")
+                        .font(.system(size: device.controllerConnected ? 18 : 16, weight: .semibold))
+                        .frame(width: 22, height: 22)
                 }
+                .secondaryGlassButton()
+                .accessibilityLabel("Game options")
             }
         }
         .padding(.top, compact ? 0 : 12)
