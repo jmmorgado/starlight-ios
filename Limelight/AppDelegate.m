@@ -30,6 +30,12 @@ static NSString* DB_NAME = @"Limelight_iOS.sqlite";
     }
 #endif
     
+    // "Start Game" from the Shortcuts app / Siri / Spotlight (StarlightAppIntents.swift)
+    [[NSNotificationCenter defaultCenter] addObserver:self
+                                             selector:@selector(handleIntentLaunchRequest:)
+                                                 name:@"StarlightLaunchRequest"
+                                               object:nil];
+    
     // Cold start from a starlight:// link: queue the launch before any UI loads,
     // so the main screen never shows
     NSURL* launchURL = [launchOptions valueForKey:UIApplicationLaunchOptionsURLKey];
@@ -56,6 +62,18 @@ static NSString* DB_NAME = @"Limelight_iOS.sqlite";
     }
 }
 #endif
+
+- (void)handleIntentLaunchRequest:(NSNotification*)notification {
+    NSString* hostParam = notification.userInfo[@"host"];
+    NSString* appParam = notification.userInfo[@"app"];
+    if (hostParam.length == 0 || appParam.length == 0) {
+        return;
+    }
+    Log(LOG_I, @"Received Shortcuts launch for host '%@', app '%@'", hostParam, appParam);
+    _pendingLaunchHost = hostParam;
+    _pendingLaunchApp = appParam;
+    [[NSNotificationCenter defaultCenter] postNotificationName:@"StarlightPendingLaunch" object:nil];
+}
 
 - (BOOL)queueLaunchFromURL:(NSURL*)url {
     if (![[url.scheme lowercaseString] isEqualToString:@"starlight"] ||

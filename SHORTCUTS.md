@@ -28,7 +28,17 @@ o link à mão: ver abaixo.
 
 Até 4 jogos (limite do iOS). Para tirar: **Unpin from App Icon** no mesmo menu.
 
-## Como criar um atalho
+## Atalho na app Atalhos (com o ícone do jogo)
+
+1. Abre a app **Atalhos** → **+** → **Adicionar ação** → procura **Starlight** → **Start Game**.
+2. Toca em *Game* e escolhe o jogo na lista (vem do Vibepollo, com a arte).
+3. **Ícone do jogo:** na Starlight, mantém o dedo no jogo → **Save Icon to Photos**.
+   No atalho: partilhar/ⓘ → **Adicionar ao ecrã principal** → toca no ícone → **Escolher foto**.
+
+Também funciona com a Siri ("Start Cyberpunk 2077 in Starlight") e aparece no Spotlight.
+A lista de jogos atualiza sempre que abres a app e ela lê a lista do PC.
+
+## Como criar um atalho por link (alternativa)
 
 1. Abre a app, entra no PC e **mantém o dedo em cima do jogo**.
 2. Escolhe **Copy Shortcut Link** — o link fica copiado.

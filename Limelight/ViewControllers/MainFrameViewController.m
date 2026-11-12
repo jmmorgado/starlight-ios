@@ -837,6 +837,11 @@ static NSMutableSet* hostList;
         [self togglePinForApp:app];
     }]];
     
+    // Saves a square icon of the game's art to Photos, for Shortcuts Home Screen icons
+    [alertController addAction:[UIAlertAction actionWithTitle:@"Save Icon to Photos" style:UIAlertActionStyleDefault handler:^(UIAlertAction* action) {
+        [self saveIconToPhotosForApp:app];
+    }]];
+    
     // Copies a starlight:// URL that launches this app directly (for the Shortcuts app)
     [alertController addAction:[UIAlertAction actionWithTitle:@"Copy Shortcut Link" style:UIAlertActionStyleDefault handler:^(UIAlertAction* action) {
         NSString* link = [self launchLinkForApp:app];
@@ -1572,8 +1577,89 @@ static const NSUInteger kMaxQuickActions = 4;
     }
     
     [UIApplication sharedApplication].shortcutItems = quickActions;
+    
+    [self saveGameCatalog];
 #endif
 }
+
+#if !TARGET_OS_TV
+// Snapshot of every paired PC's games for the Shortcuts app / Siri / Spotlight
+// (read by StarlightAppIntents.swift without touching Core Data)
+- (void)saveGameCatalog {
+    NSMutableArray* catalog = [[NSMutableArray alloc] init];
+    @synchronized (hostList) {
+        for (TemporaryHost* host in hostList) {
+            if (host.uuid == nil) {
+                continue;
+            }
+            for (TemporaryApp* app in host.appList) {
+                if (app.id == nil || app.name == nil) {
+                    continue;
+                }
+                [catalog addObject:@{ @"host": host.uuid,
+                                      @"hostName": host.name ?: @"",
+                                      @"app": app.id,
+                                      @"appName": app.name,
+                                      @"artPath": [AppAssetManager boxArtPathForApp:app] ?: @"" }];
+            }
+        }
+    }
+    
+    NSArray* previous = [[NSUserDefaults standardUserDefaults] arrayForKey:@"StarlightGameCatalog"];
+    if ([previous isEqualToArray:catalog]) {
+        return;
+    }
+    [[NSUserDefaults standardUserDefaults] setObject:catalog forKey:@"StarlightGameCatalog"];
+    
+    // Let Siri/Spotlight refresh the game names (Swift class, looked up at runtime)
+    Class bridge = NSClassFromString(@"StarlightIntentsBridge");
+    SEL selector = NSSelectorFromString(@"catalogDidChange");
+    if (bridge != nil && [bridge respondsToSelector:selector]) {
+        ((void (*)(id, SEL))[bridge methodForSelector:selector])(bridge, selector);
+    }
+}
+
+// Square, Home Screen-friendly copy of the game's art, saved to Photos so it can be
+// picked as the icon of a shortcut ("Add to Home Screen" → choose photo)
+- (void)saveIconToPhotosForApp:(TemporaryApp*)app {
+    UIImage* boxArt = [MainFrameViewController loadBoxArtForCaching:app];
+    if (boxArt == nil) {
+        UIAlertController* alert = [UIAlertController alertControllerWithTitle:@"No Artwork"
+                                                                       message:[NSString stringWithFormat:@"%@ has no artwork on this PC yet.", app.name]
+                                                                preferredStyle:UIAlertControllerStyleAlert];
+        [alert addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:nil]];
+        [[self activeViewController] presentViewController:alert animated:YES completion:nil];
+        return;
+    }
+    
+    // Center-crop to a square, biased slightly up where cover titles usually sit
+    CGSize size = boxArt.size;
+    CGFloat side = MIN(size.width, size.height);
+    CGFloat x = (size.width - side) / 2.0;
+    CGFloat y = size.height > size.width ? (size.height - side) * 0.35 : 0;
+    CGFloat outputSide = 512;
+    
+    UIGraphicsImageRendererFormat* format = [UIGraphicsImageRendererFormat preferredFormat];
+    format.scale = 1;
+    UIGraphicsImageRenderer* renderer = [[UIGraphicsImageRenderer alloc] initWithSize:CGSizeMake(outputSide, outputSide) format:format];
+    UIImage* icon = [renderer imageWithActions:^(UIGraphicsImageRendererContext* context) {
+        CGFloat scale = outputSide / side;
+        [boxArt drawInRect:CGRectMake(-x * scale, -y * scale, size.width * scale, size.height * scale)];
+    }];
+    
+    UIImageWriteToSavedPhotosAlbum(icon, self, @selector(iconImage:didFinishSavingWithError:contextInfo:), NULL);
+}
+
+- (void)iconImage:(UIImage*)image didFinishSavingWithError:(NSError*)error contextInfo:(void*)contextInfo {
+    NSString* title = error == nil ? @"Icon Saved to Photos" : @"Couldn't Save Icon";
+    NSString* message = error == nil
+        ? @"In the Shortcuts app, open your shortcut → Add to Home Screen → tap the icon → Choose Photo, and pick it."
+        : [NSString stringWithFormat:@"Allow Starlight to add photos in Settings → Privacy & Security → Photos.\n\n%@", error.localizedDescription];
+    UIAlertController* alert = [UIAlertController alertControllerWithTitle:title message:message preferredStyle:UIAlertControllerStyleAlert];
+    [alert addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:nil]];
+    [[self activeViewController] presentViewController:alert animated:YES completion:nil];
+}
+#endif
 
 - (void)updateHosts {
     Log(LOG_I, @"Updating hosts...");
