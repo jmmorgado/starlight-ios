@@ -66,6 +66,7 @@
     NSTimer* _homeRefreshTimer;
     NSString* _homeHostUUID;
     NSString* _pendingQuitHostAddress;
+    NSMutableSet<NSString*>* _permissionDeniedHosts;
 #endif
 }
 static NSMutableSet* hostList;
@@ -239,6 +240,9 @@ static NSMutableSet* hostList;
 }
     
 - (void) updateApplist:(NSSet*) newList forHost:(TemporaryHost*)host {
+#if !TARGET_OS_TV
+    newList = [self starlightFilterAppList:newList forHost:host];
+#endif
     DataManager* database = [[DataManager alloc] init];
     NSMutableSet* newHostAppList = [NSMutableSet setWithSet:host.appList];
     
@@ -1910,6 +1914,7 @@ static const NSUInteger kMaxQuickActions = 4;
                             @"online": @(host.state == StateOnline),
                             @"paired": @(host.pairState == PairStatePaired || (host.pairState == PairStateUnknown && host.serverCert != nil)),
                             @"showHidden": @(_showHiddenApps && [host.uuid isEqualToString:currentUUID]),
+                            @"permissionDenied": @([_permissionDeniedHosts containsObject:host.uuid]),
                             @"address": host.activeAddress ?: (host.localAddress ?: (host.address ?: @"")) }];
     }
     
@@ -1920,6 +1925,7 @@ static const NSUInteger kMaxQuickActions = 4;
         NSDictionary* lastPlayed = [[NSUserDefaults standardUserDefaults] dictionaryForKey:@"StarlightLastPlayed"];
         NSFileManager* fm = [NSFileManager defaultManager];
         NSArray* pins = [self pinnedApps];
+        NSDictionary* steamIds = [[NSUserDefaults standardUserDefaults] dictionaryForKey:@"StarlightSteamAppIds"];
         for (TemporaryApp* app in current.appList) {
             if (app.id == nil || app.name == nil) {
                 continue;
@@ -1960,6 +1966,7 @@ static const NSUInteger kMaxQuickActions = 4;
                                @"logoPath": logo,
                                @"widePath": wide,
                                @"artStamp": @(artStamp),
+                               @"steamAppId": steamIds[[NSString stringWithFormat:@"%@|%@", current.uuid, app.id]] ?: @0,
                                @"lastPlayed": played ?: @0 }];
         }
     }
@@ -2137,6 +2144,54 @@ static const NSUInteger kMaxQuickActions = 4;
             });
         });
     }];
+}
+
+#pragma mark - Steam foundations (Starlight)
+
+// Vibepollo sends a fake app when this device lacks the "List applications" permission, and
+// encodes the Steam appid in each Steam game's UUID: 53544541-4d00-5000-8000-<appid in hex>.
+- (NSSet*)starlightFilterAppList:(NSSet*)list forHost:(TemporaryHost*)host {
+    if (host.uuid == nil) {
+        return list;
+    }
+    if (_permissionDeniedHosts == nil) {
+        _permissionDeniedHosts = [NSMutableSet set];
+    }
+    
+    NSMutableSet* filtered = [NSMutableSet set];
+    BOOL denied = NO;
+    NSMutableDictionary* steamIds = [[[NSUserDefaults standardUserDefaults] dictionaryForKey:@"StarlightSteamAppIds"] mutableCopy] ?: [NSMutableDictionary dictionary];
+    static NSString* const steamPrefix = @"53544541-4d00-5000-8000-";
+    
+    for (TemporaryApp* app in list) {
+        if ([app.name hasPrefix:@"Permission denied"]) {
+            denied = YES;
+            continue;
+        }
+        [filtered addObject:app];
+        
+        NSString* key = [NSString stringWithFormat:@"%@|%@", host.uuid, app.id];
+        NSString* uuid = app.uuid.lowercaseString;
+        if (uuid.length == steamPrefix.length + 12 && [uuid hasPrefix:steamPrefix]) {
+            unsigned long long appid = strtoull([[uuid substringFromIndex:steamPrefix.length] UTF8String], NULL, 16);
+            if (appid > 0) {
+                steamIds[key] = @(appid);
+            }
+        }
+        else if (app.uuid != nil) {
+            // A UUID that isn't a Steam one: not a Steam game (Desktop, emulators, custom apps)
+            [steamIds removeObjectForKey:key];
+        }
+    }
+    [[NSUserDefaults standardUserDefaults] setObject:steamIds forKey:@"StarlightSteamAppIds"];
+    
+    if (denied) {
+        [_permissionDeniedHosts addObject:host.uuid];
+    }
+    else {
+        [_permissionDeniedHosts removeObject:host.uuid];
+    }
+    return filtered;
 }
 
 - (void)quitAppAfterStreamOnHostAddress:(NSString*)address {

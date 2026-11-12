@@ -21,6 +21,7 @@ static const char* TAG_APP_TITLE = "AppTitle";
 static const char* TAG_APP_ID = "ID";
 static const char* TAG_HDR_SUPPORTED = "IsHdrSupported";
 static const char* TAG_APP_INSTALL_PATH = "AppInstallPath";
+static const char* TAG_APP_UUID = "UUID";
 
 - (void)populateWithData:(NSData *)xml {
     self.data = xml;
@@ -70,6 +71,7 @@ static const char* TAG_APP_INSTALL_PATH = "AppInstallPath";
             NSString* appId = nil;
             NSString* hdrSupported = @"0";
             NSString* appInstallPath = nil;
+            NSString* appUuid = nil;
             while (appInfoNode != NULL) {
                 if (!xmlStrcmp(appInfoNode->name, (xmlChar*)TAG_APP_TITLE)) {
                     xmlChar* nodeVal = xmlNodeListGetString(docPtr, appInfoNode->xmlChildrenNode, 1);
@@ -89,6 +91,12 @@ static const char* TAG_APP_INSTALL_PATH = "AppInstallPath";
                         hdrSupported = [[NSString alloc] initWithCString:(const char*)nodeVal encoding:NSUTF8StringEncoding];
                         xmlFree(nodeVal);
                     }
+                } else if (!xmlStrcmp(appInfoNode->name, (xmlChar*)TAG_APP_UUID)) {
+                    xmlChar* nodeVal = xmlNodeListGetString(docPtr, appInfoNode->xmlChildrenNode, 1);
+                    if (nodeVal != NULL) {
+                        appUuid = [[NSString alloc] initWithCString:(const char*)nodeVal encoding:NSUTF8StringEncoding];
+                        xmlFree(nodeVal);
+                    }
                 } else if (!xmlStrcmp(appInfoNode->name, (xmlChar*)TAG_APP_INSTALL_PATH)) {
                     xmlChar* nodeVal = xmlNodeListGetString(docPtr, appInfoNode->xmlChildrenNode, 1);
                     if (nodeVal != NULL) {
@@ -105,6 +113,7 @@ static const char* TAG_APP_INSTALL_PATH = "AppInstallPath";
                 app.id = appId;
                 app.hdrSupported = [hdrSupported intValue] != 0;
                 app.installPath = appInstallPath;
+                app.uuid = appUuid;
                 [_appList addObject:app];
             }
         }

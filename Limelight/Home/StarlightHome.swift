@@ -15,6 +15,7 @@ import SwiftUI
 import UIKit
 import Network
 import GameController
+import Security
 
 // MARK: - Bridge used from Objective-C
 
@@ -34,6 +35,8 @@ final class StarlightHomeController: NSObject {
         super.init()
         let homeModel = model
         GamepadInput.shared.handler = { [weak homeModel] event in homeModel?.handlePad(event) }
+        // Steam data: refresh when it's more than a few hours old
+        Task { @MainActor in SteamManager.shared.refreshIfStale() }
     }
 
     /// On while the Starlight screens are visible, off during a stream
@@ -105,6 +108,7 @@ struct HostItem: Identifiable, Equatable {
     let online: Bool
     let paired: Bool
     let showHidden: Bool
+    let permissionDenied: Bool
     let address: String
 
     init?(_ dict: [String: Any]) {
@@ -114,6 +118,7 @@ struct HostItem: Identifiable, Equatable {
         online = dict["online"] as? Bool ?? false
         paired = dict["paired"] as? Bool ?? false
         showHidden = dict["showHidden"] as? Bool ?? false
+        permissionDenied = dict["permissionDenied"] as? Bool ?? false
         address = dict["address"] as? String ?? ""
     }
 }
@@ -133,6 +138,8 @@ struct GameItem: Identifiable, Equatable {
     let widePath: String?
     let lastPlayed: Date?
     let artStamp: Double
+    /// Steam appid, from the Vibepollo UUID (nil for non-Steam apps)
+    let steamAppId: Int?
 
     var pinned: Bool { pinIndex != nil }
 
@@ -157,6 +164,8 @@ struct GameItem: Identifiable, Equatable {
         logoPath = GameItem.nonEmpty(dict["logoPath"])
         widePath = GameItem.nonEmpty(dict["widePath"])
         artStamp = (dict["artStamp"] as? NSNumber)?.doubleValue ?? 0
+        let steamId = (dict["steamAppId"] as? NSNumber)?.intValue ?? 0
+        steamAppId = steamId > 0 ? steamId : nil
         if let seconds = dict["lastPlayed"] as? Double, seconds > 0 {
             lastPlayed = Date(timeIntervalSince1970: seconds)
         } else {
@@ -1453,12 +1462,16 @@ struct EmptyStateView: View {
     private var title: String {
         if model.hosts.isEmpty { return "No PCs yet" }
         guard let host = model.currentHost else { return "Choose a PC" }
+        if host.permissionDenied { return "\(host.name) isn't sharing its games" }
         return host.paired ? "No games found" : "\(host.name) isn't paired"
     }
 
     private var message: String {
         if model.hosts.isEmpty { return "Starlight finds PCs running Sunshine or Vibepollo on your network. You can also add one by address." }
         guard let host = model.currentHost else { return "Pick a PC from the menu at the top." }
+        if host.permissionDenied {
+            return "On the PC, open the Vibepollo Web UI, go to Client Management, select this iPhone and turn on \u{201C}List applications\u{201D}. Then refresh."
+        }
         return host.paired ? "Refresh to load the games from \(host.name)." : "Pair once to see and stream its games."
     }
 }
@@ -2202,6 +2215,14 @@ struct SettingsTab: View {
                     }
                     Button { model.command("addHost") } label: {
                         Label("Add PC by Address…", systemImage: "plus")
+                    }
+                }
+
+                Section("Accounts") {
+                    NavigationLink {
+                        SteamSettingsView()
+                    } label: {
+                        SteamSettingsRow()
                     }
                 }
 
@@ -3032,6 +3053,373 @@ private struct StreamMenuButtonStyle: ViewModifier {
             } else {
                 content.buttonStyle(.bordered).tint(destructive ? .red : nil)
             }
+        }
+    }
+}
+
+// MARK: - Steam (foundations: account, owned games, recently played)
+
+/// Stores the Steam Web API key in the iPhone's Keychain (never in UserDefaults or the repo)
+enum SteamKeychain {
+    private static let service = "Starlight.Steam"
+    private static let account = "WebAPIKey"
+
+    static func load() -> String? {
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecAttrAccount as String: account,
+            kSecReturnData as String: true,
+            kSecMatchLimit as String: kSecMatchLimitOne
+        ]
+        var result: AnyObject?
+        guard SecItemCopyMatching(query as CFDictionary, &result) == errSecSuccess,
+              let data = result as? Data else { return nil }
+        return String(data: data, encoding: .utf8)
+    }
+
+    static func save(_ key: String) {
+        delete()
+        let item: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecAttrAccount as String: account,
+            kSecAttrAccessible as String: kSecAttrAccessibleAfterFirstUnlock,
+            kSecValueData as String: Data(key.utf8)
+        ]
+        SecItemAdd(item as CFDictionary, nil)
+    }
+
+    static func delete() {
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecAttrAccount as String: account
+        ]
+        SecItemDelete(query as CFDictionary)
+    }
+}
+
+struct SteamOwnedGame: Codable, Equatable {
+    let appid: Int
+    let name: String
+    /// Minutes
+    let playtimeForever: Int
+    let lastPlayed: Date?
+}
+
+struct SteamRecentGame: Codable, Equatable {
+    let appid: Int
+    let name: String
+    /// Minutes in the last two weeks
+    let playtimeTwoWeeks: Int
+    let playtimeForever: Int
+}
+
+struct SteamCache: Codable {
+    var steamID: String
+    var personaName: String
+    var profilePublic: Bool
+    var owned: [SteamOwnedGame]
+    var recent: [SteamRecentGame]
+    var updated: Date
+}
+
+/// Talks to the Steam Web API and keeps a local cache. Used by the game page and Home in later releases.
+@MainActor
+final class SteamManager: ObservableObject {
+    static let shared = SteamManager()
+
+    @Published private(set) var cache: SteamCache?
+    @Published private(set) var busy = false
+    @Published private(set) var errorMessage: String?
+    @Published private(set) var hasKey = SteamKeychain.load() != nil
+
+    private static let steamIDKey = "StarlightSteamID"
+    private static let staleAfter: TimeInterval = 3 * 60 * 60
+
+    var steamID: String? { UserDefaults.standard.string(forKey: Self.steamIDKey) }
+    var isConfigured: Bool { hasKey && steamID != nil }
+    var keySuffix: String {
+        guard let key = SteamKeychain.load(), key.count >= 4 else { return "" }
+        return String(key.suffix(4))
+    }
+
+    /// Owned games by appid
+    func owned(_ appid: Int) -> SteamOwnedGame? { cache?.owned.first { $0.appid == appid } }
+    func recent(_ appid: Int) -> SteamRecentGame? { cache?.recent.first { $0.appid == appid } }
+
+    private init() {
+        cache = Self.loadCache()
+    }
+
+    // MARK: Setup
+
+    /// Saves the key (if given) and the profile, then checks them by downloading the games
+    func configure(apiKey: String, profile: String) async {
+        let key = apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !key.isEmpty {
+            SteamKeychain.save(key)
+            hasKey = true
+        }
+        guard let storedKey = SteamKeychain.load() else {
+            errorMessage = "Enter your Steam Web API key."
+            return
+        }
+        busy = true
+        errorMessage = nil
+        defer { busy = false }
+        do {
+            let input = profile.trimmingCharacters(in: .whitespacesAndNewlines)
+            var id = steamID
+            if !input.isEmpty {
+                id = try await resolveSteamID(input, key: storedKey)
+            }
+            guard let resolved = id else {
+                errorMessage = "Enter your SteamID64 or profile name."
+                return
+            }
+            UserDefaults.standard.set(resolved, forKey: Self.steamIDKey)
+            try await refresh(key: storedKey, steamID: resolved)
+        } catch {
+            errorMessage = (error as? SteamError)?.message ?? "Couldn't reach Steam. Check your connection and try again."
+        }
+    }
+
+    func refreshIfStale() {
+        guard isConfigured else { return }
+        if let updated = cache?.updated, Date().timeIntervalSince(updated) < Self.staleAfter { return }
+        Task { await refreshNow() }
+    }
+
+    func refreshNow() async {
+        guard let key = SteamKeychain.load(), let id = steamID, !busy else { return }
+        busy = true
+        errorMessage = nil
+        defer { busy = false }
+        do {
+            try await refresh(key: key, steamID: id)
+        } catch {
+            errorMessage = (error as? SteamError)?.message ?? "Couldn't reach Steam. Check your connection and try again."
+        }
+    }
+
+    func remove() {
+        SteamKeychain.delete()
+        UserDefaults.standard.removeObject(forKey: Self.steamIDKey)
+        hasKey = false
+        cache = nil
+        errorMessage = nil
+        try? FileManager.default.removeItem(at: Self.cacheURL)
+    }
+
+    // MARK: Steam Web API
+
+    struct SteamError: Error {
+        let message: String
+    }
+
+    private func get(_ path: String, _ query: [String: String]) async throws -> [String: Any] {
+        var components = URLComponents(string: "https://api.steampowered.com/\(path)")!
+        components.queryItems = query.map { URLQueryItem(name: $0.key, value: $0.value) }
+        let (data, response) = try await URLSession.shared.data(from: components.url!)
+        let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+        if status == 401 || status == 403 {
+            throw SteamError(message: "Steam rejected the API key. Check it at steamcommunity.com/dev/apikey.")
+        }
+        guard status == 200,
+              let json = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            throw SteamError(message: "Steam didn't answer as expected (HTTP \(status)). Try again later.")
+        }
+        return json
+    }
+
+    /// Accepts a SteamID64, a profile URL (/profiles/… or /id/…) or a custom profile name
+    private func resolveSteamID(_ input: String, key: String) async throws -> String {
+        var text = input
+        if let range = text.range(of: "/profiles/") {
+            text = String(text[range.upperBound...]).components(separatedBy: "/").first ?? ""
+        } else if let range = text.range(of: "/id/") {
+            text = String(text[range.upperBound...]).components(separatedBy: "/").first ?? ""
+        }
+        if text.count == 17, text.allSatisfy(\.isNumber) {
+            return text
+        }
+        let json = try await get("ISteamUser/ResolveVanityURL/v1/", ["key": key, "vanityurl": text])
+        let response = json["response"] as? [String: Any]
+        if (response?["success"] as? Int) == 1, let id = response?["steamid"] as? String {
+            return id
+        }
+        throw SteamError(message: "No Steam profile called \u{201C}\(text)\u{201D}. Use your SteamID64 or the name in your profile URL.")
+    }
+
+    private func refresh(key: String, steamID: String) async throws {
+        // Profile name and visibility
+        let summary = try await get("ISteamUser/GetPlayerSummaries/v2/", ["key": key, "steamids": steamID])
+        let players = (summary["response"] as? [String: Any])?["players"] as? [[String: Any]] ?? []
+        guard let player = players.first else {
+            throw SteamError(message: "Steam couldn't find that account.")
+        }
+        let personaName = player["personaname"] as? String ?? "Steam"
+
+        let ownedJSON = try await get("IPlayerService/GetOwnedGames/v1/", [
+            "key": key, "steamid": steamID, "include_appinfo": "1", "include_played_free_games": "1"
+        ])
+        let ownedResponse = ownedJSON["response"] as? [String: Any] ?? [:]
+        // A private "Game details" setting returns an empty response
+        let profilePublic = ownedResponse["game_count"] != nil
+        let owned: [SteamOwnedGame] = (ownedResponse["games"] as? [[String: Any]] ?? []).compactMap { game in
+            guard let appid = game["appid"] as? Int else { return nil }
+            let last = (game["rtime_last_played"] as? Double) ?? 0
+            return SteamOwnedGame(appid: appid,
+                                  name: game["name"] as? String ?? "",
+                                  playtimeForever: game["playtime_forever"] as? Int ?? 0,
+                                  lastPlayed: last > 0 ? Date(timeIntervalSince1970: last) : nil)
+        }
+
+        let recentJSON = try await get("IPlayerService/GetRecentlyPlayedGames/v1/", ["key": key, "steamid": steamID])
+        let recent: [SteamRecentGame] = ((recentJSON["response"] as? [String: Any])?["games"] as? [[String: Any]] ?? []).compactMap { game in
+            guard let appid = game["appid"] as? Int else { return nil }
+            return SteamRecentGame(appid: appid,
+                                   name: game["name"] as? String ?? "",
+                                   playtimeTwoWeeks: game["playtime_2weeks"] as? Int ?? 0,
+                                   playtimeForever: game["playtime_forever"] as? Int ?? 0)
+        }
+
+        let newCache = SteamCache(steamID: steamID, personaName: personaName, profilePublic: profilePublic,
+                                  owned: owned, recent: recent, updated: Date())
+        cache = newCache
+        Self.saveCache(newCache)
+        if !profilePublic {
+            errorMessage = "Connected, but your Steam “Game details” are private, so playtime and achievements are empty. Set them to Public in Steam › Profile › Privacy Settings."
+        }
+    }
+
+    // MARK: Cache
+
+    private static var cacheURL: URL {
+        let caches = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
+        return caches.appendingPathComponent("Steam/cache.json")
+    }
+
+    private static func loadCache() -> SteamCache? {
+        guard let data = try? Data(contentsOf: cacheURL) else { return nil }
+        return try? JSONDecoder().decode(SteamCache.self, from: data)
+    }
+
+    private static func saveCache(_ cache: SteamCache) {
+        let url = cacheURL
+        try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        if let data = try? JSONEncoder().encode(cache) {
+            try? data.write(to: url, options: .atomic)
+        }
+    }
+}
+
+struct SteamSettingsRow: View {
+    @ObservedObject private var steam = SteamManager.shared
+
+    var body: some View {
+        HStack {
+            Label("Steam", systemImage: "person.crop.circle")
+            Spacer()
+            Text(steam.isConfigured ? (steam.cache?.personaName ?? "Connected") : "Not set up")
+                .foregroundStyle(.secondary)
+        }
+    }
+}
+
+struct SteamSettingsView: View {
+    @ObservedObject private var steam = SteamManager.shared
+    @State private var key = ""
+    @State private var profile = ""
+    @State private var confirmRemove = false
+
+    private var updatedText: String {
+        guard let date = steam.cache?.updated else { return "Never" }
+        let formatter = RelativeDateTimeFormatter()
+        formatter.unitsStyle = .full
+        return formatter.localizedString(for: date, relativeTo: Date())
+    }
+
+    var body: some View {
+        Form {
+            Section {
+                SecureField(steam.hasKey ? "New API key (optional)" : "Steam Web API key", text: $key)
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled()
+                TextField(steam.steamID ?? "SteamID64 or profile name", text: $profile)
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled()
+                Button {
+                    let enteredKey = key
+                    let enteredProfile = profile
+                    Task {
+                        await steam.configure(apiKey: enteredKey, profile: enteredProfile)
+                        if steam.errorMessage == nil || steam.cache != nil {
+                            key = ""
+                            profile = ""
+                        }
+                    }
+                } label: {
+                    HStack {
+                        Label(steam.isConfigured ? "Save & Test" : "Connect", systemImage: "checkmark.circle")
+                        if steam.busy {
+                            Spacer()
+                            ProgressView()
+                        }
+                    }
+                }
+                .disabled(steam.busy || (!steam.hasKey && key.isEmpty) || (steam.steamID == nil && profile.isEmpty))
+            } header: {
+                Text("Steam account")
+            } footer: {
+                Text("Get a key at steamcommunity.com/dev/apikey (sign in; any domain name works). For your SteamID, paste your profile URL or the name in it. Your profile's \u{201C}Game details\u{201D} must be Public for playtime and achievements. The key is stored only in this iPhone's Keychain.")
+            }
+
+            if let error = steam.errorMessage {
+                Section {
+                    Label(error, systemImage: "exclamationmark.triangle")
+                        .foregroundStyle(.orange)
+                }
+            }
+
+            if steam.isConfigured {
+                Section("Status") {
+                    row("Account", steam.cache?.personaName ?? "—")
+                    row("SteamID", steam.steamID ?? "—")
+                    row("API key", "…" + steam.keySuffix)
+                    row("Games owned", steam.cache.map { "\($0.owned.count)" } ?? "—")
+                    row("Played in the last 2 weeks", steam.cache.map { "\($0.recent.count)" } ?? "—")
+                    row("Updated", updatedText)
+                }
+                Section {
+                    Button {
+                        Task { await steam.refreshNow() }
+                    } label: {
+                        Label("Refresh Now", systemImage: "arrow.clockwise")
+                    }
+                    .disabled(steam.busy)
+                    Button(role: .destructive) { confirmRemove = true } label: {
+                        Label("Disconnect Steam", systemImage: "trash")
+                    }
+                }
+            }
+        }
+        .navigationTitle("Steam")
+        .confirmationDialog("Disconnect Steam? The API key and the downloaded data are removed from this iPhone.",
+                            isPresented: $confirmRemove, titleVisibility: .visible) {
+            Button("Disconnect", role: .destructive) { steam.remove() }
+        }
+    }
+
+    private func row(_ title: String, _ value: String) -> some View {
+        HStack {
+            Text(title)
+            Spacer()
+            Text(value)
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
         }
     }
 }

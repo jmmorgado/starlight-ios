@@ -14,6 +14,8 @@
 @property (nullable, nonatomic, retain) NSString *id;
 @property (nullable, nonatomic, retain) NSString *name;
 @property (nullable, nonatomic, retain) NSString *installPath;
+// Starlight: Vibepollo app UUID (not stored in Core Data; Steam games encode their appid in it)
+@property (nullable, nonatomic, retain) NSString *uuid;
 @property (nonatomic)                   BOOL hdrSupported;
 @property (nonatomic)                   BOOL hidden;
 @property (nullable, nonatomic, retain) TemporaryHost *host;

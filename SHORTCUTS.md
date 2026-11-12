@@ -107,3 +107,9 @@ Se a SteamGridDB escolher a versão errada de um jogo (ex.: Ocarina of Time da N
 3. Opcional: escolhe o **Background**, a **Cover** e o **Logo** que preferires entre as opções disponíveis.
 
 A escolha fica guardada e é respeitada mesmo quando se volta a descarregar a arte.
+
+## Steam
+
+Em **Settings → Steam**, cola a tua Steam Web API key (gera-se em steamcommunity.com/dev/apikey) e o SteamID64 ou o URL/nome do perfil. A chave fica só no Keychain do iPhone. Os "Detalhes de jogo" do perfil Steam têm de estar públicos para aparecerem horas e achievements.
+
+Se a app disser que o PC "isn't sharing its games", ativa **List applications** para este iPhone no Vibepollo (Web UI → Client Management).
