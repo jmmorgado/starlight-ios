@@ -13,6 +13,8 @@
 
 import SwiftUI
 import UIKit
+import Network
+import GameController
 
 // MARK: - Bridge used from Objective-C
 
@@ -282,20 +284,202 @@ struct HomeRootView: View {
     @ObservedObject var model: HomeModel
 
     var body: some View {
-        TabView {
-            HomeTab(model: model)
-                .tabItem { Label("Home", systemImage: "house.fill") }
-            LibraryTab(model: model)
-                .tabItem { Label("Library", systemImage: "square.grid.2x2.fill") }
-            SettingsTab(model: model)
-                .tabItem { Label("Settings", systemImage: "gearshape.fill") }
-        }
+        tabs
         .tint(starlightGold)
         .preferredColorScheme(.dark)
         .sheet(item: $model.editingGame) { game in
             ArtworkEditorView(model: model, game: game)
                 .preferredColorScheme(.dark)
         }
+    }
+}
+
+extension HomeRootView {
+    @ViewBuilder
+    var tabs: some View {
+        if #available(iOS 18.0, *) {
+            // iOS 26 shows the search tab as its own button at the bottom right (like Photos)
+            TabView {
+                Tab("Home", systemImage: "house.fill") { HomeTab(model: model) }
+                Tab("Library", systemImage: "square.grid.2x2.fill") { LibraryTab(model: model) }
+                Tab("Settings", systemImage: "gearshape.fill") { SettingsTab(model: model) }
+                Tab("Search", systemImage: "magnifyingglass", role: .search) { SearchTab(model: model) }
+            }
+        } else {
+            TabView {
+                HomeTab(model: model)
+                    .tabItem { Label("Home", systemImage: "house.fill") }
+                LibraryTab(model: model)
+                    .tabItem { Label("Library", systemImage: "square.grid.2x2.fill") }
+                SettingsTab(model: model)
+                    .tabItem { Label("Settings", systemImage: "gearshape.fill") }
+                SearchTab(model: model)
+                    .tabItem { Label("Search", systemImage: "magnifyingglass") }
+            }
+        }
+    }
+}
+
+// MARK: - Top bar: PC on the left, status on the right
+
+private extension View {
+    /// PC picker on the leading side and the status cluster on the trailing side of the navigation bar
+    func starlightTopBar(model: HomeModel) -> some View {
+        self.toolbar {
+            ToolbarItem(placement: .navigationBarLeading) {
+                HostMenu(model: model, inToolbar: true)
+            }
+            ToolbarItem(placement: .navigationBarTrailing) {
+                StatusCluster()
+            }
+        }
+    }
+
+    func starlightStatusOnly() -> some View {
+        self.toolbar {
+            ToolbarItem(placement: .navigationBarTrailing) {
+                StatusCluster()
+            }
+        }
+    }
+}
+
+/// Clock, game controller, network and battery. iPhone hides the system status bar in landscape,
+/// so the app shows its own (like game consoles and Backbone do), drawn with SF Symbols.
+final class DeviceStatus: ObservableObject {
+    static let shared = DeviceStatus()
+
+    enum Network { case wifi, cellular, wired, none }
+
+    @Published var now = Date()
+    @Published var batteryLevel: Float = -1
+    @Published var charging = false
+    @Published var network: Network = .none
+    @Published var controllerConnected = false
+    @Published var controllerBattery: Float?
+
+    private let monitor = NWPathMonitor()
+    private var timer: Timer?
+
+    private init() {
+        UIDevice.current.isBatteryMonitoringEnabled = true
+        refreshBattery()
+        refreshControllers()
+
+        monitor.pathUpdateHandler = { [weak self] path in
+            let network: Network
+            if path.status != .satisfied {
+                network = .none
+            } else if path.usesInterfaceType(.wifi) {
+                network = .wifi
+            } else if path.usesInterfaceType(.wiredEthernet) {
+                network = .wired
+            } else if path.usesInterfaceType(.cellular) {
+                network = .cellular
+            } else {
+                network = .wifi
+            }
+            DispatchQueue.main.async { self?.network = network }
+        }
+        monitor.start(queue: DispatchQueue(label: "starlight.network-status"))
+
+        let center = NotificationCenter.default
+        center.addObserver(forName: UIDevice.batteryLevelDidChangeNotification, object: nil, queue: .main) { [weak self] _ in self?.refreshBattery() }
+        center.addObserver(forName: UIDevice.batteryStateDidChangeNotification, object: nil, queue: .main) { [weak self] _ in self?.refreshBattery() }
+        center.addObserver(forName: .GCControllerDidConnect, object: nil, queue: .main) { [weak self] _ in self?.refreshControllers() }
+        center.addObserver(forName: .GCControllerDidDisconnect, object: nil, queue: .main) { [weak self] _ in self?.refreshControllers() }
+
+        // Clock and controller battery (no change notifications for the latter)
+        timer = Timer.scheduledTimer(withTimeInterval: 15, repeats: true) { [weak self] _ in
+            self?.now = Date()
+            self?.refreshControllers()
+        }
+    }
+
+    private func refreshBattery() {
+        batteryLevel = UIDevice.current.batteryLevel
+        let state = UIDevice.current.batteryState
+        charging = state == .charging || state == .full
+    }
+
+    private func refreshControllers() {
+        let controllers = GCController.controllers().filter { $0.extendedGamepad != nil || $0.microGamepad != nil }
+        controllerConnected = !controllers.isEmpty
+        if let level = controllers.compactMap({ $0.battery?.batteryLevel }).first, level > 0 {
+            controllerBattery = level
+        } else {
+            controllerBattery = nil
+        }
+    }
+}
+
+struct StatusCluster: View {
+    @ObservedObject private var status = DeviceStatus.shared
+
+    private var timeText: String {
+        let formatter = DateFormatter()
+        formatter.timeStyle = .short
+        formatter.dateStyle = .none
+        return formatter.string(from: status.now)
+    }
+
+    private var batterySymbol: String {
+        if status.charging { return "battery.100.bolt" }
+        let level = status.batteryLevel
+        if level < 0 { return "battery.100" }
+        switch level {
+        case ..<0.13: return "battery.0"
+        case ..<0.38: return "battery.25"
+        case ..<0.63: return "battery.50"
+        case ..<0.88: return "battery.75"
+        default: return "battery.100"
+        }
+    }
+
+    private var networkSymbol: String {
+        switch status.network {
+        case .wifi: return "wifi"
+        case .cellular: return "antenna.radiowaves.left.and.right"
+        case .wired: return "cable.connector"
+        case .none: return "wifi.slash"
+        }
+    }
+
+    var body: some View {
+        HStack(spacing: 10) {
+            if status.controllerConnected {
+                HStack(spacing: 3) {
+                    Image(systemName: "gamecontroller.fill")
+                    if let level = status.controllerBattery {
+                        Text("\(Int((level * 100).rounded()))%")
+                            .font(.system(size: 11, weight: .semibold))
+                            .monospacedDigit()
+                    }
+                }
+                .accessibilityLabel(status.controllerBattery.map { "Controller connected, \(Int(($0 * 100).rounded())) percent" } ?? "Controller connected")
+            }
+            Image(systemName: networkSymbol)
+                .accessibilityLabel(status.network == .none ? "No network" : "Network connected")
+            HStack(spacing: 3) {
+                if status.batteryLevel >= 0 {
+                    Text("\(Int((status.batteryLevel * 100).rounded()))%")
+                        .font(.system(size: 11, weight: .semibold))
+                        .monospacedDigit()
+                }
+                Image(systemName: batterySymbol)
+                    .foregroundStyle(!status.charging && status.batteryLevel >= 0 && status.batteryLevel < 0.2 ? Color.red : Color.white)
+            }
+            .accessibilityElement(children: .combine)
+            .accessibilityLabel("Battery \(Int((max(status.batteryLevel, 0) * 100).rounded())) percent")
+            Text(timeText)
+                .font(.system(size: 15, weight: .semibold))
+                .monospacedDigit()
+        }
+        .font(.system(size: 14, weight: .semibold))
+        .foregroundStyle(.white)
+        .padding(.horizontal, 6)
+        .padding(.vertical, 2)
+        .modifier(HostMenuBackground(inToolbar: true))
     }
 }
 
@@ -507,6 +691,15 @@ struct HomeTab: View {
     @ObservedObject var model: HomeModel
 
     var body: some View {
+        NavigationView {
+            content
+                .navigationBarTitleDisplayMode(.inline)
+                .starlightTopBar(model: model)
+        }
+        .navigationViewStyle(.stack)
+    }
+
+    private var content: some View {
         GeometryReader { geo in
             let compact = geo.size.height < 500
             ZStack(alignment: .top) {
@@ -515,8 +708,6 @@ struct HomeTab: View {
                 if let featured = model.featured {
                     ScrollView(.vertical, showsIndicators: false) {
                         VStack(alignment: .leading, spacing: compact ? 14 : 22) {
-                            HostMenu(model: model)
-
                             FeaturedSection(game: featured, model: model, compact: compact)
 
                             GameRow(id: "continue", title: "Continue Playing", games: model.continueGames, model: model, compact: compact)
@@ -528,15 +719,7 @@ struct HomeTab: View {
                         .padding(.bottom, 24)
                     }
                 } else {
-                    VStack(spacing: 0) {
-                        HStack {
-                            HostMenu(model: model)
-                            Spacer()
-                        }
-                        .padding(.horizontal, 24)
-                        .padding(.top, 8)
-                        EmptyStateView(model: model)
-                    }
+                    EmptyStateView(model: model)
                 }
             }
         }
@@ -645,7 +828,7 @@ struct FeaturedSection: View {
                 .accessibilityLabel("Game options")
             }
         }
-        .padding(.top, compact ? 4 : 30)
+        .padding(.top, compact ? 0 : 20)
     }
 
     private var subtitle: String {
@@ -769,13 +952,6 @@ struct GameCard: View {
 
 struct LibraryTab: View {
     @ObservedObject var model: HomeModel
-    @State private var search = ""
-
-    private var filtered: [GameItem] {
-        let all = model.libraryGames
-        guard !search.isEmpty else { return all }
-        return all.filter { $0.name.localizedCaseInsensitiveContains(search) }
-    }
 
     var body: some View {
         NavigationView {
@@ -783,32 +959,77 @@ struct LibraryTab: View {
                 if model.games.isEmpty {
                     EmptyStateView(model: model)
                 } else {
-                    ScrollView {
-                        LazyVGrid(columns: [GridItem(.adaptive(minimum: 120, maximum: 160), spacing: 16)], spacing: 18) {
-                            ForEach(filtered) { game in
-                                VStack(alignment: .leading, spacing: 6) {
-                                    GameCard(game: game, selected: false, portrait: true, height: 180)
-                                    Text(game.name)
-                                        .font(.system(size: 12.5, weight: .semibold))
-                                        .lineLimit(1)
-                                }
-                                .frame(width: 120)
-                                .onTapGesture { model.launch(game) }
-                                .contextMenu { GameMenuItems(game: game, model: model) }
-                            }
-                        }
-                        .padding(20)
-                    }
+                    GameGrid(games: model.libraryGames, model: model)
                 }
             }
             .navigationTitle("Library")
             .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .navigationBarTrailing) {
-                    HostMenu(model: model, inToolbar: true)
+            .starlightTopBar(model: model)
+        }
+        .navigationViewStyle(.stack)
+    }
+}
+
+/// Portrait covers in a grid (Library and Search)
+struct GameGrid: View {
+    let games: [GameItem]
+    @ObservedObject var model: HomeModel
+
+    var body: some View {
+        ScrollView {
+            LazyVGrid(columns: [GridItem(.adaptive(minimum: 120, maximum: 160), spacing: 16)], spacing: 18) {
+                ForEach(games) { game in
+                    VStack(alignment: .leading, spacing: 6) {
+                        GameCard(game: game, selected: false, portrait: true, height: 180)
+                        Text(game.name)
+                            .font(.system(size: 12.5, weight: .semibold))
+                            .lineLimit(1)
+                    }
+                    .frame(width: 120)
+                    .onTapGesture { model.launch(game) }
+                    .contextMenu { GameMenuItems(game: game, model: model) }
                 }
             }
-            .searchable(text: $search, prompt: "Search games")
+            .padding(20)
+        }
+    }
+}
+
+// MARK: - Search tab
+
+struct SearchTab: View {
+    @ObservedObject var model: HomeModel
+    @State private var query = ""
+
+    private var results: [GameItem] {
+        let all = model.libraryGames
+        let trimmed = query.trimmingCharacters(in: .whitespaces)
+        guard !trimmed.isEmpty else { return all }
+        return all.filter { $0.name.localizedCaseInsensitiveContains(trimmed) }
+    }
+
+    var body: some View {
+        NavigationView {
+            Group {
+                if model.games.isEmpty {
+                    EmptyStateView(model: model)
+                } else if results.isEmpty {
+                    VStack(spacing: 10) {
+                        Image(systemName: "magnifyingglass")
+                            .font(.system(size: 34, weight: .light))
+                            .foregroundStyle(.secondary)
+                        Text("No games match \u{201C}\(query)\u{201D}")
+                            .foregroundStyle(.secondary)
+                    }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                } else {
+                    GameGrid(games: results, model: model)
+                }
+            }
+            .navigationTitle("Search")
+            .navigationBarTitleDisplayMode(.inline)
+            .starlightTopBar(model: model)
+            .searchable(text: $query, prompt: "Games on \(model.currentHost?.name ?? "your PC")")
         }
         .navigationViewStyle(.stack)
     }
@@ -882,6 +1103,8 @@ struct SettingsTab: View {
                 }
             }
             .navigationTitle("Settings")
+            .navigationBarTitleDisplayMode(.inline)
+            .starlightStatusOnly()
         }
         .navigationViewStyle(.stack)
     }

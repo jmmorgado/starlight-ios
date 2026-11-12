@@ -5,7 +5,9 @@
 - **Início:** PC no topo (toca para mudar de PC ou ver outros PCs na rede), jogo em destaque com a arte de fundo,
   **Play** (ou **Resume** + **Quit** se o jogo estiver a correr), menu **•••** e as filas "Continue Playing" e "All Games".
   Os jogos fixados aparecem sempre primeiro.
-- **Library:** todos os jogos do PC, com pesquisa.
+- **Library:** todos os jogos do PC (capas verticais).
+- **Pesquisa:** botão redondo no canto inferior direito; procura nos jogos do PC.
+- **Barra de cima (em todos os separadores):** o PC à esquerda e, à direita, comando ligado, rede, bateria e relógio.
 - **Settings:** ecrãs nativos para **Stream Settings**, cada **PC** (emparelhar, acordar, atualizar jogos,
   mostrar jogos escondidos, testar rede, remover), **Game Artwork** (SteamGridDB) e **About**.
 
