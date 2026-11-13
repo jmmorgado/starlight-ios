@@ -326,6 +326,15 @@ static NSMutableSet* hostList;
     [self disableUpButton];
     
     [self.collectionView reloadData];
+#if !TARGET_OS_TV
+    if (_home != nil) {
+        // Starlight Home replaces Moonlight's PC picker: never put the old one on top of it
+        // (it covered the top of the screen and the PC button). Home shows the PC as offline.
+        [hostScrollView removeFromSuperview];
+        [self pushHomeState];
+        return;
+    }
+#endif
     [self.view addSubview:hostScrollView];
 }
 
@@ -1071,7 +1080,9 @@ static NSMutableSet* hostList;
     }
     else {
         [self updateTitle];
-        [self.view addSubview:hostScrollView];
+        if (_home == nil) {
+            [self.view addSubview:hostScrollView];
+        }
     }
 }
 
@@ -1830,6 +1841,7 @@ static const NSUInteger kMaxQuickActions = 4;
     [[NSUserDefaults standardUserDefaults] removeObjectForKey:@"StarlightClassicLayout"];
     
     _home = [[StarlightHomeController alloc] init];
+    [hostScrollView removeFromSuperview];
     __weak MainFrameViewController* weakSelf = self;
     
     _home.onSelectHost = ^(NSString* hostUUID) {
