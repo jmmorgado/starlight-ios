@@ -48,7 +48,7 @@ Streaming itself is Moonlight's: same video, audio, input and pairing. Starlight
 There's no App Store build. Each push to the `starlight` branch builds an unsigned `.ipa` with GitHub Actions and publishes it as a [release](https://github.com/jmmorgado/starlight-ios/releases).
 
 1. Download `Starlight.ipa` from the [latest release](https://github.com/jmmorgado/starlight-ios/releases/latest).
-2. Install it with [Sideloadly](https://sideloadly.io) (Windows or macOS) using your Apple ID. Change the **Bundle ID** in Advanced options if you want it alongside the official Moonlight.
+2. Install it with [Sideloadly](https://sideloadly.io) (Windows or macOS) using your Apple ID. Starlight has its own Bundle ID (`com.jmmorgado.starlight`), so it installs alongside the official Moonlight.
 3. On the iPhone, trust your Apple ID in **Settings › General › VPN & Device Management** and enable **Developer Mode** if asked.
 
 With a free Apple ID the app expires after 7 days. Reinstall the same `.ipa` over it (your data stays) or use Sideloadly's auto refresh. To update, install a newer `.ipa` with the same Bundle ID.
@@ -76,7 +76,7 @@ A step-by-step guide to pinning, Shortcuts, links and fixing artwork is in [SHOR
 1. `git clone --recursive -b starlight https://github.com/jmmorgado/starlight-ios.git`
    (if you cloned without `--recursive`, run `git submodule update --init --recursive`)
 2. Open `Moonlight.xcodeproj` and select the **Moonlight** target (it builds Starlight).
-3. Under **Signing & Capabilities**, choose your team and change the **Bundle Identifier** to something unique.
+3. Under **Signing & Capabilities**, choose your team. With a free Apple ID you may need to change the **Bundle Identifier** to something unique.
 4. Select your iPhone and run.
 
 ## Repository layout

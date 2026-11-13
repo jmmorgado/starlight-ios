@@ -2504,6 +2504,10 @@ struct SettingsTab: View {
         let info = Bundle.main.infoDictionary
         let short = info?["CFBundleShortVersionString"] as? String ?? "?"
         let build = info?["CFBundleVersion"] as? String ?? "?"
+        // Set by the test-build workflow; empty in release builds
+        if let label = info?["StarlightBuildLabel"] as? String, !label.isEmpty {
+            return "\(short) · \(label)"
+        }
         return "\(short) (\(build))"
     }
 
