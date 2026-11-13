@@ -313,6 +313,16 @@ static NSMutableSet* hostList;
 #endif
 }
 
+// Moonlight's PC list. On iOS the Starlight home replaces it (and would end up underneath it).
+- (void)showClassicHostList {
+#if !TARGET_OS_TV
+    if (_home != nil) {
+        return;
+    }
+#endif
+    [self.view addSubview:hostScrollView];
+}
+
 - (void)showHostSelectionView {
 #if TARGET_OS_TV
     // Remove the menu button intercept to allow the app to exit
@@ -329,7 +339,7 @@ static NSMutableSet* hostList;
     [self disableUpButton];
     
     [self.collectionView reloadData];
-    [self.view addSubview:hostScrollView];
+    [self showClassicHostList];
 }
 
 - (void) receivedAssetForApp:(TemporaryApp*)app {
@@ -1079,7 +1089,7 @@ static NSMutableSet* hostList;
     }
     else {
         [self updateTitle];
-        [self.view addSubview:hostScrollView];
+        [self showClassicHostList];
     }
 }
 
@@ -1763,63 +1773,6 @@ static const NSUInteger kMaxQuickActions = 4;
     [self pushHomeState];
 }
 
-- (void)showArtworkSettings {
-    SteamGridDBManager* sgdb = [SteamGridDBManager sharedManager];
-    NSString* status = [sgdb isConfigured]
-        ? [NSString stringWithFormat:@"API key set (…%@).", [sgdb.apiKey substringFromIndex:MAX(0, (NSInteger)sgdb.apiKey.length - 4)]]
-        : @"No API key yet.";
-    NSString* message = [NSString stringWithFormat:@"%@\n\nCovers, backgrounds, logos and icons come from SteamGridDB. Get a free API key at steamgriddb.com → Preferences → API, then paste it below.", status];
-    
-    UIAlertController* alert = [UIAlertController alertControllerWithTitle:@"Game Artwork"
-                                                                   message:message
-                                                            preferredStyle:UIAlertControllerStyleAlert];
-    [alert addTextFieldWithConfigurationHandler:^(UITextField* textField) {
-        textField.placeholder = [sgdb isConfigured] ? @"New API key (optional)" : @"SteamGridDB API key";
-        textField.autocorrectionType = UITextAutocorrectionTypeNo;
-        textField.autocapitalizationType = UITextAutocapitalizationTypeNone;
-        textField.secureTextEntry = YES;
-    }];
-    
-    NSArray* allHosts;
-    @synchronized (hostList) {
-        allHosts = [hostList allObjects];
-    }
-    
-    [alert addAction:[UIAlertAction actionWithTitle:@"Save Key & Download" style:UIAlertActionStyleDefault handler:^(UIAlertAction* action) {
-        NSString* entered = alert.textFields.firstObject.text;
-        if (entered.length > 0) {
-            sgdb.apiKey = entered;
-        }
-        if (![sgdb isConfigured]) {
-            return;
-        }
-        [self fetchArtworkForHosts:allHosts force:NO completion:^(NSUInteger fetched, NSUInteger notFound, NSUInteger failed) {
-            [self showArtworkResultFetched:fetched notFound:notFound failed:failed];
-        }];
-    }]];
-    
-    if ([sgdb isConfigured]) {
-        [alert addAction:[UIAlertAction actionWithTitle:@"Re-download All Artwork" style:UIAlertActionStyleDefault handler:^(UIAlertAction* action) {
-            [self fetchArtworkForHosts:allHosts force:YES completion:^(NSUInteger fetched, NSUInteger notFound, NSUInteger failed) {
-                [self->_boxArtCache removeAllObjects];
-                [self.collectionView reloadData];
-                [self saveGameCatalog];
-                [self showArtworkResultFetched:fetched notFound:notFound failed:failed];
-            }];
-        }]];
-        [alert addAction:[UIAlertAction actionWithTitle:@"Remove Key & Artwork" style:UIAlertActionStyleDestructive handler:^(UIAlertAction* action) {
-            sgdb.apiKey = nil;
-            [sgdb clearCache];
-            [self->_boxArtCache removeAllObjects];
-            [self.collectionView reloadData];
-            [self saveGameCatalog];
-        }]];
-    }
-    
-    [alert addAction:[UIAlertAction actionWithTitle:@"Cancel" style:UIAlertActionStyleCancel handler:nil]];
-    [[self activeViewController] presentViewController:alert animated:YES completion:nil];
-}
-
 - (void)showArtworkResultFetched:(NSUInteger)fetched notFound:(NSUInteger)notFound failed:(NSUInteger)failed {
     NSString* message;
     if (failed > 0 && fetched == 0) {
@@ -1848,9 +1801,6 @@ static const NSUInteger kMaxQuickActions = 4;
     if (_home != nil) {
         return;
     }
-    // The classic layout is gone; clear the old preference
-    [[NSUserDefaults standardUserDefaults] removeObjectForKey:@"StarlightClassicLayout"];
-    
     _home = [[StarlightHomeController alloc] init];
     __weak MainFrameViewController* weakSelf = self;
     
@@ -2771,6 +2721,13 @@ static const NSUInteger kMaxQuickActions = 4;
 }
 
 - (NSInteger)collectionView:(UICollectionView *)collectionView numberOfItemsInSection:(NSInteger)section {
+#if !TARGET_OS_TV
+    // On iOS the Starlight SwiftUI home covers Moonlight's grid: don't build cells nobody sees.
+    // The grid (and the rest of this classic UI) is still the Apple TV interface.
+    if (_home != nil) {
+        return 0;
+    }
+#endif
     if (_selectedHost != nil && _sortedAppList != nil) {
         return _sortedAppList.count;
     }

@@ -8,6 +8,16 @@
 
 /* Begin PBXBuildFile section */
 		5A7A1C0000000000000000C2 /* StarlightHome.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5A7A1C0000000000000000C1 /* StarlightHome.swift */; };
+		5A7A1C00000000000000D0A2 /* StarlightRoot.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5A7A1C00000000000000D0A1 /* StarlightRoot.swift */; };
+		5A7A1C00000000000000D1A2 /* StarlightFocus.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5A7A1C00000000000000D1A1 /* StarlightFocus.swift */; };
+		5A7A1C00000000000000D2A2 /* StarlightComponents.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5A7A1C00000000000000D2A1 /* StarlightComponents.swift */; };
+		5A7A1C00000000000000D3A2 /* StarlightHomeTab.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5A7A1C00000000000000D3A1 /* StarlightHomeTab.swift */; };
+		5A7A1C00000000000000D4A2 /* StarlightGameDetail.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5A7A1C00000000000000D4A1 /* StarlightGameDetail.swift */; };
+		5A7A1C00000000000000D5A2 /* StarlightLibrary.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5A7A1C00000000000000D5A1 /* StarlightLibrary.swift */; };
+		5A7A1C00000000000000D6A2 /* StarlightSettings.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5A7A1C00000000000000D6A1 /* StarlightSettings.swift */; };
+		5A7A1C00000000000000D7A2 /* StarlightArtworkEditor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5A7A1C00000000000000D7A1 /* StarlightArtworkEditor.swift */; };
+		5A7A1C00000000000000D8A2 /* StarlightStreamMenu.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5A7A1C00000000000000D8A1 /* StarlightStreamMenu.swift */; };
+		5A7A1C00000000000000D9A2 /* StarlightSteam.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5A7A1C00000000000000D9A1 /* StarlightSteam.swift */; };
 		5A7A1C0000000000000000B3 /* SteamGridDBManager.m in Sources */ = {isa = PBXBuildFile; fileRef = 5A7A1C0000000000000000B2 /* SteamGridDBManager.m */; };
 		5A7A1C0000000000000000A2 /* StarlightAppIntents.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5A7A1C0000000000000000A1 /* StarlightAppIntents.swift */; };
 		693B3A9B218638CD00982F7B /* Settings.bundle in Resources */ = {isa = PBXBuildFile; fileRef = 693B3A9A218638CD00982F7B /* Settings.bundle */; };
@@ -174,6 +184,16 @@
 
 /* Begin PBXFileReference section */
 		5A7A1C0000000000000000C1 /* StarlightHome.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = StarlightHome.swift; sourceTree = "<group>"; };
+		5A7A1C00000000000000D0A1 /* StarlightRoot.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = StarlightRoot.swift; sourceTree = "<group>"; };
+		5A7A1C00000000000000D1A1 /* StarlightFocus.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = StarlightFocus.swift; sourceTree = "<group>"; };
+		5A7A1C00000000000000D2A1 /* StarlightComponents.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = StarlightComponents.swift; sourceTree = "<group>"; };
+		5A7A1C00000000000000D3A1 /* StarlightHomeTab.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = StarlightHomeTab.swift; sourceTree = "<group>"; };
+		5A7A1C00000000000000D4A1 /* StarlightGameDetail.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = StarlightGameDetail.swift; sourceTree = "<group>"; };
+		5A7A1C00000000000000D5A1 /* StarlightLibrary.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = StarlightLibrary.swift; sourceTree = "<group>"; };
+		5A7A1C00000000000000D6A1 /* StarlightSettings.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = StarlightSettings.swift; sourceTree = "<group>"; };
+		5A7A1C00000000000000D7A1 /* StarlightArtworkEditor.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = StarlightArtworkEditor.swift; sourceTree = "<group>"; };
+		5A7A1C00000000000000D8A1 /* StarlightStreamMenu.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = StarlightStreamMenu.swift; sourceTree = "<group>"; };
+		5A7A1C00000000000000D9A1 /* StarlightSteam.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = StarlightSteam.swift; sourceTree = "<group>"; };
 		5A7A1C0000000000000000B1 /* SteamGridDBManager.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = SteamGridDBManager.h; sourceTree = "<group>"; };
 		5A7A1C0000000000000000B2 /* SteamGridDBManager.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; path = SteamGridDBManager.m; sourceTree = "<group>"; };
 		5A7A1C0000000000000000A1 /* StarlightAppIntents.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = StarlightAppIntents.swift; sourceTree = "<group>"; };
@@ -376,6 +396,16 @@
 			isa = PBXGroup;
 			children = (
 				5A7A1C0000000000000000C1 /* StarlightHome.swift */,
+				5A7A1C00000000000000D0A1 /* StarlightRoot.swift */,
+				5A7A1C00000000000000D1A1 /* StarlightFocus.swift */,
+				5A7A1C00000000000000D2A1 /* StarlightComponents.swift */,
+				5A7A1C00000000000000D3A1 /* StarlightHomeTab.swift */,
+				5A7A1C00000000000000D4A1 /* StarlightGameDetail.swift */,
+				5A7A1C00000000000000D5A1 /* StarlightLibrary.swift */,
+				5A7A1C00000000000000D6A1 /* StarlightSettings.swift */,
+				5A7A1C00000000000000D7A1 /* StarlightArtworkEditor.swift */,
+				5A7A1C00000000000000D8A1 /* StarlightStreamMenu.swift */,
+				5A7A1C00000000000000D9A1 /* StarlightSteam.swift */,
 			);
 			path = Home;
 			sourceTree = "<group>";
@@ -913,6 +943,16 @@
 			buildActionMask = 2147483647;
 			files = (
 				5A7A1C0000000000000000C2 /* StarlightHome.swift in Sources */,
+				5A7A1C00000000000000D0A2 /* StarlightRoot.swift in Sources */,
+				5A7A1C00000000000000D1A2 /* StarlightFocus.swift in Sources */,
+				5A7A1C00000000000000D2A2 /* StarlightComponents.swift in Sources */,
+				5A7A1C00000000000000D3A2 /* StarlightHomeTab.swift in Sources */,
+				5A7A1C00000000000000D4A2 /* StarlightGameDetail.swift in Sources */,
+				5A7A1C00000000000000D5A2 /* StarlightLibrary.swift in Sources */,
+				5A7A1C00000000000000D6A2 /* StarlightSettings.swift in Sources */,
+				5A7A1C00000000000000D7A2 /* StarlightArtworkEditor.swift in Sources */,
+				5A7A1C00000000000000D8A2 /* StarlightStreamMenu.swift in Sources */,
+				5A7A1C00000000000000D9A2 /* StarlightSteam.swift in Sources */,
 				5A7A1C0000000000000000B3 /* SteamGridDBManager.m in Sources */,
 				5A7A1C0000000000000000A2 /* StarlightAppIntents.swift in Sources */,
 				FB290D0719B2C406004C83CF /* Limelight.xcdatamodeld in Sources */,
