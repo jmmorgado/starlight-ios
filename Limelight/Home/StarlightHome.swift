@@ -135,7 +135,6 @@ struct GameItem: Identifiable, Equatable {
     let gridPath: String?
     let heroPath: String?
     let logoPath: String?
-    let widePath: String?
     let lastPlayed: Date?
     let artStamp: Double
     /// Steam appid, from the Vibepollo UUID (nil for non-Steam apps)
@@ -170,7 +169,6 @@ struct GameItem: Identifiable, Equatable {
         gridPath = GameItem.nonEmpty(dict["gridPath"])
         heroPath = GameItem.nonEmpty(dict["heroPath"])
         logoPath = GameItem.nonEmpty(dict["logoPath"])
-        widePath = GameItem.nonEmpty(dict["widePath"])
         artStamp = (dict["artStamp"] as? NSNumber)?.doubleValue ?? 0
         let steamId = (dict["steamAppId"] as? NSNumber)?.intValue ?? 0
         steamAppId = steamId > 0 ? steamId : nil
@@ -255,18 +253,12 @@ final class HomeModel: ObservableObject {
             featuredRow = row
         }
     }
-    @Published var tabBarFocused = false
-    @Published var tabBarFlash = false
-    @Published var tabBarCollapsedByScroll = false
     @Published var searchQuery = ""
     @Published var searchFieldFocused = false
-    private var lastScrollOffset: CGFloat = 0
-    private var flashWork: DispatchWorkItem?
 
     func select(_ newTab: StarlightTab) {
         closePC()
         closeGameMenu()
-        unfocusTabBar()
         if newTab != tab {
             tab = newTab
         }
@@ -295,7 +287,6 @@ final class HomeModel: ObservableObject {
 
     func openPC() {
         closeGameMenu()
-        unfocusTabBar()
         pcExpanded = true
         GameFocus.shared.push("pc")
     }
@@ -321,7 +312,6 @@ final class HomeModel: ObservableObject {
     func openSearch(fromController: Bool) {
         closePC()
         closeGameMenu()
-        unfocusTabBar()
         if tab != .search {
             tab = .search
         }
@@ -334,54 +324,12 @@ final class HomeModel: ObservableObject {
         select(previousTab == .search ? .home : previousTab)
     }
 
-    func expandTabBar() {
-        if DeviceStatus.shared.controllerConnected {
-            focusTabBar()
-        } else {
-            tabBarCollapsedByScroll = false
-        }
-    }
-
-    func focusTabBar() {
-        guard !tabBarFocused else { return }
-        closePC()
-        closeGameMenu()
-        tabBarFocused = true
-        GameFocus.shared.push("tabbar")
-        let current = tab
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) {
-            if StarlightTab.barTabs.contains(current) { GameFocus.shared.focus("tab-\(current.rawValue)") }
-        }
-    }
-
-    func unfocusTabBar() {
-        guard tabBarFocused else { return }
-        tabBarFocused = false
-        GameFocus.shared.pop("tabbar")
-    }
-
     func switchTab(by delta: Int) {
         let tabs = StarlightTab.barTabs
         let index = tabs.firstIndex(of: tab) ?? 0
         // From Search, L1/R1 continue from the tab you came from
         let base = tab == .search ? (tabs.firstIndex(of: previousTab) ?? 0) : index
         select(tabs[(base + delta + tabs.count) % tabs.count])
-        flashWork?.cancel()
-        tabBarFlash = true
-        let work = DispatchWorkItem { [weak self] in self?.tabBarFlash = false }
-        flashWork = work
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5, execute: work)
-    }
-
-    func scrolled(to offset: CGFloat) {
-        var collapsed = tabBarCollapsedByScroll
-        if offset < lastScrollOffset - 6 && offset < -20 {
-            collapsed = true
-        } else if offset > lastScrollOffset + 6 || offset > -20 {
-            collapsed = false
-        }
-        lastScrollOffset = offset
-        if collapsed != tabBarCollapsedByScroll { tabBarCollapsedByScroll = collapsed }
     }
 
     /// The game the controller is on: the focused cover in Library/Search, the featured game on Home
@@ -427,8 +375,6 @@ final class HomeModel: ObservableObject {
                 closeDetail()
             } else if focus.handleBack() {
                 break
-            } else if tabBarFocused {
-                unfocusTabBar()
             } else if tab == .search {
                 closeSearch()
             }
@@ -1356,28 +1302,6 @@ struct PanelGlass: ViewModifier {
         } else {
             content.background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: corner, style: .continuous))
         }
-    }
-}
-
-/// Reports the scroll position so the tab bar can collapse when scrolling down
-struct ScrollOffsetKey: PreferenceKey {
-    static var defaultValue: CGFloat = 0
-    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) { value = nextValue() }
-}
-
-struct ScrollOffsetReader: View {
-    var body: some View {
-        GeometryReader { geo in
-            Color.clear.preference(key: ScrollOffsetKey.self, value: geo.frame(in: .named("starlightScroll")).minY)
-        }
-        .frame(height: 0)
-    }
-}
-
-extension View {
-    func trackScroll(_ model: HomeModel) -> some View {
-        self.coordinateSpace(name: "starlightScroll")
-            .onPreferenceChange(ScrollOffsetKey.self) { model.scrolled(to: $0) }
     }
 }
 

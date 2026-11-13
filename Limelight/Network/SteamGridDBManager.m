@@ -11,7 +11,6 @@ NSString* const SteamGridDBKindGrid = @"grid";
 NSString* const SteamGridDBKindHero = @"hero";
 NSString* const SteamGridDBKindLogo = @"logo";
 NSString* const SteamGridDBKindIcon = @"icon";
-NSString* const SteamGridDBKindWide = @"wide";
 
 static NSString* const kApiKeyDefaultsKey = @"StarlightSteamGridDBKey";   // legacy location, migrated to the Keychain
 static NSString* const kKeychainService = @"StarlightSteamGridDB";
@@ -173,9 +172,6 @@ static NSString* const kArtOverridesKey = @"StarlightSteamGridDBArtOverrides";  
     }
     if ([kind isEqualToString:SteamGridDBKindHero]) {
         return [NSString stringWithFormat:@"heroes/game/%@?types=static", gameId];
-    }
-    if ([kind isEqualToString:SteamGridDBKindWide]) {
-        return [NSString stringWithFormat:@"grids/game/%@?dimensions=460x215,920x430&types=static", gameId];
     }
     if ([kind isEqualToString:SteamGridDBKindLogo]) {
         return [NSString stringWithFormat:@"logos/game/%@?types=static&mimes=image/png", gameId];

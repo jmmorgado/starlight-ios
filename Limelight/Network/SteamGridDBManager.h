@@ -20,7 +20,6 @@ extern NSString* const SteamGridDBKindGrid;   // vertical cover, 600x900
 extern NSString* const SteamGridDBKindHero;   // wide background
 extern NSString* const SteamGridDBKindLogo;   // transparent logo
 extern NSString* const SteamGridDBKindIcon;   // square icon
-extern NSString* const SteamGridDBKindWide;   // horizontal cover (460x215 / 920x430), logo built in
 
 @interface SteamGridDBManager : NSObject
 
