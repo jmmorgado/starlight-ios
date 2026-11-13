@@ -594,7 +594,7 @@ enum StarlightTab: String, CaseIterable {
         }
     }
 
-    /// The tabs shown in the tab bar (Search has its own button at the top)
+    /// The tabs shown in the tab bar (Search is the separate round button at the bottom trailing edge)
     static let barTabs: [StarlightTab] = [.home, .library, .settings]
 }
 
@@ -701,7 +701,7 @@ struct StarlightStack<Content: View>: View {
 }
 
 extension View {
-    /// PC button on the leading side and the status on the trailing side of the system navigation bar.
+    /// PC button and status together on the trailing side of the system navigation bar.
     /// On iOS 26 the system draws both as Liquid Glass and the PC menu opens with the native morph.
     func starlightToolbar(_ model: HomeModel) -> some View {
         self
@@ -3539,7 +3539,7 @@ private struct StreamMenuButtonStyle: ViewModifier {
     }
 }
 
-// MARK: - Steam (foundations: account, owned games, recently played)
+// MARK: - Steam (account, owned games, recently played, achievements)
 
 /// Stores the Steam Web API key in the iPhone's Keychain (never in UserDefaults or the repo)
 enum SteamKeychain {
@@ -3607,7 +3607,7 @@ struct SteamCache: Codable {
     var updated: Date
 }
 
-/// Talks to the Steam Web API and keeps a local cache. Used by the game page and Home in later releases.
+/// Talks to the Steam Web API and keeps a local cache. Feeds Home, Library and the game page.
 final class SteamManager: ObservableObject {
     static let shared = SteamManager()
 

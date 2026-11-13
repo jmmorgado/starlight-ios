@@ -1,6 +1,6 @@
 # Starlight
 
-**Starlight** is a game streaming client for iPhone, built on [Moonlight for iOS](https://github.com/moonlight-stream/moonlight-ios). It streams games from a PC running [Vibepollo](https://github.com/Nonary/Vibepollo) or [Sunshine](https://github.com/LizardByte/Sunshine), and wraps them in a console-style, native iOS 26 interface with Liquid Glass, game artwork and your Steam stats.
+**Starlight** is a game streaming client for iPhone and iPad, built on [Moonlight for iOS](https://github.com/moonlight-stream/moonlight-ios). It streams games from a PC running [Vibepollo](https://github.com/Nonary/Vibepollo) or [Sunshine](https://github.com/LizardByte/Sunshine), and wraps them in a console-style, native iOS 26 interface with Liquid Glass, game artwork and your Steam stats.
 
 Streaming itself is Moonlight's: same video, audio, input and pairing. Starlight adds everything around it.
 
@@ -29,6 +29,7 @@ Streaming itself is Moonlight's: same video, audio, input and pairing. Starlight
 - **Start Game** action for Shortcuts, Siri and Spotlight, with the game list read from the PC.
 - `starlight://launch?host=<PC>&app=<game>` deep links. **Copy Shortcut Link** builds them for you.
 - **Save Icon to Photos** to give a home screen shortcut the game's icon.
+- **Wake-on-LAN:** pinned games, links and Shortcuts wake the PC automatically when it's off and wait for it to come online. **Wake PC** is also in the PC menu.
 
 ### Controller
 - Full controller navigation of the interface: D-pad / left stick to move, **A / ✕** opens a game page, **R2** plays, **Options** opens the game menu, **L1 / R1** switch tabs, **Y / △** search, **X / □** PC.
@@ -38,7 +39,7 @@ Streaming itself is Moonlight's: same video, audio, input and pairing. Starlight
 - Swipe from the left edge (or Start + Select hold) to open a Liquid Glass panel: back to game, on-screen keyboard with PC keys, stats, disconnect and quit.
 
 ## Requirements
-- iPhone on **iOS 26** for the full Liquid Glass design. Earlier versions fall back to materials.
+- iPhone or iPad on **iOS 26** for the full Liquid Glass design. Earlier versions fall back to materials.
 - A PC running **Vibepollo** (recommended) or **Sunshine**.
 - Optional: a SteamGridDB API key for artwork, and a Steam Web API key for playtime, achievements and the full library.
 
@@ -56,22 +57,25 @@ With a free Apple ID the app expires after 7 days. Reinstall the same `.ipa` ove
 1. **Pair your PC:** open Starlight, pick the PC and enter the PIN in the Vibepollo / Sunshine web UI.
 2. **Let Starlight see your games:** in the Vibepollo web UI, go to **Client Management**, open this iPhone and enable **List applications**. Without it, Starlight shows a notice instead of your games.
 3. **Artwork:** on steamgriddb.com, sign in and generate a key under **Preferences › API**, then paste it in **Settings › Game Artwork**.
-4. **Steam:** create a key at [steamcommunity.com/dev/apikey](https://steamcommunity.com/dev/apikey) and paste it in **Settings › Steam** with your SteamID64 or profile URL. Your profile's **Game details** must be public for playtime and achievements. The key is stored only in the iPhone's Keychain.
+4. **Steam:** create a key at [steamcommunity.com/dev/apikey](https://steamcommunity.com/dev/apikey) and paste it in **Settings › Steam** with your SteamID64 or profile URL. Your profile's **Game details** must be public for playtime and achievements.
 
-A step-by-step guide to shortcuts, pinning and artwork (in Portuguese) is in [SHORTCUTS.md](SHORTCUTS.md).
+Both API keys are stored only in the device's Keychain.
+
+A step-by-step guide to pinning, Shortcuts, links and fixing artwork is in [SHORTCUTS.md](SHORTCUTS.md).
 
 ## Building
 
 ### Without a Mac (GitHub Actions)
 [`.github/workflows/build-ipa.yml`](.github/workflows/build-ipa.yml) builds the app on a macOS 26 runner on every push to `starlight` (or manually from **Actions › Build unsigned IPA › Run workflow**) and publishes a release:
 - Tag `v0.<N>.0` and title **Starlight build N**, where N is the workflow run number.
-- Notes come from `.github/release-notes/build-<N>.md` when that file exists, or from the commit message otherwise. Notes of earlier releases are synced from their files on every build.
+- Notes come from `.github/release-notes/build-<N>.md` when that file exists, or from the commit message otherwise.
 - Commits with `[skip ci]` in the message don't build.
+- Pushes to any other branch run [`build-test-ipa.yml`](.github/workflows/build-test-ipa.yml): same `.ipa`, kept as a workflow artifact for 14 days instead of a release.
 
 ### With Xcode
 1. `git clone --recursive -b starlight https://github.com/jmmorgado/starlight-ios.git`
    (if you cloned without `--recursive`, run `git submodule update --init --recursive`)
-2. Open `Moonlight.xcodeproj` and select the **Moonlight** target.
+2. Open `Moonlight.xcodeproj` and select the **Moonlight** target (it builds Starlight).
 3. Under **Signing & Capabilities**, choose your team and change the **Bundle Identifier** to something unique.
 4. Select your iPhone and run.
 
@@ -86,7 +90,6 @@ A step-by-step guide to shortcuts, pinning and artwork (in Portuguese) is in [SH
 | `tools/` | Maintenance scripts, such as release retagging |
 
 ## Roadmap
-- Wake-on-LAN when launching a game with the PC off, and a Wake PC option in the PC picker
 - iPad-optimised layout
 - Apple TV version
 

@@ -2034,7 +2034,7 @@ static const NSUInteger kMaxQuickActions = 4;
     }
     
     // Online: pair if needed and load its games. Offline: just show the cached games
-    // (Wake PC lives in Settings › PCs)
+    // (Wake PC is in the PC menu and in Settings › PCs)
     if (host.state == StateOnline) {
         [self hostClicked:host view:self.view];
     }
@@ -2187,7 +2187,7 @@ static const NSUInteger kMaxQuickActions = 4;
     }];
 }
 
-#pragma mark - Steam foundations (Starlight)
+#pragma mark - Steam appids and app list permission (Starlight)
 
 // Vibepollo sends a fake app when this device lacks the "List applications" permission, and
 // encodes the Steam appid in each Steam game's UUID: 53544541-4d00-5000-8000-<appid in hex>.
