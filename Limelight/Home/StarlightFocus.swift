@@ -465,6 +465,10 @@ struct GameActionPanel: View {
     }
 
     private var items: [Item] {
+        guard game.isInstalled else {
+            // Steam games that aren't on the PC: only the artwork can be changed
+            return [Item(id: "editArtwork", title: "Edit Artwork…", symbol: "photo.on.rectangle.angled")]
+        }
         var list = [
             Item(id: "pin", title: game.pinned ? "Unpin" : "Pin", symbol: game.pinned ? "pin.slash" : "pin"),
             Item(id: "copyLink", title: "Copy Shortcut Link", symbol: "link"),

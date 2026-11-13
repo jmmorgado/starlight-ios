@@ -20,9 +20,12 @@ Streaming itself is Moonlight's: same video, audio, input and pairing. Starlight
 - **Achievements:** progress bar and the full list with icons, unlock dates and rarity. Rare ones (under 10% of players) are highlighted in gold, and hidden ones stay hidden until unlocked.
 
 ### Artwork
-- Covers, backgrounds, logos and icons from [SteamGridDB](https://www.steamgriddb.com), downloaded automatically for new games.
-- **Edit Artwork** to fix a wrong match and pick your preferred background, cover and logo. Your choices survive re-downloads.
-- Games that aren't installed use Steam's official artwork.
+For every game, installed or not, each image (cover, background, logo) comes from the first source that has it:
+1. Your pick in **Edit Artwork**
+2. Steam's official artwork, for games with a Steam appid
+3. [SteamGridDB](https://www.steamgriddb.com): by Steam appid, or by name for games that aren't on Steam (emulated games, for example)
+
+Icons skip Steam (its icons are too small). **Edit Artwork** works on every game: pick the right SteamGridDB game or a specific background, cover and logo. Your choices survive re-downloads. Steam artwork needs no key; SteamGridDB needs a free API key.
 
 ### Straight into a game
 - **Pin** up to 4 games to the app icon's long-press menu. They launch straight into the stream with a loading screen showing the game's art.
@@ -56,7 +59,7 @@ With a free Apple ID the app expires after 7 days. Reinstall the same `.ipa` ove
 ## Setup
 1. **Pair your PC:** open Starlight, pick the PC and enter the PIN in the Vibepollo / Sunshine web UI.
 2. **Let Starlight see your games:** in the Vibepollo web UI, go to **Client Management**, open this iPhone and enable **List applications**. Without it, Starlight shows a notice instead of your games.
-3. **Artwork:** on steamgriddb.com, sign in and generate a key under **Preferences › API**, then paste it in **Settings › Game Artwork**.
+3. **Artwork (optional):** Steam games get Steam's artwork without any setup. For games that aren't on Steam, missing images and Edit Artwork, sign in on steamgriddb.com, generate a key under **Preferences › API** and paste it in **Settings › Game Artwork**.
 4. **Steam:** create a key at [steamcommunity.com/dev/apikey](https://steamcommunity.com/dev/apikey) and paste it in **Settings › Steam** with your SteamID64 or profile URL. Your profile's **Game details** must be public for playtime and achievements.
 
 Both API keys are stored only in the device's Keychain.

@@ -67,28 +67,8 @@ struct GameDetailView: View {
     @ObservedObject var model: HomeModel
     @ObservedObject private var device = DeviceStatus.shared
     @ObservedObject private var focus = GameFocus.shared
+    @ObservedObject private var steamArt = SteamOnlyArtwork.shared
     let game: GameItem
-
-    private struct Option: Identifiable {
-        let id: String
-        let title: String
-        let symbol: String
-        var destructive = false
-    }
-
-    private var options: [Option] {
-        var list = [
-            Option(id: "pin", title: game.pinned ? "Unpin" : "Pin to App Icon", symbol: game.pinned ? "pin.slash" : "pin"),
-            Option(id: "copyLink", title: "Copy Shortcut Link", symbol: "link"),
-            Option(id: "saveIcon", title: "Save Icon to Photos", symbol: "photo"),
-            Option(id: "editArtwork", title: "Edit Artwork…", symbol: "photo.on.rectangle.angled"),
-            Option(id: "hide", title: game.hidden ? "Show Game" : "Hide Game", symbol: game.hidden ? "eye" : "eye.slash")
-        ]
-        if game.running {
-            list.append(Option(id: "quit", title: "Quit Game", symbol: "xmark.circle", destructive: true))
-        }
-        return list
-    }
 
     private var subtitle: String {
         var parts: [String] = []
@@ -122,6 +102,16 @@ struct GameDetailView: View {
                                     .frame(height: 40)
                                     .modifier(PanelGlass(corner: 20))
                                     .gameFocus("detail-play", scope: "detail", corner: 20) {}
+                                // Only Edit Artwork applies to a game that isn't on the PC
+                                Menu {
+                                    GameMenuItems(game: game, model: model)
+                                } label: {
+                                    Image(systemName: device.controllerConnected ? PadGlyph.options : "ellipsis")
+                                        .font(.system(size: device.controllerConnected ? 18 : 16, weight: .semibold))
+                                        .frame(width: 22, height: 26)
+                                }
+                                .secondaryGlassButton()
+                                .accessibilityLabel("Game options")
                             } else {
                             Button { model.launch(game) } label: {
                                 HStack(spacing: 8) {
@@ -198,13 +188,21 @@ struct GameDetailView: View {
         ZStack(alignment: .bottomLeading) {
             Color.clear
                 .overlay(
-                    ArtworkImage(path: game.heroPath ?? game.gridPath, fallbackText: "",
-                                 remoteURL: game.steamAppId.flatMap { SteamManager.heroURL($0) })
+                    ArtworkImage(path: game.artPath("hero") ?? game.artPath("grid"), fallbackText: "",
+                                 remoteURL: game.isInstalled ? nil : game.steamAppId.flatMap { SteamManager.heroURL($0) })
                 )
                 .clipped()
             LinearGradient(colors: [.clear, .black.opacity(0.35), .black], startPoint: .center, endPoint: .bottom)
             VStack(alignment: .leading, spacing: 8) {
-                if game.logoPath == nil, let appid = game.steamAppId, let url = SteamManager.logoURL(appid) {
+                if let logo = ArtworkCache.shared.image(game.artPath("logo")) {
+                    Image(uiImage: logo)
+                        .resizable()
+                        .aspectRatio(contentMode: .fit)
+                        .frame(maxWidth: 380, maxHeight: 110, alignment: .leading)
+                        .shadow(color: .black.opacity(0.5), radius: 8)
+                        .accessibilityLabel(game.name)
+                } else if !game.isInstalled, let appid = game.steamAppId, let url = SteamManager.logoURL(appid) {
+                    // While the Steam-only game's artwork downloads
                     AsyncImage(url: url) { phase in
                         if let image = phase.image {
                             image.resizable().aspectRatio(contentMode: .fit)
@@ -214,13 +212,6 @@ struct GameDetailView: View {
                     }
                     .frame(maxWidth: 380, maxHeight: 110, alignment: .leading)
                     .shadow(color: .black.opacity(0.5), radius: 8)
-                } else if let logo = ArtworkCache.shared.image(game.logoPath) {
-                    Image(uiImage: logo)
-                        .resizable()
-                        .aspectRatio(contentMode: .fit)
-                        .frame(maxWidth: 380, maxHeight: 110, alignment: .leading)
-                        .shadow(color: .black.opacity(0.5), radius: 8)
-                        .accessibilityLabel(game.name)
                 } else {
                     Text(game.name)
                         .font(.system(size: 36, weight: .heavy))
@@ -248,19 +239,7 @@ struct GameDetailView: View {
         .frame(height: height)
         .clipped()
     }
-
-    private func run(_ id: String) {
-        if id == "editArtwork" {
-            model.editingGame = game
-        } else {
-            model.action(id, game)
-            if id == "quit" || id == "hide" {
-                model.closeDetail()
-            }
-        }
-    }
 }
-
 
 /// iOS 17+: rows settle on a card edge, like the App Store
 struct RowScrollTargetLayout: ViewModifier {
@@ -303,15 +282,18 @@ struct GameCard: View {
     let portrait: Bool
     let height: CGFloat
     var showsReadyBadge = false
+    /// Steam-only games download their artwork as they appear
+    @ObservedObject private var steamArt = SteamOnlyArtwork.shared
 
     var body: some View {
         let width = portrait ? height * 2 / 3 : height * 16 / 9
         ZStack(alignment: .bottomLeading) {
             // Portrait cards: the portrait cover. Landscape cards: the same background as the Home screen, plus the logo
-            ArtworkImage(path: portrait ? game.gridPath : (game.heroPath ?? game.gridPath), fallbackText: game.name,
-                         remoteURL: game.steamAppId.flatMap { portrait ? SteamManager.coverURL($0) : SteamManager.heroURL($0) })
+            ArtworkImage(path: portrait ? game.artPath("grid") : (game.artPath("hero") ?? game.artPath("grid")), fallbackText: game.name,
+                         remoteURL: game.isInstalled ? nil : game.steamAppId.flatMap { portrait ? SteamManager.coverURL($0) : SteamManager.heroURL($0) })
                 .frame(width: width, height: height)
                 .clipped()
+                .onAppear { steamArt.ensure(game) }
 
             if showsReadyBadge && game.isInstalled {
                 Text("Ready to Play")

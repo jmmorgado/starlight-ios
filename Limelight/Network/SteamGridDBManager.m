@@ -15,7 +15,9 @@ NSString* const SteamGridDBKindIcon = @"icon";
 static NSString* const kApiKeyDefaultsKey = @"StarlightSteamGridDBKey";   // legacy location, migrated to the Keychain
 static NSString* const kKeychainService = @"StarlightSteamGridDB";
 static NSString* const kApiBase = @"https://www.steamgriddb.com/api/v2/";
-static NSString* const kNoMatchMarker = @"none";
+static NSString* const kNoMatchMarker = @"none";        // written by earlier builds, removed on refetch
+static NSString* const kManifestFile = @"art.json";      // what was fetched, and from where
+static const NSInteger kManifestVersion = 2;              // 2: Steam artwork first, SteamGridDB as fallback
 static NSString* const kMatchOverridesKey = @"StarlightSteamGridDBMatchOverrides";   // name key -> { id, name }
 static NSString* const kArtOverridesKey = @"StarlightSteamGridDBArtOverrides";       // name key -> { kind: url }
 
@@ -274,14 +276,72 @@ typedef NS_ENUM(NSInteger, ArtworkFetchResult) {
     ArtworkFetchResultFailed,
 };
 
-- (NSDictionary*)storedMatchInDirectory:(NSString*)dir {
-    NSData* data = [NSData dataWithContentsOfFile:[dir stringByAppendingPathComponent:@"match.json"]];
+- (NSDictionary*)manifestInDirectory:(NSString*)dir {
+    NSData* data = [NSData dataWithContentsOfFile:[dir stringByAppendingPathComponent:kManifestFile]];
     NSDictionary* info = data != nil ? [NSJSONSerialization JSONObjectWithData:data options:0 error:nil] : nil;
     return [info isKindOfClass:[NSDictionary class]] ? info : nil;
 }
 
-// steamAppId: the game's Steam appid when the PC reports it (0 otherwise). SteamGridDB looks
-// Steam games up by appid, which always finds the right edition; other games are searched by name.
+// Steam's own artwork (no key needed). Icons aren't offered at a usable size.
+- (NSURL*)steamURLForKind:(NSString*)kind appId:(unsigned long long)appId {
+    NSString* file = nil;
+    if ([kind isEqualToString:SteamGridDBKindGrid]) {
+        file = @"library_600x900.jpg";
+    }
+    else if ([kind isEqualToString:SteamGridDBKindHero]) {
+        file = @"library_hero.jpg";
+    }
+    else if ([kind isEqualToString:SteamGridDBKindLogo]) {
+        file = @"logo.png";
+    }
+    if (file == nil || appId == 0) {
+        return nil;
+    }
+    return [NSURL URLWithString:[NSString stringWithFormat:@"https://cdn.cloudflare.steamstatic.com/steam/apps/%llu/%@", appId, file]];
+}
+
+// The SteamGridDB game for this name: the manual match, else by Steam appid, else by name.
+// Returns @{ id, name, source } or nil. *failed is set on a network/API error (worth retrying later).
+- (NSDictionary*)resolveMatchForName:(NSString*)name steamAppId:(unsigned long long)steamAppId failed:(BOOL*)failed {
+    NSDictionary* manual = [self matchOverrideForName:name];
+    if (manual[@"id"] != nil) {
+        return @{ @"id": [NSString stringWithFormat:@"%@", manual[@"id"]], @"name": manual[@"name"] ?: @"", @"source": @"manual" };
+    }
+    if (![self isConfigured]) {
+        return nil;
+    }
+    NSInteger status = 0;
+    if (steamAppId > 0) {
+        NSDictionary* game = [self apiGetObject:[NSString stringWithFormat:@"games/steam/%llu", steamAppId] statusCode:&status];
+        if (game[@"id"] != nil) {
+            return @{ @"id": [NSString stringWithFormat:@"%@", game[@"id"]], @"name": game[@"name"] ?: @"", @"source": @"steam-appid" };
+        }
+        if (status != 404 && (status < 200 || status >= 300)) {
+            Log(LOG_W, @"SteamGridDB appid lookup failed for %@ (%llu, HTTP %ld)", name, steamAppId, (long)status);
+            *failed = YES;
+            return nil;
+        }
+    }
+    NSString* term = [name stringByAddingPercentEncodingWithAllowedCharacters:[NSCharacterSet URLHostAllowedCharacterSet]];
+    term = [term stringByReplacingOccurrencesOfString:@"/" withString:@"%2F"];
+    NSArray* matches = [self apiGet:[NSString stringWithFormat:@"search/autocomplete/%@", term] statusCode:&status];
+    if (matches == nil) {
+        Log(LOG_W, @"SteamGridDB search failed for %@ (HTTP %ld)", name, (long)status);
+        *failed = YES;
+        return nil;
+    }
+    NSDictionary* first = matches.firstObject;
+    if (![first isKindOfClass:[NSDictionary class]] || first[@"id"] == nil) {
+        return nil;
+    }
+    return @{ @"id": [NSString stringWithFormat:@"%@", first[@"id"]], @"name": first[@"name"] ?: @"", @"source": @"name" };
+}
+
+// For each image, in order:
+//   1. the image picked in Edit Artwork
+//   2. Steam's own artwork, when the game has an appid (not for icons, and not when a game was matched by hand)
+//   3. SteamGridDB: the game matched by hand, else by appid, else by name
+// steamAppId is 0 for games that aren't on Steam.
 - (ArtworkFetchResult)fetchArtworkForName:(NSString*)name steamAppId:(unsigned long long)steamAppId force:(BOOL)force {
     if ([self isNonGameName:name]) {
         return ArtworkFetchResultSkipped;
@@ -289,98 +349,86 @@ typedef NS_ENUM(NSInteger, ArtworkFetchResult) {
 
     NSString* dir = [self directoryForName:name];
     NSFileManager* fm = [NSFileManager defaultManager];
-    NSDictionary* manual = [self matchOverrideForName:name];
     NSString* appIdString = steamAppId > 0 ? [NSString stringWithFormat:@"%llu", steamAppId] : @"";
+    BOOL configured = [self isConfigured];
+    NSDictionary* chosen = [self artOverridesForName:name];
+    NSDictionary* manual = [self matchOverrideForName:name];
 
     if (!force) {
-        // "No match" is remembered per appid, so a game that gains an appid is tried again
-        NSString* noMatchPath = [dir stringByAppendingPathComponent:kNoMatchMarker];
-        if ([fm fileExistsAtPath:noMatchPath]) {
-            NSString* triedAppId = [NSString stringWithContentsOfFile:noMatchPath encoding:NSUTF8StringEncoding error:nil] ?: @"";
-            if (steamAppId == 0 || manual[@"id"] != nil || [triedAppId isEqualToString:appIdString]) {
-                return ArtworkFetchResultSkipped;
-            }
-        }
-        NSDictionary* stored = [self storedMatchInDirectory:dir];
-        if (stored != nil) {
-            // Already matched. Matches made by name before the appid was known are redone once by appid.
-            NSString* storedAppId = [NSString stringWithFormat:@"%@", stored[@"steamAppId"] ?: @""];
-            if (steamAppId == 0 || manual[@"id"] != nil || [storedAppId isEqualToString:appIdString]) {
-                return ArtworkFetchResultSkipped;
-            }
-        }
-        else if (steamAppId == 0 && [fm fileExistsAtPath:[dir stringByAppendingPathComponent:SteamGridDBKindGrid]]) {
-            // Art picked by hand without a match file
+        // Done before with the same appid and the same SteamGridDB availability: nothing new to get
+        NSDictionary* manifest = [self manifestInDirectory:dir];
+        if ([manifest[@"version"] integerValue] == kManifestVersion &&
+            [[NSString stringWithFormat:@"%@", manifest[@"steamAppId"] ?: @""] isEqualToString:appIdString] &&
+            [manifest[@"steamGridDB"] boolValue] == configured) {
             return ArtworkFetchResultSkipped;
         }
     }
+    if (steamAppId == 0 && !configured && manual[@"id"] == nil && chosen.count == 0) {
+        // No Steam artwork and no SteamGridDB key: nothing can be fetched
+        return ArtworkFetchResultSkipped;
+    }
 
-    NSInteger status = 0;
-    NSArray* matches = nil;
-    NSString* source = @"name";
-    if (manual[@"id"] != nil) {
-        // The user picked the game by hand
-        matches = @[manual];
-        source = @"manual";
-    }
-    else {
-        if (steamAppId > 0) {
-            NSDictionary* game = [self apiGetObject:[NSString stringWithFormat:@"games/steam/%llu", steamAppId] statusCode:&status];
-            if (game[@"id"] != nil) {
-                matches = @[game];
-                source = @"steam";
-            }
-            else if (status != 404 && status != 0 && (status < 200 || status >= 300)) {
-                Log(LOG_W, @"SteamGridDB appid lookup failed for %@ (%llu, HTTP %ld)", name, steamAppId, (long)status);
-                return ArtworkFetchResultFailed;
+    [fm createDirectoryAtPath:dir withIntermediateDirectories:YES attributes:nil error:nil];
+
+    NSDictionary* match = nil;
+    BOOL matchResolved = NO;
+    BOOL failed = NO;
+    NSMutableDictionary* sources = [NSMutableDictionary dictionary];
+    for (NSString* kind in @[SteamGridDBKindGrid, SteamGridDBKindHero, SteamGridDBKindLogo, SteamGridDBKindIcon]) {
+        NSString* path = [dir stringByAppendingPathComponent:kind];
+
+        NSString* chosenURL = chosen[kind];
+        if ([chosenURL isKindOfClass:[NSString class]] && [self downloadFirstOf:@[@{ @"url": chosenURL }] toPath:path]) {
+            sources[kind] = @"manual";
+            continue;
+        }
+
+        NSURL* steamURL = manual[@"id"] == nil ? [self steamURLForKind:kind appId:steamAppId] : nil;
+        if (steamURL != nil && [self downloadFirstOf:@[@{ @"url": steamURL.absoluteString }] toPath:path]) {
+            sources[kind] = @"steam";
+            continue;
+        }
+
+        if (!matchResolved) {
+            matchResolved = YES;
+            match = [self resolveMatchForName:name steamAppId:steamAppId failed:&failed];
+        }
+        if (match != nil) {
+            NSArray* items = [self apiGet:[self endpointForKind:kind gameId:match[@"id"]] statusCode:NULL];
+            if (items.count > 0 && [self downloadFirstOf:items toPath:path]) {
+                sources[kind] = @"steamgriddb";
+                continue;
             }
         }
-        if (matches == nil) {
-            NSString* term = [name stringByAddingPercentEncodingWithAllowedCharacters:[NSCharacterSet URLHostAllowedCharacterSet]];
-            term = [term stringByReplacingOccurrencesOfString:@"/" withString:@"%2F"];
-            matches = [self apiGet:[NSString stringWithFormat:@"search/autocomplete/%@", term] statusCode:&status];
-        }
+
+        // Nothing for this image: drop what an earlier fetch left
+        [fm removeItemAtPath:path error:nil];
     }
-    if (matches == nil) {
-        Log(LOG_W, @"SteamGridDB search failed for %@ (HTTP %ld)", name, (long)status);
+
+    if (failed && sources.count == 0) {
+        // Network or API error: keep nothing so the next launch tries again
         return ArtworkFetchResultFailed;
     }
 
-    BOOL rematch = !force && [self storedMatchInDirectory:dir] != nil;
-    if (force || rematch) {
-        [fm removeItemAtPath:dir error:nil];
+    NSString* matchPath = [dir stringByAppendingPathComponent:@"match.json"];
+    if (match != nil) {
+        NSDictionary* info = @{ @"id": match[@"id"], @"name": match[@"name"] ?: @"", @"query": name,
+                                @"steamAppId": appIdString, @"source": match[@"source"] ?: @"" };
+        [[NSJSONSerialization dataWithJSONObject:info options:0 error:nil] writeToFile:matchPath atomically:YES];
     }
-    [fm createDirectoryAtPath:dir withIntermediateDirectories:YES attributes:nil error:nil];
-
-    NSDictionary* match = matches.firstObject;
-    if (![match isKindOfClass:[NSDictionary class]] || match[@"id"] == nil) {
-        [appIdString writeToFile:[dir stringByAppendingPathComponent:kNoMatchMarker] atomically:YES encoding:NSUTF8StringEncoding error:nil];
-        Log(LOG_I, @"SteamGridDB has no match for %@", name);
-        return ArtworkFetchResultNotFound;
+    else if (matchResolved) {
+        [fm removeItemAtPath:matchPath error:nil];
     }
+    [fm removeItemAtPath:[dir stringByAppendingPathComponent:kNoMatchMarker] error:nil];
+    [fm removeItemAtPath:[dir stringByAppendingPathComponent:@"wide"] error:nil];
 
-    NSString* gameId = [NSString stringWithFormat:@"%@", match[@"id"]];
-    NSDictionary* info = @{ @"id": gameId, @"name": match[@"name"] ?: @"", @"query": name,
-                            @"steamAppId": appIdString, @"source": source };
-    [[NSJSONSerialization dataWithJSONObject:info options:0 error:nil] writeToFile:[dir stringByAppendingPathComponent:@"match.json"] atomically:YES];
+    // A SteamGridDB error counts as "not checked", so it's retried on the next launch
+    NSDictionary* manifest = @{ @"version": @(kManifestVersion), @"steamAppId": appIdString,
+                                @"steamGridDB": @(configured && !failed), @"sources": sources };
+    [[NSJSONSerialization dataWithJSONObject:manifest options:0 error:nil] writeToFile:[dir stringByAppendingPathComponent:kManifestFile] atomically:YES];
 
-    NSDictionary* chosen = [self artOverridesForName:name];
-    BOOL gotAny = NO;
-    for (NSString* kind in @[SteamGridDBKindGrid, SteamGridDBKindHero, SteamGridDBKindLogo, SteamGridDBKindIcon]) {
-        NSString* path = [dir stringByAppendingPathComponent:kind];
-        NSString* chosenURL = chosen[kind];
-        if ([chosenURL isKindOfClass:[NSString class]] && [self downloadFirstOf:@[@{ @"url": chosenURL }] toPath:path]) {
-            gotAny = YES;
-            continue;
-        }
-        NSArray* items = [self apiGet:[self endpointForKind:kind gameId:gameId] statusCode:NULL];
-        if (items.count > 0 && [self downloadFirstOf:items toPath:path]) {
-            gotAny = YES;
-        }
-    }
-
-    Log(LOG_I, @"SteamGridDB artwork for %@ -> %@ via %@ (%@)", name, match[@"name"], source, gotAny ? @"ok" : @"no images");
-    return gotAny ? ArtworkFetchResultFetched : ArtworkFetchResultNotFound;
+    Log(LOG_I, @"Artwork for %@: %@", name, sources);
+    return sources.count > 0 ? ArtworkFetchResultFetched : ArtworkFetchResultNotFound;
 }
 
 #pragma mark - Manual choices
@@ -429,13 +477,22 @@ typedef NS_ENUM(NSInteger, ArtworkFetchResult) {
 }
 
 - (void)artworkOptionsForAppName:(NSString*)name kind:(NSString*)kind completion:(void (^)(NSArray<NSDictionary*>*))completion {
-    NSString* gameId = [self matchForAppName:name][@"id"];
-    if (![self isConfigured] || gameId == nil) {
+    if (![self isConfigured]) {
         dispatch_async(dispatch_get_main_queue(), ^{ completion(@[]); });
         return;
     }
-    gameId = [NSString stringWithFormat:@"%@", gameId];
     dispatch_async(_workQueue, ^{
+        // Games showing Steam artwork may not have a SteamGridDB match yet: find it now
+        id storedId = [self matchForAppName:name][@"id"];
+        NSString* gameId = storedId != nil ? [NSString stringWithFormat:@"%@", storedId] : nil;
+        if (gameId == nil) {
+            BOOL failed = NO;
+            gameId = [self resolveMatchForName:name steamAppId:[self knownSteamAppIdForName:name] failed:&failed][@"id"];
+        }
+        if (gameId == nil) {
+            dispatch_async(dispatch_get_main_queue(), ^{ completion(@[]); });
+            return;
+        }
         NSArray* items = [self apiGet:[self endpointForKind:kind gameId:gameId] statusCode:NULL];
         NSMutableArray* options = items != nil ? [NSMutableArray array] : nil;
         for (NSDictionary* item in items) {
@@ -499,6 +556,14 @@ typedef NS_ENUM(NSInteger, ArtworkFetchResult) {
 
 #pragma mark - Public fetch
 
+- (void)ensureArtworkForAppName:(NSString*)name steamAppId:(unsigned long long)steamAppId {
+    if (name.length == 0) {
+        return;
+    }
+    NSDictionary* ids = steamAppId > 0 ? @{ name: @(steamAppId) } : nil;
+    [self fetchArtworkForAppNames:@[name] steamAppIds:ids force:NO completion:nil];
+}
+
 - (unsigned long long)knownSteamAppIdForName:(NSString*)name {
     @synchronized (self) {
         return [_knownSteamAppIds[[self keyForName:name]] unsignedLongLongValue];
@@ -525,7 +590,7 @@ typedef NS_ENUM(NSInteger, ArtworkFetchResult) {
             }];
         }
     }
-    if (![self isConfigured] || names.count == 0) {
+    if (names.count == 0) {
         if (completion != nil) {
             dispatch_async(dispatch_get_main_queue(), ^{ completion(0, 0, 0); });
         }

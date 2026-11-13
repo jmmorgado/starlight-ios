@@ -2,10 +2,11 @@
 //  SteamGridDBManager.h
 //  Starlight
 //
-//  Downloads game artwork (cover, hero, logo, icon) from SteamGridDB and
-//  caches it on disk, keyed by the game's name so the same game shares art
-//  across PCs. Steam games are matched by appid, others by name.
-//  The user's API key is stored in the Keychain, never in code.
+//  Downloads game artwork (cover, hero, logo, icon) and caches it on disk, keyed
+//  by the game's name so the same game shares art across PCs. For each image:
+//  the one picked in Edit Artwork, else Steam's own artwork (games with an appid),
+//  else SteamGridDB (matched by hand, else by appid, else by name).
+//  The SteamGridDB API key is stored in the Keychain, never in code.
 //
 
 #import <Foundation/Foundation.h>
@@ -23,7 +24,7 @@ extern NSString* const SteamGridDBKindIcon;   // square icon
 
 @interface SteamGridDBManager : NSObject
 
-+ (instancetype)sharedManager;
++ (instancetype)sharedManager NS_SWIFT_NAME(shared());
 
 // Stored in the Keychain. Setting nil or an empty string removes it.
 @property (nonatomic, copy, nullable) NSString* apiKey;
@@ -31,10 +32,15 @@ extern NSString* const SteamGridDBKindIcon;   // square icon
 - (BOOL)isConfigured;
 
 // Path of a cached artwork file, or nil if it hasn't been downloaded
-- (nullable NSString*)cachedPathForAppName:(NSString*)name kind:(NSString*)kind;
+- (nullable NSString*)cachedPathForAppName:(NSString*)name kind:(NSString*)kind NS_SWIFT_NAME(cachedPath(appName:kind:));
+
+// Downloads the artwork of one game in the background if it hasn't been fetched yet
+// (used for Steam games that aren't on the PC, as they appear on screen)
+- (void)ensureArtworkForAppName:(NSString*)name steamAppId:(unsigned long long)steamAppId NS_SWIFT_NAME(ensureArtwork(appName:steamAppId:));
 
 // Downloads artwork for the given game names in the background, one game at a time.
-// Games already cached (or already known to have no match) are skipped unless force is YES.
+// Games already fetched are skipped unless force is YES. Works without a SteamGridDB key
+// for games with a Steam appid (Steam artwork only).
 // Non-game entries such as "Desktop" are always skipped.
 - (void)fetchArtworkForAppNames:(NSArray<NSString*>*)names
                           force:(BOOL)force

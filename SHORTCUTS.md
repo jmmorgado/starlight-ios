@@ -64,19 +64,30 @@ Espaços e acentos têm de ir codificados (`%20` para espaço). O mais fácil é
 Se já estiver outro jogo a correr no PC, a app pergunta se queres retomá-lo ou fechá-lo e iniciar o novo.
 Se algo falhar (PC não emparelhado, jogo não encontrado), aparece um aviso a explicar.
 
-## Arte dos jogos (SteamGridDB)
+## Arte dos jogos
+
+Para cada imagem (capa, fundo, logótipo), em todos os jogos (instalados ou não), a app usa a primeira fonte que a tiver:
+
+1. A tua escolha no **Edit Artwork**
+2. A arte oficial da Steam, nos jogos com appid
+3. A SteamGridDB: pelo appid ou, nos jogos que não são da Steam (ex.: The Legend of Zelda emulado), pelo nome
+
+O ícone salta a Steam (os ícones da Steam são demasiado pequenos). A arte da Steam não precisa de chave. Para a SteamGridDB:
 
 1. Em steamgriddb.com, entra com a conta Steam → **Preferences → API** → gera uma chave.
 2. Na Starlight, **Settings → Game Artwork** → cola a chave. Fica guardada no Keychain do dispositivo.
-3. A app descarrega capa, fundo, logótipo e ícone de cada jogo. Nos jogos Steam usa o appid, por isso acerta na edição certa; nos outros pesquisa pelo nome.
+
+Os jogos da Library que não estão no PC descarregam a arte à medida que aparecem no ecrã.
 
 ### Corrigir a arte de um jogo
 
-1. **•••** no jogo → **Edit Artwork…**
+Funciona em todos os jogos, incluindo os que não estão no PC.
+
+1. **•••** no jogo (ou mantém o dedo em cima dele) → **Edit Artwork…**
 2. Em **Game**, pesquisa e escolhe o jogo certo.
 3. Opcional: escolhe o **Background**, a **Cover** e o **Logo** que preferires.
 
-A escolha fica guardada e é respeitada quando se volta a descarregar a arte.
+A escolha fica guardada e é respeitada quando se volta a descarregar a arte. Escolher o jogo em **Game** faz esse jogo usar a SteamGridDB em vez da arte da Steam.
 
 ## Steam
 

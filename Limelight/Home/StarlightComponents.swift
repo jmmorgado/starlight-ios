@@ -215,6 +215,18 @@ struct GameMenuItems: View {
     @ObservedObject var model: HomeModel
 
     var body: some View {
+        if game.isInstalled {
+            installedItems
+        } else {
+            // Steam games that aren't on the PC: only the artwork can be changed
+            Button { model.editingGame = game } label: {
+                Label("Edit Artwork…", systemImage: "photo.on.rectangle.angled")
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var installedItems: some View {
         Button { model.action("pin", game) } label: {
             Label(game.pinned ? "Unpin" : "Pin", systemImage: game.pinned ? "pin.slash" : "pin")
         }

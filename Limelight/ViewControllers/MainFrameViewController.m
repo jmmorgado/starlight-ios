@@ -1733,13 +1733,8 @@ static const NSUInteger kMaxQuickActions = 4;
 }
 
 - (void)fetchArtworkForHosts:(NSArray<TemporaryHost*>*)hosts force:(BOOL)force completion:(void (^)(NSUInteger fetched, NSUInteger notFound, NSUInteger failed))completion {
+    // Runs without a SteamGridDB key too: Steam games get Steam's own artwork
     SteamGridDBManager* sgdb = [SteamGridDBManager sharedManager];
-    if (![sgdb isConfigured]) {
-        if (completion != nil) {
-            completion(0, 0, 0);
-        }
-        return;
-    }
     
     // Steam games are matched by appid (exact edition), the rest by name
     NSDictionary* steamIds = [[NSUserDefaults standardUserDefaults] dictionaryForKey:@"StarlightSteamAppIds"];
@@ -1767,6 +1762,12 @@ static const NSUInteger kMaxQuickActions = 4;
     else {
         [_artInfoCache removeAllObjects];
     }
+    // Library games download one after another: refresh once they settle, not after each one
+    [NSObject cancelPreviousPerformRequestsWithTarget:self selector:@selector(refreshAfterArtworkUpdate) object:nil];
+    [self performSelector:@selector(refreshAfterArtworkUpdate) withObject:nil afterDelay:0.5];
+}
+
+- (void)refreshAfterArtworkUpdate {
     [_boxArtCache removeAllObjects];
     [self.collectionView reloadData];
     [self saveGameCatalog];
@@ -2318,7 +2319,7 @@ static const NSUInteger kMaxQuickActions = 4;
             [self showArtworkResultFetched:fetched notFound:notFound failed:failed];
         }];
     }
-    else if ([command isEqualToString:@"redownload"] && [sgdb isConfigured]) {
+    else if ([command isEqualToString:@"redownload"]) {
         [self fetchArtworkForHosts:allHosts force:YES completion:^(NSUInteger fetched, NSUInteger notFound, NSUInteger failed) {
             [self->_boxArtCache removeAllObjects];
             [self->_artInfoCache removeAllObjects];
@@ -2336,6 +2337,8 @@ static const NSUInteger kMaxQuickActions = 4;
         [self.collectionView reloadData];
         [self saveGameCatalog];
         [self pushHomeState];
+        // Steam games get Steam's own artwork back (no key needed)
+        [self fetchArtworkForHosts:allHosts force:NO completion:nil];
     }
 }
 

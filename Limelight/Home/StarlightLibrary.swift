@@ -93,7 +93,7 @@ struct GameGrid<Header: View>: View {
                             .frame(width: cardWidth)
                             .onTapGesture { model.openDetail(game, source: focusID) }
                             .contextMenu {
-                                if game.isInstalled { GameMenuItems(game: game, model: model) }
+                                GameMenuItems(game: game, model: model)
                             }
                         }
                     }

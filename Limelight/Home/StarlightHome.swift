@@ -400,7 +400,7 @@ final class HomeModel: ObservableObject {
         case .options:
             if gameMenu != nil {
                 closeGameMenu()
-            } else if let game = focusedOrFeaturedGame, game.isInstalled {
+            } else if let game = focusedOrFeaturedGame {
                 openGameMenu(game)
             }
         case .play:
@@ -490,6 +490,61 @@ final class ArtworkCache {
 
     func remove(_ paths: [String?]) {
         for case let path? in paths { cache.removeObject(forKey: path as NSString) }
+    }
+}
+
+/// Artwork of Steam games that aren't on the PC. It's downloaded on demand, as the games appear
+/// on screen, into the same cache as PC games and with the same order (Edit Artwork choice,
+/// Steam, SteamGridDB). Views observe `revision` to pick up new files.
+final class SteamOnlyArtwork: ObservableObject {
+    static let shared = SteamOnlyArtwork()
+    @Published private(set) var revision = 0
+    private var requested: Set<String> = []
+    private var pendingBump = false
+
+    private init() {
+        // SteamGridDBArtworkUpdatedNotification (object: the game's name)
+        NotificationCenter.default.addObserver(forName: Notification.Name("StarlightArtworkUpdated"), object: nil, queue: .main) { [weak self] note in
+            if let name = note.object as? String {
+                // The file may have been replaced in place (Edit Artwork)
+                ArtworkCache.shared.remove(["grid", "hero", "logo"].map { SteamGridDBManager.shared().cachedPath(appName: name, kind: $0) })
+            }
+            self?.scheduleBump()
+        }
+    }
+
+    /// Coalesces bursts of downloads into one refresh
+    private func scheduleBump() {
+        guard !pendingBump else { return }
+        pendingBump = true
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { [weak self] in
+            self?.pendingBump = false
+            self?.revision += 1
+        }
+    }
+
+    func ensure(_ game: GameItem) {
+        guard !game.isInstalled, let appid = game.steamAppId, requested.insert(game.name).inserted else { return }
+        SteamGridDBManager.shared().ensureArtwork(appName: game.name, steamAppId: UInt64(appid))
+    }
+
+    /// After the artwork cache is cleared
+    func reset() { requested.removeAll() }
+}
+
+extension GameItem {
+    /// Cover ("grid"), background ("hero") or logo file. Games on the PC carry their paths;
+    /// Steam-only games read the on-demand cache.
+    func artPath(_ kind: String) -> String? {
+        if isInstalled {
+            switch kind {
+            case "grid": return gridPath
+            case "hero": return heroPath
+            case "logo": return logoPath
+            default: return nil
+            }
+        }
+        return SteamGridDBManager.shared().cachedPath(appName: name, kind: kind)
     }
 }
 

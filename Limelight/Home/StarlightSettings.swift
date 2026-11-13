@@ -287,6 +287,11 @@ struct ArtworkSettingsView: View {
         key = ""
     }
 
+    private func redownload() {
+        SteamOnlyArtwork.shared.reset()
+        model.onArtworkCommand?("redownload", "")
+    }
+
     var body: some View {
         ScrollViewReader { proxy in
             Form {
@@ -308,20 +313,26 @@ struct ArtworkSettingsView: View {
                 } footer: {
                     Text(model.artworkConfigured
                          ? "Key saved (…\(model.artworkKeySuffix)). New games get artwork automatically."
-                         : "Covers, backgrounds, logos and icons come from steamgriddb.com. Sign in there, open Preferences → API, generate a key and paste it here. It's stored only in this device's Keychain. Steam games are matched by their appid, so they get the right edition.")
+                         : "Steam games use Steam's own artwork without a key. A steamgriddb.com key fills in what Steam doesn't have, covers games that aren't on Steam and enables Edit Artwork. Sign in there, open Preferences → API, generate a key and paste it here. It's stored only in this device's Keychain.")
+                }
+
+                Section {
+                    Button { redownload() } label: {
+                        Label("Re-download All Artwork", systemImage: "arrow.triangle.2.circlepath")
+                    }
+                    .settingsFocus("art-redownload", scope: scope) { redownload() }
+                } footer: {
+                    Text("For each image: your choice in Edit Artwork, then Steam's artwork, then SteamGridDB (by Steam appid, or by name for games that aren't on Steam).")
                 }
 
                 if model.artworkConfigured {
                     Section {
-                        Button { model.onArtworkCommand?("redownload", "") } label: {
-                            Label("Re-download All Artwork", systemImage: "arrow.triangle.2.circlepath")
-                        }
-                        .settingsFocus("art-redownload", scope: scope) { model.onArtworkCommand?("redownload", "") }
                         Button(role: .destructive) { confirmRemove = true } label: {
                             Label(removeArmed ? "Press again to remove" : "Remove Key & Artwork", systemImage: "trash")
                         }
                         .settingsFocus("art-remove", scope: scope) {
                             if removeArmed {
+                                SteamOnlyArtwork.shared.reset()
                                 model.onArtworkCommand?("remove", "")
                                 removeArmed = false
                             } else {
@@ -340,7 +351,10 @@ struct ArtworkSettingsView: View {
             if id != "art-remove" { removeArmed = false }
         }
         .confirmationDialog("Remove the SteamGridDB key and downloaded artwork?", isPresented: $confirmRemove, titleVisibility: .visible) {
-            Button("Remove", role: .destructive) { model.onArtworkCommand?("remove", "") }
+            Button("Remove", role: .destructive) {
+                SteamOnlyArtwork.shared.reset()
+                model.onArtworkCommand?("remove", "")
+            }
         }
     }
 }
