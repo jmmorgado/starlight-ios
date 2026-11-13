@@ -1,0 +1,67 @@
+name: Build test IPA
+
+# Test builds for work branches: same unsigned .ipa as the release build, but kept as a
+# workflow artifact (Actions › run › Artifacts) instead of a GitHub release.
+# A separate workflow keeps its own run numbers, so release builds stay sequential.
+on:
+  push:
+    branches-ignore:
+      - starlight
+      - master
+      - main
+      - backup-*
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  ipa:
+    name: Build test IPA
+    runs-on: macos-26-intel
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          submodules: recursive
+
+      - name: Show Xcode version
+        run: xcodebuild -version
+
+      - name: Build (Release, iphoneos, unsigned)
+        run: |
+          xcodebuild -project Moonlight.xcodeproj \
+            -scheme Moonlight \
+            -configuration Release \
+            -sdk iphoneos \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath build \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            clean build
+
+      - name: Package IPA
+        run: |
+          APP_PATH=$(find build/Build/Products/Release-iphoneos -maxdepth 1 -name "*.app" | head -n 1)
+          if [ -z "$APP_PATH" ]; then
+            echo "No .app produced" >&2
+            exit 1
+          fi
+          mkdir -p dist/Payload
+          cp -R "$APP_PATH" dist/Payload/
+          cd dist
+          zip -qry Starlight.ipa Payload
+          ls -lh Starlight.ipa
+
+      - name: Upload IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: Starlight-test-${{ github.run_number }}
+          path: dist/Starlight.ipa
+          retention-days: 14

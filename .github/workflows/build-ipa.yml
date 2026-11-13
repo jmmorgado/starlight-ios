@@ -3,9 +3,9 @@ name: Build unsigned IPA
 # Builds an unsigned iOS .ipa for sideloading (Sideloadly / AltStore sign it at install time).
 on:
   push:
+    # Only starlight publishes releases. master mirrors upstream Moonlight and must not
+    # publish a Starlight build. Other branches use build-test-ipa.yml (no release).
     branches:
-      - master
-      - main
       - starlight
     # The retag trigger file only runs the "Retag releases" workflow
     paths-ignore:
