@@ -70,6 +70,9 @@
     NSString* _homeHostUUID;
     NSString* _pendingQuitHostAddress;
     NSMutableSet<NSString*>* _permissionDeniedHosts;
+    // Artwork paths and stamp per game, so pushHomeState (every 2 s) doesn't hit the disk each time.
+    // Cleared for a game when its artwork or box art changes.
+    NSMutableDictionary<NSString*, NSDictionary*>* _artInfoCache;
 #endif
 }
 static NSMutableSet* hostList;
@@ -335,6 +338,11 @@ static NSMutableSet* hostList;
     [self updateBoxArtCacheForApp:app];
     
     dispatch_async(dispatch_get_main_queue(), ^{
+#if !TARGET_OS_TV
+        // The box art is the fallback cover for games without SteamGridDB art
+        [self->_artInfoCache removeAllObjects];
+        [self pushHomeState];
+#endif
         [self.collectionView reloadData];
     });
 }
@@ -1742,6 +1750,13 @@ static const NSUInteger kMaxQuickActions = 4;
 }
 
 - (void)handleArtworkUpdated:(NSNotification*)notification {
+    NSString* name = [notification.object isKindOfClass:[NSString class]] ? notification.object : nil;
+    if (name != nil) {
+        [_artInfoCache removeObjectForKey:name];
+    }
+    else {
+        [_artInfoCache removeAllObjects];
+    }
     [_boxArtCache removeAllObjects];
     [self.collectionView reloadData];
     [self saveGameCatalog];
@@ -1940,6 +1955,36 @@ static const NSUInteger kMaxQuickActions = 4;
     [[NSUserDefaults standardUserDefaults] setObject:lastPlayed forKey:@"StarlightLastPlayed"];
 }
 
+// Cover, background and logo paths ("" when missing) plus a stamp that changes when a file is replaced
+- (NSDictionary*)artInfoForApp:(TemporaryApp*)app {
+    if (_artInfoCache == nil) {
+        _artInfoCache = [NSMutableDictionary dictionary];
+    }
+    NSDictionary* cached = _artInfoCache[app.name];
+    if (cached != nil) {
+        return cached;
+    }
+    SteamGridDBManager* sgdb = [SteamGridDBManager sharedManager];
+    NSFileManager* fm = [NSFileManager defaultManager];
+    NSString* grid = [sgdb cachedPathForAppName:app.name kind:SteamGridDBKindGrid];
+    if (grid == nil) {
+        NSString* boxArt = [AppAssetManager boxArtPathForApp:app];
+        grid = [fm fileExistsAtPath:boxArt] ? boxArt : @"";
+    }
+    NSString* hero = [sgdb cachedPathForAppName:app.name kind:SteamGridDBKindHero] ?: @"";
+    NSString* logo = [sgdb cachedPathForAppName:app.name kind:SteamGridDBKindLogo] ?: @"";
+    // Changes when artwork is replaced in place, so the UI reloads the images
+    double stamp = 0;
+    for (NSString* path in @[grid, hero, logo]) {
+        if (path.length > 0) {
+            stamp += [[[fm attributesOfItemAtPath:path error:nil] fileModificationDate] timeIntervalSince1970];
+        }
+    }
+    NSDictionary* info = @{ @"grid": grid, @"hero": hero, @"logo": logo, @"stamp": @(stamp) };
+    _artInfoCache[app.name] = info;
+    return info;
+}
+
 - (void)pushHomeState {
     if (_home == nil) {
         return;
@@ -1969,9 +2014,7 @@ static const NSUInteger kMaxQuickActions = 4;
     NSMutableArray* apps = [NSMutableArray array];
     TemporaryHost* current = [self hostWithUUID:currentUUID];
     if (current != nil) {
-        SteamGridDBManager* sgdb = [SteamGridDBManager sharedManager];
         NSDictionary* lastPlayed = [[NSUserDefaults standardUserDefaults] dictionaryForKey:@"StarlightLastPlayed"];
-        NSFileManager* fm = [NSFileManager defaultManager];
         NSArray* pins = [self pinnedApps];
         NSDictionary* steamIds = [[NSUserDefaults standardUserDefaults] dictionaryForKey:@"StarlightSteamAppIds"];
         for (TemporaryApp* app in current.appList) {
@@ -1986,21 +2029,12 @@ static const NSUInteger kMaxQuickActions = 4;
                     break;
                 }
             }
-            NSString* grid = [sgdb cachedPathForAppName:app.name kind:SteamGridDBKindGrid];
-            if (grid == nil) {
-                NSString* boxArt = [AppAssetManager boxArtPathForApp:app];
-                grid = [fm fileExistsAtPath:boxArt] ? boxArt : @"";
-            }
+            NSDictionary* art = [self artInfoForApp:app];
+            NSString* grid = art[@"grid"];
+            NSString* hero = art[@"hero"];
+            NSString* logo = art[@"logo"];
+            double artStamp = [art[@"stamp"] doubleValue];
             NSNumber* played = lastPlayed[[NSString stringWithFormat:@"%@|%@", current.uuid, app.id]];
-            NSString* hero = [sgdb cachedPathForAppName:app.name kind:SteamGridDBKindHero] ?: @"";
-            NSString* logo = [sgdb cachedPathForAppName:app.name kind:SteamGridDBKindLogo] ?: @"";
-            // Changes when artwork is replaced in place, so the UI reloads the images
-            double artStamp = 0;
-            for (NSString* path in @[grid, hero, logo]) {
-                if (path.length > 0) {
-                    artStamp += [[[fm attributesOfItemAtPath:path error:nil] fileModificationDate] timeIntervalSince1970];
-                }
-            }
             [apps addObject:@{ @"host": current.uuid,
                                @"hostName": current.name ?: @"",
                                @"app": app.id,
@@ -2337,8 +2371,10 @@ static const NSUInteger kMaxQuickActions = 4;
     else if ([command isEqualToString:@"redownload"] && [sgdb isConfigured]) {
         [self fetchArtworkForHosts:allHosts force:YES completion:^(NSUInteger fetched, NSUInteger notFound, NSUInteger failed) {
             [self->_boxArtCache removeAllObjects];
+            [self->_artInfoCache removeAllObjects];
             [self.collectionView reloadData];
             [self saveGameCatalog];
+            [self pushHomeState];
             [self showArtworkResultFetched:fetched notFound:notFound failed:failed];
         }];
     }
@@ -2346,6 +2382,7 @@ static const NSUInteger kMaxQuickActions = 4;
         sgdb.apiKey = nil;
         [sgdb clearCache];
         [_boxArtCache removeAllObjects];
+        [_artInfoCache removeAllObjects];
         [self.collectionView reloadData];
         [self saveGameCatalog];
         [self pushHomeState];

@@ -87,8 +87,12 @@ final class StarlightHomeController: NSObject {
         if model.hosts != hostItems { model.hosts = hostItems }
         if model.selectedHost != selectedHost { model.selectedHost = selectedHost }
         if model.games != gameItems {
+            // Only drop the images of games whose artwork changed (artStamp follows the files' dates)
+            let oldStamps = Dictionary(model.games.map { ($0.id, $0.artStamp) }, uniquingKeysWith: { first, _ in first })
+            for game in gameItems where oldStamps[game.id].map({ $0 != game.artStamp }) ?? false {
+                ArtworkCache.shared.remove([game.gridPath, game.heroPath, game.logoPath])
+            }
             model.games = gameItems
-            ArtworkCache.shared.removeAll()
         }
         let configured = artwork["configured"] as? Bool ?? false
         let suffix = artwork["keySuffix"] as? String ?? ""
@@ -471,7 +475,9 @@ final class ArtworkCache {
         return image
     }
 
-    func removeAll() { cache.removeAllObjects() }
+    func remove(_ paths: [String?]) {
+        for case let path? in paths { cache.removeObject(forKey: path as NSString) }
+    }
 }
 
 private let starlightGold = Color(red: 0.86, green: 0.72, blue: 0.42)
@@ -1061,7 +1067,8 @@ extension View {
 }
 
 /// Reads the controller while the Starlight screens are on top (not during a stream, where
-/// Moonlight's ControllerSupport takes over). Polling keeps it independent from those handlers.
+/// Moonlight's ControllerSupport takes over). Polling keeps it independent from the value-changed
+/// handlers that ControllerSupport installs; the timer only runs while a controller is connected.
 final class GamepadInput {
     static let shared = GamepadInput()
 
@@ -1076,15 +1083,28 @@ final class GamepadInput {
     var active = false {
         didSet {
             guard active != oldValue else { return }
-            timer?.invalidate()
-            timer = nil
-            previous = []
-            heldDirection = nil
-            if active {
-                disableSystemGestures()
-                timer = Timer.scheduledTimer(withTimeInterval: 1.0 / 60.0, repeats: true) { [weak self] _ in self?.poll() }
-            }
+            updateTimer()
         }
+    }
+
+    private init() {
+        // Poll only while a controller is connected: no timer (and no battery cost) without one
+        let center = NotificationCenter.default
+        center.addObserver(forName: .GCControllerDidConnect, object: nil, queue: .main) { [weak self] _ in self?.updateTimer() }
+        center.addObserver(forName: .GCControllerDidDisconnect, object: nil, queue: .main) { [weak self] _ in self?.updateTimer() }
+    }
+
+    private func updateTimer() {
+        timer?.invalidate()
+        timer = nil
+        previous = []
+        heldDirection = nil
+        guard active, !GCController.controllers().isEmpty else { return }
+        disableSystemGestures()
+        let timer = Timer(timeInterval: 1.0 / 60.0, repeats: true) { [weak self] _ in self?.poll() }
+        // .common keeps it running while a scroll view is tracking
+        RunLoop.main.add(timer, forMode: .common)
+        self.timer = timer
     }
 
     private func disableSystemGestures() {
@@ -3539,7 +3559,12 @@ struct SteamCache: Codable {
 final class SteamManager: ObservableObject {
     static let shared = SteamManager()
 
-    @Published private(set) var cache: SteamCache?
+    @Published private(set) var cache: SteamCache? {
+        didSet { rebuildIndex() }
+    }
+    /// appid -> game, rebuilt when the cache changes (Home and Library look games up on every render)
+    private var ownedIndex: [Int: SteamOwnedGame] = [:]
+    private var recentIndex: [Int: SteamRecentGame] = [:]
     @Published private(set) var busy = false
     @Published private(set) var errorMessage: String?
     @Published private(set) var hasKey = SteamKeychain.load() != nil
@@ -3557,11 +3582,17 @@ final class SteamManager: ObservableObject {
     }
 
     /// Owned games by appid
-    func owned(_ appid: Int) -> SteamOwnedGame? { cache?.owned.first { $0.appid == appid } }
-    func recent(_ appid: Int) -> SteamRecentGame? { cache?.recent.first { $0.appid == appid } }
+    func owned(_ appid: Int) -> SteamOwnedGame? { ownedIndex[appid] }
+    func recent(_ appid: Int) -> SteamRecentGame? { recentIndex[appid] }
+
+    private func rebuildIndex() {
+        ownedIndex = Dictionary((cache?.owned ?? []).map { ($0.appid, $0) }, uniquingKeysWith: { first, _ in first })
+        recentIndex = Dictionary((cache?.recent ?? []).map { ($0.appid, $0) }, uniquingKeysWith: { first, _ in first })
+    }
 
     private init() {
         cache = Self.loadCache()
+        rebuildIndex()   // didSet doesn't run during init
     }
 
     // MARK: Setup
