@@ -2789,7 +2789,7 @@ struct ArtworkSettingsView: View {
                 } footer: {
                     Text(model.artworkConfigured
                          ? "Key saved (…\(model.artworkKeySuffix)). New games get artwork automatically."
-                         : "Covers, backgrounds, logos and icons come from steamgriddb.com. Sign in there, open Preferences → API, generate a key and paste it here. It's stored only on this device.")
+                         : "Covers, backgrounds, logos and icons come from steamgriddb.com. Sign in there, open Preferences → API, generate a key and paste it here. It's stored only in this device's Keychain. Steam games are matched by their appid, so they get the right edition.")
                 }
 
                 if model.artworkConfigured {
@@ -3953,7 +3953,7 @@ struct SteamSettingsView: View {
             } header: {
                 Text("Steam account")
             } footer: {
-                Text("Get a key at steamcommunity.com/dev/apikey (sign in; any domain name works). For your SteamID, paste your profile URL or the name in it. Your profile's \u{201C}Game details\u{201D} must be Public for playtime and achievements. The key is stored only in this iPhone's Keychain.")
+                Text("Get a key at steamcommunity.com/dev/apikey (sign in; any domain name works). For your SteamID, paste your profile URL or the name in it. Your profile's \u{201C}Game details\u{201D} must be Public for playtime and achievements. The key is stored only in this device's Keychain.")
             }
 
             if let error = steam.errorMessage {

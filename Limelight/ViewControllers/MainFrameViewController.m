@@ -1723,15 +1723,22 @@ static const NSUInteger kMaxQuickActions = 4;
         return;
     }
     
+    // Steam games are matched by appid (exact edition), the rest by name
+    NSDictionary* steamIds = [[NSUserDefaults standardUserDefaults] dictionaryForKey:@"StarlightSteamAppIds"];
     NSMutableArray* names = [NSMutableArray array];
+    NSMutableDictionary* appIds = [NSMutableDictionary dictionary];
     for (TemporaryHost* host in hosts) {
         for (TemporaryApp* app in host.appList) {
             if (app.name.length > 0) {
                 [names addObject:app.name];
+                NSNumber* appid = host.uuid != nil && app.id != nil ? steamIds[[NSString stringWithFormat:@"%@|%@", host.uuid, app.id]] : nil;
+                if ([appid isKindOfClass:[NSNumber class]] && appid.unsignedLongLongValue > 0) {
+                    appIds[app.name] = appid;
+                }
             }
         }
     }
-    [sgdb fetchArtworkForAppNames:names force:force completion:completion];
+    [sgdb fetchArtworkForAppNames:names steamAppIds:appIds force:force completion:completion];
 }
 
 - (void)handleArtworkUpdated:(NSNotification*)notification {

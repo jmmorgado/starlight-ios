@@ -4,7 +4,8 @@
 //
 //  Downloads game artwork (cover, hero, logo, icon) from SteamGridDB and
 //  caches it on disk, keyed by the game's name so the same game shares art
-//  across PCs. The user's API key is stored on the device, never in code.
+//  across PCs. Steam games are matched by appid, others by name.
+//  The user's API key is stored in the Keychain, never in code.
 //
 
 #import <Foundation/Foundation.h>
@@ -25,7 +26,7 @@ extern NSString* const SteamGridDBKindWide;   // horizontal cover (460x215 / 920
 
 + (instancetype)sharedManager;
 
-// Stored in NSUserDefaults. Setting nil or an empty string removes it.
+// Stored in the Keychain. Setting nil or an empty string removes it.
 @property (nonatomic, copy, nullable) NSString* apiKey;
 
 - (BOOL)isConfigured;
@@ -37,6 +38,12 @@ extern NSString* const SteamGridDBKindWide;   // horizontal cover (460x215 / 920
 // Games already cached (or already known to have no match) are skipped unless force is YES.
 // Non-game entries such as "Desktop" are always skipped.
 - (void)fetchArtworkForAppNames:(NSArray<NSString*>*)names
+                          force:(BOOL)force
+                     completion:(nullable void (^)(NSUInteger fetched, NSUInteger notFound, NSUInteger failed))completion;
+
+// Same, with the Steam appid of each game that has one (name -> appid), for exact matches
+- (void)fetchArtworkForAppNames:(NSArray<NSString*>*)names
+                    steamAppIds:(nullable NSDictionary<NSString*, NSNumber*>*)steamAppIds
                           force:(BOOL)force
                      completion:(nullable void (^)(NSUInteger fetched, NSUInteger notFound, NSUInteger failed))completion;
 
