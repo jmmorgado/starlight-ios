@@ -99,6 +99,18 @@ final class StarlightHomeController: NSObject {
         didSet { model.artworkRequest = artworkRequest }
     }
 
+    /// Second screen: the game's page for the iPhone/iPad while the stream plays on the TV,
+    /// with the stream controls in the toolbar. Actions: "here" (stream back on this device), "disconnect", "quit"
+    @objc(streamCompanionForHost:app:onAction:)
+    func streamCompanion(host: String, app: String, onAction: @escaping (String) -> Void) -> UIViewController? {
+        guard #available(iOS 16.0, *),
+              let game = model.games.first(where: { $0.host == host && $0.app == app }) else { return nil }
+        let controller = UIHostingController(rootView: StreamCompanionPage(model: model, game: game, onAction: onAction))
+        controller.view.backgroundColor = .black
+        controller.overrideUserInterfaceStyle = .dark
+        return controller
+    }
+
     @objc(updateWithHosts:selectedHost:apps:artwork:)
     func update(hosts: [[String: Any]], selectedHost: String?, apps: [[String: Any]], artwork: [String: Any]) {
         let hostItems = hosts.compactMap(HostItem.init)

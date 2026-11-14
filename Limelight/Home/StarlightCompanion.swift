@@ -21,7 +21,7 @@ final class StarlightCompanionPanel: NSObject {
         return controller
     }()
 
-    /// "iphone" (move the stream back to the iPhone), "disconnect", "quit"
+    /// "here" (move the stream back to this device), "disconnect", "quit"
     @objc var onAction: ((String) -> Void)? {
         didSet { state.onAction = onAction }
     }
@@ -132,7 +132,7 @@ struct CompanionView: View {
                 companionButton("Quit Game", "xmark.circle.fill", destructive: true) { state.onAction?("quit") }
                 companionButton("Cancel", "arrow.uturn.backward") { state.confirmQuit = false }
             } else {
-                companionButton("Show on iPhone", "iphone") { state.onAction?("iphone") }
+                companionButton("Play Here", deviceSymbol) { state.onAction?("here") }
                 companionButton("Stop Streaming", "stop.fill") { state.onAction?("disconnect") }
                 Text("The game keeps running on your PC.")
                     .font(.footnote)
@@ -145,6 +145,8 @@ struct CompanionView: View {
         .frame(maxHeight: .infinity, alignment: .top)
         .modifier(PanelGlass(corner: 24))
     }
+
+    private var deviceSymbol: String { UIDevice.current.userInterfaceIdiom == .pad ? "ipad.landscape" : "iphone" }
 
     private func companionButton(_ title: String, _ symbol: String, destructive: Bool = false, action: @escaping () -> Void) -> some View {
         Button(role: destructive ? .destructive : nil, action: action) {
@@ -307,5 +309,107 @@ private struct CompanionButtonStyle: ViewModifier {
         } else {
             content.buttonStyle(.bordered).tint(destructive ? .red : nil)
         }
+    }
+}
+
+// MARK: - Second screen: the game's page on the device, stream controls in the toolbar
+
+@available(iOS 16.0, *)
+struct StreamCompanionPage: View {
+    @ObservedObject var model: HomeModel
+    let game: GameItem
+    let onAction: (String) -> Void
+    @State private var notesShown = false
+    @State private var confirmQuit = false
+
+    init(model: HomeModel, game: GameItem, onAction: @escaping (String) -> Void) {
+        self.model = model
+        self.game = game
+        self.onAction = onAction
+    }
+
+    private var current: GameItem { model.games.first { $0.id == game.id } ?? game }
+    private var deviceName: String { UIDevice.current.userInterfaceIdiom == .pad ? "iPad" : "iPhone" }
+    private var deviceSymbol: String { UIDevice.current.userInterfaceIdiom == .pad ? "ipad.landscape" : "iphone" }
+
+    var body: some View {
+        NavigationStack {
+            GameDetailView(model: model, game: current, streaming: true)
+                .toolbar {
+                    ToolbarItem(placement: .navigationBarLeading) {
+                        Label("Playing on TV", systemImage: "tv")
+                            .labelStyle(.titleAndIcon)
+                            .font(.system(size: 14, weight: .semibold))
+                            .foregroundStyle(starlightGold)
+                    }
+                    ToolbarItemGroup(placement: .navigationBarTrailing) {
+                        Button { notesShown = true } label: {
+                            Label("Notes", systemImage: "note.text")
+                        }
+                        Button { onAction("here") } label: {
+                            Label("Play on \(deviceName)", systemImage: deviceSymbol)
+                        }
+                        Button { onAction("disconnect") } label: {
+                            Label("Stop Streaming", systemImage: "stop.fill")
+                        }
+                        Button(role: .destructive) { confirmQuit = true } label: {
+                            Label("Quit Game", systemImage: "xmark.circle.fill")
+                        }
+                        .tint(.red)
+                    }
+                }
+        }
+        .sheet(isPresented: $notesShown) {
+            NavigationStack {
+                GameNotesEditor(gameName: game.name)
+                    .padding(16)
+                    .navigationTitle("Notes")
+                    .navigationBarTitleDisplayMode(.inline)
+                    .toolbar {
+                        ToolbarItem(placement: .confirmationAction) {
+                            Button("Done") { notesShown = false }
+                        }
+                    }
+            }
+            .preferredColorScheme(.dark)
+        }
+        .confirmationDialog("Quit \(game.name)?", isPresented: $confirmQuit, titleVisibility: .visible) {
+            Button("Quit Game", role: .destructive) { onAction("quit") }
+        } message: {
+            Text("The game closes on your PC. Unsaved progress may be lost.")
+        }
+    }
+}
+
+/// Notes for one game, saved as you type
+struct GameNotesEditor: View {
+    let gameName: String
+    @State private var text: String
+    @FocusState private var editing: Bool
+
+    init(gameName: String) {
+        self.gameName = gameName
+        _text = State(initialValue: GameNotes.load(gameName))
+    }
+
+    var body: some View {
+        ZStack(alignment: .topLeading) {
+            TextEditor(text: $text)
+                .focused($editing)
+                .font(.system(size: 16))
+                .modifier(ClearTextEditorBackground())
+                .padding(10)
+            if text.isEmpty && !editing {
+                Text("Notes for \(gameName): where you left off, codes, things to remember…")
+                    .font(.system(size: 16))
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, 15)
+                    .padding(.vertical, 18)
+                    .allowsHitTesting(false)
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .modifier(PanelGlass(corner: 18))
+        .onChange(of: text) { GameNotes.save($0, for: gameName) }
     }
 }

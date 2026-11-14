@@ -77,7 +77,8 @@
     
     // Starlight: second screen (stream on the TV, companion panel on the iPhone)
     UIWindow *_externalWindow;
-    StarlightCompanionPanel *_companion;
+    UIViewController *_companionVC;
+    StarlightCompanionPanel *_companionPanel;
     BOOL _externalSuppressed;
 #endif
 }
@@ -88,6 +89,11 @@
     
 #if !TARGET_OS_TV
     [[self revealViewController] setPrimaryViewController:self];
+    
+    // The TV may have connected while this screen was still being pushed
+    if (_externalWindow != nil) {
+        [self showCompanionPanel];
+    }
 #endif
 }
 
@@ -529,12 +535,23 @@
         [weakSelf streamMenuAction:action];
     };
     
+    // With the stream on a TV the menu opens there, where you're looking (and you drive it with the controller)
+    UIViewController* host = _externalWindow != nil ? _externalWindow.rootViewController : self;
     UIViewController* menuVC = _streamMenu.viewController;
-    [self addChildViewController:menuVC];
-    menuVC.view.frame = self.view.bounds;
+    [host addChildViewController:menuVC];
+    menuVC.view.frame = host.view.bounds;
     menuVC.view.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
-    [self.view addSubview:menuVC.view];
-    [menuVC didMoveToParentViewController:self];
+    [host.view addSubview:menuVC.view];
+    [menuVC didMoveToParentViewController:host];
+}
+
+// Alerts go over the second-screen page when it's showing
+- (UIViewController*)alertPresenter {
+    UIViewController* presenter = self;
+    while (presenter.presentedViewController != nil && !presenter.presentedViewController.isBeingDismissed) {
+        presenter = presenter.presentedViewController;
+    }
+    return presenter;
 }
 
 - (void)hideStreamMenu {
@@ -704,7 +721,7 @@
         [conTermAlert addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:^(UIAlertAction* action){
             [self returnToMainFrame];
         }]];
-        [self presentViewController:conTermAlert animated:YES completion:nil];
+        [[self alertPresenter] presentViewController:conTermAlert animated:YES completion:nil];
     });
 
     [_streamMan stopStream];
@@ -750,7 +767,7 @@
         [alert addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:^(UIAlertAction* action){
             [self returnToMainFrame];
         }]];
-        [self presentViewController:alert animated:YES completion:nil];
+        [[self alertPresenter] presentViewController:alert animated:YES completion:nil];
     });
     
     [_streamMan stopStream];
@@ -770,7 +787,7 @@
         [alert addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:^(UIAlertAction* action){
             [self returnToMainFrame];
         }]];
-        [self presentViewController:alert animated:YES completion:nil];
+        [[self alertPresenter] presentViewController:alert animated:YES completion:nil];
     });
 }
 
@@ -1214,8 +1231,9 @@
     Log(LOG_I, @"External display connected (%.0fx%.0f): moving the stream to the TV",
         screen.bounds.size.width, screen.bounds.size.height);
     
-    // Picture in Picture needs the video on the iPhone
+    // Picture in Picture needs the video on the iPhone; the stream menu reopens on the TV
     [self tearDownPictureInPicture];
+    [self hideStreamMenu];
     
     screen.overscanCompensation = UIScreenOverscanCompensationNone;
     UIWindow* window = [[UIWindow alloc] initWithWindowScene:scene];
@@ -1234,7 +1252,8 @@
 }
 
 - (void)detachFromExternalScreen {
-    Log(LOG_I, @"Moving the stream back to the iPhone");
+    Log(LOG_I, @"Moving the stream back to the device");
+    [self hideStreamMenu];
     [self hideCompanionPanel];
     [self moveStreamContainerTo:self.view frame:self.view.bounds atBottom:YES];
     _externalWindow.hidden = YES;
@@ -1250,6 +1269,7 @@
     if (_externalWindow == nil) {
         return;
     }
+    [self hideStreamMenu];
     [self hideCompanionPanel];
     _externalWindow.hidden = YES;
     _externalWindow = nil;
@@ -1269,48 +1289,58 @@
 }
 
 - (void)showCompanionPanel {
-    if (_companion != nil) {
+    // Can only present once this screen is on screen (viewDidAppear calls this again)
+    if (_companionVC != nil || self.view.window == nil) {
         return;
     }
-    SteamGridDBManager* sgdb = [SteamGridDBManager sharedManager];
-    NSString* appName = self.streamConfig.appName ?: @"Game";
-    NSString* heroPath = [sgdb cachedPathForAppName:appName kind:SteamGridDBKindHero]
-        ?: [sgdb cachedPathForAppName:appName kind:SteamGridDBKindGrid];
-    _companion = [[StarlightCompanionPanel alloc] initWithGameName:appName
-                                                        steamAppId:[self steamAppIdForStream]
-                                                          heroPath:heroPath];
     __weak StreamFrameViewController* weakSelf = self;
-    _companion.onAction = ^(NSString* action) {
+    void (^onAction)(NSString*) = ^(NSString* action) {
         [weakSelf companionAction:action];
     };
-    UIViewController* panelVC = _companion.viewController;
-    [self addChildViewController:panelVC];
-    panelVC.view.frame = self.view.bounds;
-    panelVC.view.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
-    if (_streamMenu != nil) {
-        // Keep the stream menu on top
-        [self.view insertSubview:panelVC.view belowSubview:_streamMenu.viewController.view];
+    
+    // The game's page (same as in the app), with the stream controls in its toolbar
+    UIViewController* root = self.navigationController.viewControllers.firstObject;
+    UIViewController* page = nil;
+    if ([root isKindOfClass:[MainFrameViewController class]]) {
+        page = [(MainFrameViewController*)root streamCompanionForHost:self.streamConfig.hostUUID
+                                                                  app:self.streamConfig.appID
+                                                             onAction:onAction];
     }
-    else {
-        [self.view addSubview:panelVC.view];
+    if (page == nil) {
+        // Game not in the list: a simpler panel with achievements and notes
+        SteamGridDBManager* sgdb = [SteamGridDBManager sharedManager];
+        NSString* appName = self.streamConfig.appName ?: @"Game";
+        NSString* heroPath = [sgdb cachedPathForAppName:appName kind:SteamGridDBKindHero]
+            ?: [sgdb cachedPathForAppName:appName kind:SteamGridDBKindGrid];
+        _companionPanel = [[StarlightCompanionPanel alloc] initWithGameName:appName
+                                                                 steamAppId:[self steamAppIdForStream]
+                                                                   heroPath:heroPath];
+        _companionPanel.onAction = onAction;
+        page = _companionPanel.viewController;
     }
-    [panelVC didMoveToParentViewController:self];
+    
+    // Presented full screen, so it fills the device whatever the stream view's geometry
+    page.modalPresentationStyle = UIModalPresentationOverFullScreen;
+    page.modalTransitionStyle = UIModalTransitionStyleCrossDissolve;
+    _companionVC = page;
+    [[self alertPresenter] presentViewController:page animated:YES completion:nil];
 }
 
 - (void)hideCompanionPanel {
-    if (_companion == nil) {
+    if (_companionVC == nil) {
         return;
     }
-    UIViewController* panelVC = _companion.viewController;
-    _companion = nil;
-    [panelVC willMoveToParentViewController:nil];
-    [panelVC.view removeFromSuperview];
-    [panelVC removeFromParentViewController];
+    UIViewController* page = _companionVC;
+    _companionVC = nil;
+    _companionPanel = nil;
+    if (page.presentingViewController != nil) {
+        [page.presentingViewController dismissViewControllerAnimated:NO completion:nil];
+    }
 }
 
 - (void)companionAction:(NSString*)action {
-    if ([action isEqualToString:@"iphone"]) {
-        // Back to the iPhone for the rest of this stream (iOS mirrors the TV again)
+    if ([action isEqualToString:@"here"]) {
+        // Back to this device for the rest of this stream (iOS mirrors the TV again)
         _externalSuppressed = YES;
         [self detachFromExternalScreen];
     }
