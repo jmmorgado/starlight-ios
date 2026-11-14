@@ -25,6 +25,8 @@
 //
 
 import SwiftUI
+import CoreSpotlight
+import UniformTypeIdentifiers
 import UIKit
 import Network
 import GameController
@@ -48,6 +50,10 @@ final class StarlightHomeController: NSObject {
         super.init()
         let homeModel = model
         GamepadInput.shared.handler = { [weak homeModel] event in homeModel?.handlePad(event) }
+        // A game tapped in Spotlight (AppDelegate stores it and posts this)
+        NotificationCenter.default.addObserver(forName: Notification.Name("StarlightOpenGame"), object: nil, queue: .main) { [weak homeModel] _ in
+            homeModel?.openPendingSpotlightGame()
+        }
         // Steam data: refresh when it's more than a few hours old
         Task { @MainActor in SteamManager.shared.refreshIfStale() }
     }
@@ -111,6 +117,13 @@ final class StarlightHomeController: NSObject {
         let suffix = artwork["keySuffix"] as? String ?? ""
         if model.artworkConfigured != configured { model.artworkConfigured = configured }
         if model.artworkKeySuffix != suffix { model.artworkKeySuffix = suffix }
+        let artworkBusy = artwork["busy"] as? Bool ?? false
+        let artworkFailed = artwork["failed"] as? Bool ?? false
+        if model.artworkBusy != artworkBusy { model.artworkBusy = artworkBusy }
+        if model.artworkFailed != artworkFailed { model.artworkFailed = artworkFailed }
+        // Spotlight: Ready to Play games, and a result tapped there before the games had loaded
+        StarlightSpotlight.index(model.libraryGames)
+        model.openPendingSpotlightGame()
         if let featured = model.featuredId, !gameItems.contains(where: { $0.id == featured }) {
             model.featuredId = nil
         }
@@ -127,6 +140,9 @@ struct HostItem: Identifiable, Equatable {
     let showHidden: Bool
     let permissionDenied: Bool
     let address: String
+    /// Settings → Refresh Games in progress, and whether the last one failed
+    let refreshing: Bool
+    let refreshFailed: Bool
 
     init?(_ dict: [String: Any]) {
         guard let uuid = dict["uuid"] as? String else { return nil }
@@ -137,6 +153,8 @@ struct HostItem: Identifiable, Equatable {
         showHidden = dict["showHidden"] as? Bool ?? false
         permissionDenied = dict["permissionDenied"] as? Bool ?? false
         address = dict["address"] as? String ?? ""
+        refreshing = dict["refreshing"] as? Bool ?? false
+        refreshFailed = dict["refreshFailed"] as? Bool ?? false
     }
 }
 
@@ -219,6 +237,9 @@ final class HomeModel: ObservableObject {
     @Published var editingGame: GameItem?
     @Published var artworkConfigured = false
     @Published var artworkKeySuffix = ""
+    /// SteamGridDB / Steam artwork download running (Settings → Game Artwork), and its last result
+    @Published var artworkBusy = false
+    @Published var artworkFailed = false
 
     var onSelectHost: ((String) -> Void)?
     var onLaunchApp: ((String, String) -> Void)?
@@ -293,6 +314,20 @@ final class HomeModel: ObservableObject {
 
     func closeDetail() {
         detail = nil
+    }
+
+    /// Opens the game page of a Spotlight result once its game is in the list
+    func openPendingSpotlightGame() {
+        let defaults = UserDefaults.standard
+        guard let id = defaults.string(forKey: StarlightSpotlight.pendingKey) else { return }
+        if let game = games.first(where: { $0.id == id && !$0.hidden }) {
+            defaults.removeObject(forKey: StarlightSpotlight.pendingKey)
+            if tab == .settings || tab == .search { tab = .home }
+            openDetail(game, source: "spotlight-\(game.id)")
+        } else if let host = id.split(separator: "|").first, games.contains(where: { $0.host == host }) {
+            // That PC's list is loaded and the game isn't in it any more
+            defaults.removeObject(forKey: StarlightSpotlight.pendingKey)
+        }
     }
 
     var detailGame: GameItem? {
@@ -579,5 +614,48 @@ extension View {
         } else {
             self.buttonStyle(.bordered)
         }
+    }
+}
+
+
+// MARK: - Spotlight
+
+/// Ready to Play games in the iPhone's search, with their cover. Tapping one opens its game page.
+enum StarlightSpotlight {
+    static let domain = "games"
+    static let pendingKey = "StarlightPendingOpenGame"
+    private static var signature = ""
+    private static let queue = DispatchQueue(label: "starlight.spotlight", qos: .utility)
+
+    static func index(_ games: [GameItem]) {
+        let ready = games.filter { $0.isInstalled && !$0.hidden }
+        let newSignature = ready.map { "\($0.id)|\($0.name)|\($0.artStamp)" }.joined(separator: "\n")
+        guard newSignature != signature else { return }
+        signature = newSignature
+        queue.async {
+            let items = ready.map { game -> CSSearchableItem in
+                let attributes = CSSearchableItemAttributeSet(contentType: UTType.content)
+                attributes.title = game.name
+                attributes.contentDescription = game.hostName.isEmpty ? "Ready to Play" : "Ready to Play on \(game.hostName)"
+                attributes.keywords = ["game", "play", "Starlight"] + (game.steamAppId != nil ? ["Steam"] : [])
+                if let path = game.gridPath, let image = UIImage(contentsOfFile: path) {
+                    attributes.thumbnailData = thumbnail(image)
+                }
+                return CSSearchableItem(uniqueIdentifier: "game|" + game.id, domainIdentifier: domain, attributeSet: attributes)
+            }
+            let index = CSSearchableIndex.default()
+            index.deleteSearchableItems(withDomainIdentifiers: [domain]) { _ in
+                if !items.isEmpty { index.indexSearchableItems(items, completionHandler: nil) }
+            }
+        }
+    }
+
+    /// Small JPEG of the cover (Spotlight shows it at icon size)
+    private static func thumbnail(_ image: UIImage) -> Data? {
+        let width: CGFloat = 180
+        let scale = width / max(image.size.width, 1)
+        let size = CGSize(width: width, height: image.size.height * scale)
+        let renderer = UIGraphicsImageRenderer(size: size)
+        return renderer.image { _ in image.draw(in: CGRect(origin: .zero, size: size)) }.jpegData(compressionQuality: 0.8)
     }
 }

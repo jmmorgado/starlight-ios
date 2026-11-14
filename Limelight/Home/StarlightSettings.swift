@@ -225,10 +225,11 @@ struct HostDetailView: View {
                                 }
                                 .settingsFocus("pc-use", scope: scope) { model.onSelectHost?(host.id) }
                             }
-                            Button { model.hostAction("refresh", host) } label: {
-                                Label("Refresh Games", systemImage: "arrow.clockwise")
+                            ProgressActionButton(title: "Refresh Games", symbol: "arrow.clockwise",
+                                                 busy: host.refreshing, failed: host.refreshFailed,
+                                                 focusID: "pc-refresh", scope: scope) {
+                                model.hostAction("refresh", host)
                             }
-                            .settingsFocus("pc-refresh", scope: scope) { model.hostAction("refresh", host) }
                         }
                         if !host.online {
                             Button { model.hostAction("wake", host) } label: {
@@ -307,13 +308,11 @@ struct ArtworkSettingsView: View {
                         .autocorrectionDisabled()
                         .focused($keyFocused)
                         .settingsFocus("art-key", scope: scope) { keyFocused = true }
-                    Button(action: saveKey) {
-                        Label(model.artworkConfigured ? "Download Missing Artwork" : "Save Key & Download", systemImage: "arrow.down.circle")
-                    }
-                    .disabled(!model.artworkConfigured && key.isEmpty)
-                    .settingsFocus("art-save", scope: scope) {
-                        if model.artworkConfigured || !key.isEmpty { saveKey() }
-                    }
+                    ProgressActionButton(title: model.artworkConfigured ? "Download Missing Artwork" : "Save Key & Download",
+                                         symbol: "arrow.down.circle",
+                                         busy: model.artworkBusy, failed: model.artworkFailed,
+                                         enabled: model.artworkConfigured || !key.isEmpty,
+                                         focusID: "art-save", scope: scope, action: saveKey)
                 } header: {
                     Text("SteamGridDB")
                 } footer: {
@@ -323,10 +322,9 @@ struct ArtworkSettingsView: View {
                 }
 
                 Section {
-                    Button { redownload() } label: {
-                        Label("Re-download All Artwork", systemImage: "arrow.triangle.2.circlepath")
-                    }
-                    .settingsFocus("art-redownload", scope: scope) { redownload() }
+                    ProgressActionButton(title: "Re-download All Artwork", symbol: "arrow.triangle.2.circlepath",
+                                         busy: model.artworkBusy, failed: model.artworkFailed,
+                                         focusID: "art-redownload", scope: scope, action: redownload)
                 } footer: {
                     Text("For each image: your choice in Edit Artwork, then Steam's artwork, then SteamGridDB (by Steam appid, or by name for games that aren't on Steam).")
                 }
@@ -593,5 +591,115 @@ struct StreamSettingsView: View {
             "btMouse": btMouse,
             "statsOverlay": statsOverlay
         ])
+    }
+}
+
+
+// MARK: - Buttons that start a refresh / download
+
+/// A Settings button for work that takes a while (refresh, download), all with system pieces:
+/// on tap the icon bounces with a light haptic; while working a spinner sits on the right and the
+/// button is disabled; at the end the icon turns into ✓ (or a warning) for two seconds with a
+/// success (or error) haptic.
+struct ProgressActionButton: View {
+    let title: String
+    let symbol: String
+    /// The work is running (reported by the app)
+    let busy: Bool
+    /// The last run failed
+    let failed: Bool
+    var enabled = true
+    let focusID: String
+    let scope: String
+    let action: () -> Void
+
+    enum Outcome { case success, failure }
+    @State private var taps = 0
+    @State private var pending = false
+    @State private var sawBusy = false
+    @State private var outcome: Outcome?
+
+    private var working: Bool { busy || pending }
+
+    private func trigger() {
+        guard enabled, !working else { return }
+        taps += 1
+        outcome = nil
+        pending = true
+        sawBusy = false
+        action()
+        // If the app never reports work (nothing to do), stop the spinner quietly
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+            if pending && !sawBusy && !busy { pending = false }
+        }
+    }
+
+    private func finish() {
+        pending = false
+        outcome = failed ? .failure : .success
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+            withAnimation { outcome = nil }
+        }
+    }
+
+    private var iconName: String {
+        switch outcome {
+        case .success: return "checkmark.circle.fill"
+        case .failure: return "exclamationmark.triangle.fill"
+        case nil: return symbol
+        }
+    }
+
+    var body: some View {
+        Button(action: trigger) {
+            HStack {
+                Label {
+                    Text(title)
+                } icon: {
+                    Image(systemName: iconName)
+                        .foregroundStyle(outcome == .success ? Color.green : outcome == .failure ? Color.orange : Color.accentColor)
+                        .modifier(ActionSymbolEffects(taps: taps, outcome: outcome))
+                }
+                Spacer()
+                if working {
+                    ProgressView()
+                        .transition(.opacity)
+                }
+            }
+            .animation(.default, value: working)
+        }
+        .disabled(!enabled || working)
+        .settingsFocus(focusID, scope: scope) { trigger() }
+        .onChange(of: busy) { isBusy in
+            if isBusy {
+                sawBusy = true
+            } else if sawBusy || pending {
+                finish()
+            }
+        }
+    }
+}
+
+/// iOS 17+: the symbol bounces on tap and swaps with the system animation; haptics follow the result
+private struct ActionSymbolEffects: ViewModifier {
+    let taps: Int
+    let outcome: ProgressActionButton.Outcome?
+
+    func body(content: Content) -> some View {
+        if #available(iOS 17.0, *) {
+            content
+                .contentTransition(.symbolEffect(.replace))
+                .symbolEffect(.bounce, value: taps)
+                .sensoryFeedback(.impact(weight: .light), trigger: taps)
+                .sensoryFeedback(trigger: outcome) { _, new in
+                    switch new {
+                    case .success: return .success
+                    case .failure: return .error
+                    case nil: return nil
+                    }
+                }
+        } else {
+            content
+        }
     }
 }

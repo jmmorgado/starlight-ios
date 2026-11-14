@@ -450,13 +450,11 @@ struct SteamSettingsView: View {
                     row("Updated", updatedText)
                 }
                 Section {
-                    Button {
+                    ProgressActionButton(title: "Refresh Now", symbol: "arrow.clockwise",
+                                         busy: steam.busy, failed: steam.errorMessage != nil,
+                                         focusID: "steam-refresh", scope: scope) {
                         Task { await steam.refreshNow() }
-                    } label: {
-                        Label("Refresh Now", systemImage: "arrow.clockwise")
                     }
-                    .disabled(steam.busy)
-                    .settingsFocus("steam-refresh", scope: scope) { Task { await steam.refreshNow() } }
                     Button(role: .destructive) { confirmRemove = true } label: {
                         Label(removeArmed ? "Press again to disconnect" : "Disconnect Steam", systemImage: "trash")
                     }

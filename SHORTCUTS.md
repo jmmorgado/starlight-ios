@@ -28,6 +28,11 @@ acordam o PC e esperam até ~60 segundos que ele apareça na rede antes de come�
 Com o PC desligado, o menu do PC (botão em cima à direita ou □) mostra **Wake <PC>**.
 Com **Connect Early** ligado (por omissão), ao abrir a Starlight ou a página de um jogo a app verifica o PC e acorda-o se estiver a dormir, para estar pronto quando carregares em Play.
 
+## Pesquisa do iPhone (Spotlight)
+
+Os jogos **Ready to Play** do PC aparecem na pesquisa do iPhone (deslizar para baixo no ecrã principal), com a capa.
+Tocar num abre a Starlight na página do jogo. A lista acompanha o PC: jogos escondidos ou removidos saem da pesquisa.
+
 ## Fixar um jogo no ícone da app (o mais rápido)
 
 1. Na app, **•••** no jogo (ou mantém o dedo em cima dele) → **Pin**.

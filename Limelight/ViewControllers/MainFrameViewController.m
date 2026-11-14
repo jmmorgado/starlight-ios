@@ -62,6 +62,11 @@
     BOOL _pendingLaunchWaking;
     // Connect Early: when each PC was last woken, so it isn't sent again and again
     NSMutableDictionary<NSString*, NSDate*>* _connectEarlyWoken;
+    // Settings feedback: PCs whose games are being refreshed, and the last result
+    NSMutableSet<NSString*>* _refreshingHosts;
+    NSMutableSet<NSString*>* _refreshFailedHosts;
+    BOOL _artworkBusy;
+    BOOL _artworkFailed;
     UILabel* _launchStatusLabel;
     UIView* _launchOverlay;
 #if TARGET_OS_TV
@@ -195,6 +200,7 @@ static NSMutableSet* hostList;
         if (![appListResp isStatusOk] || [appListResp getAppList] == nil) {
             Log(LOG_W, @"Failed to get applist: %@", appListResp.statusMessage);
             dispatch_async(dispatch_get_main_queue(), ^{
+                [self finishRefreshForHostUUID:host.uuid failed:YES];
                 if (host != self->_selectedHost) {
                     [self hideLoadingFrame: nil];
                     return;
@@ -214,6 +220,7 @@ static NSMutableSet* hostList;
         } else {
             dispatch_async(dispatch_get_main_queue(), ^{
                 [self updateApplist:[appListResp getAppList] forHost:host];
+                [self finishRefreshForHostUUID:host.uuid failed:NO];
 
                 if (host != self->_selectedHost) {
                     [self hideLoadingFrame: nil];
@@ -328,6 +335,38 @@ static NSMutableSet* hostList;
     [self.view addSubview:hostScrollView];
 }
 
+// Settings → PC → Refresh Games shows a spinner until the game list comes back (or fails)
+- (void)beginRefreshForHost:(TemporaryHost*)host {
+    if (host.uuid == nil) {
+        return;
+    }
+    if (_refreshingHosts == nil) {
+        _refreshingHosts = [NSMutableSet set];
+        _refreshFailedHosts = [NSMutableSet set];
+    }
+    [_refreshingHosts addObject:host.uuid];
+    [_refreshFailedHosts removeObject:host.uuid];
+    [self pushHomeState];
+    // Never spin forever
+    NSString* uuid = host.uuid;
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(30 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        if ([self->_refreshingHosts containsObject:uuid]) {
+            [self finishRefreshForHostUUID:uuid failed:YES];
+        }
+    });
+}
+
+- (void)finishRefreshForHostUUID:(NSString*)uuid failed:(BOOL)failed {
+    if (uuid == nil || ![_refreshingHosts containsObject:uuid]) {
+        return;
+    }
+    [_refreshingHosts removeObject:uuid];
+    if (failed) {
+        [_refreshFailedHosts addObject:uuid];
+    }
+    [self pushHomeState];
+}
+
 - (void)showHostSelectionView {
 #if TARGET_OS_TV
     // Remove the menu button intercept to allow the app to exit
@@ -344,6 +383,10 @@ static NSMutableSet* hostList;
     [self disableUpButton];
     
     [self.collectionView reloadData];
+    // A failed connection ends up here: a refresh in progress didn't work
+    for (NSString* uuid in [_refreshingHosts copy]) {
+        [self finishRefreshForHostUUID:uuid failed:YES];
+    }
     [self showClassicHostList];
 }
 
@@ -2018,6 +2061,8 @@ static const NSUInteger kMaxQuickActions = 4;
                             @"paired": @(host.pairState == PairStatePaired || (host.pairState == PairStateUnknown && host.serverCert != nil)),
                             @"showHidden": @(_showHiddenApps && [host.uuid isEqualToString:currentUUID]),
                             @"permissionDenied": @([_permissionDeniedHosts containsObject:host.uuid]),
+                            @"refreshing": @([_refreshingHosts containsObject:host.uuid]),
+                            @"refreshFailed": @([_refreshFailedHosts containsObject:host.uuid]),
                             @"address": host.activeAddress ?: (host.localAddress ?: (host.address ?: @"")) }];
     }
     
@@ -2064,7 +2109,9 @@ static const NSUInteger kMaxQuickActions = 4;
     SteamGridDBManager* artwork = [SteamGridDBManager sharedManager];
     NSString* key = artwork.apiKey ?: @"";
     NSDictionary* artworkState = @{ @"configured": @([artwork isConfigured]),
-                                    @"keySuffix": key.length >= 4 ? [key substringFromIndex:key.length - 4] : @"" };
+                                    @"keySuffix": key.length >= 4 ? [key substringFromIndex:key.length - 4] : @"",
+                                    @"busy": @(_artworkBusy),
+                                    @"failed": @(_artworkFailed) };
     
     [_home updateWithHosts:hosts selectedHost:current.uuid apps:apps artwork:artworkState];
 }
@@ -2165,6 +2212,7 @@ static const NSUInteger kMaxQuickActions = 4;
         }
         else {
             // No view: goes through the full refresh (server info + app list)
+            [self beginRefreshForHost:host];
             [self hostClicked:host view:nil];
         }
     }
@@ -2378,13 +2426,21 @@ static const NSUInteger kMaxQuickActions = 4;
         if (![sgdb isConfigured]) {
             return;
         }
+        _artworkBusy = YES;
         [self pushHomeState];
         [self fetchArtworkForHosts:allHosts force:NO completion:^(NSUInteger fetched, NSUInteger notFound, NSUInteger failed) {
+            self->_artworkBusy = NO;
+            self->_artworkFailed = failed > 0 && fetched == 0;
+            [self pushHomeState];
             [self showArtworkResultFetched:fetched notFound:notFound failed:failed];
         }];
     }
     else if ([command isEqualToString:@"redownload"]) {
+        _artworkBusy = YES;
+        [self pushHomeState];
         [self fetchArtworkForHosts:allHosts force:YES completion:^(NSUInteger fetched, NSUInteger notFound, NSUInteger failed) {
+            self->_artworkBusy = NO;
+            self->_artworkFailed = failed > 0 && fetched == 0;
             [self->_boxArtCache removeAllObjects];
             [self->_artInfoCache removeAllObjects];
             [self.collectionView reloadData];

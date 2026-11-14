@@ -106,6 +106,20 @@ static NSString* DB_NAME = @"Limelight_iOS.sqlite";
     return YES;
 }
 
+// A game tapped in Spotlight (StarlightSpotlight in StarlightHome.swift): open its game page
+- (BOOL)application:(UIApplication *)application continueUserActivity:(NSUserActivity *)userActivity restorationHandler:(void (^)(NSArray<id<UIUserActivityRestoring>> * _Nullable))restorationHandler {
+    // CSSearchableItemActionType / CSSearchableItemActivityIdentifier
+    if ([userActivity.activityType isEqualToString:@"com.apple.corespotlightitem"]) {
+        NSString* identifier = userActivity.userInfo[@"kCSSearchableItemActivityIdentifier"];
+        if ([identifier hasPrefix:@"game|"]) {
+            [[NSUserDefaults standardUserDefaults] setObject:[identifier substringFromIndex:5] forKey:@"StarlightPendingOpenGame"];
+            [[NSNotificationCenter defaultCenter] postNotificationName:@"StarlightOpenGame" object:nil];
+            return YES;
+        }
+    }
+    return NO;
+}
+
 // Handles starlight://launch?host=<PC UUID or name>&app=<app ID or name>
 // The launch itself is performed by MainFrameViewController once the host list is available.
 - (BOOL)application:(UIApplication *)application openURL:(NSURL *)url options:(NSDictionary<UIApplicationOpenURLOptionsKey,id> *)options {
