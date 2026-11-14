@@ -26,6 +26,7 @@ Guia prático em português. A descrição geral, a instalação e a compilaçã
 Com **Settings → Launching → Wake PC Automatically** ligado (por omissão), um jogo fixado, um link `starlight://` ou um Atalho
 acordam o PC e esperam até ~60 segundos que ele apareça na rede antes de começar o stream.
 Com o PC desligado, o menu do PC (botão em cima à direita ou □) mostra **Wake <PC>**.
+Com **Connect Early** ligado (por omissão), ao abrir a Starlight ou a página de um jogo a app verifica o PC e acorda-o se estiver a dormir, para estar pronto quando carregares em Play.
 
 ## Fixar um jogo no ícone da app (o mais rápido)
 
@@ -93,6 +94,13 @@ A escolha fica guardada e é respeitada quando se volta a descarregar a arte. Es
 
 Em **Settings → Steam**, cola a Steam Web API key (gera-se em steamcommunity.com/dev/apikey) e o SteamID64 ou o URL do perfil.
 A chave fica no Keychain do dispositivo. Os "Detalhes de jogo" do perfil Steam têm de estar públicos para aparecerem horas e achievements.
+
+## Página do jogo
+
+Nos jogos Steam, a página segue a ordem da loja Steam: **About** (descrição curta; **More** abre a descrição completa, programador, editora, género e data),
+**Trailers & Screenshots** (o trailer só começa quando tocas nele; as imagens abrem em ecrã inteiro), **Patches**, **News** (só anúncios oficiais do jogo)
+e um resumo dos **Achievements** com **See All**. Não precisa de chave: a descrição, os trailers e as notícias vêm da loja Steam e ficam em cache.
+Com comando: **✕** abre, **○** volta; no trailer **✕** pausa e **← / →** recuam/avançam 10 s; nas imagens **← / →** mudam de imagem.
 
 ## O PC "isn't sharing its games"
 

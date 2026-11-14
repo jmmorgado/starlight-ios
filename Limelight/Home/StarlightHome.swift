@@ -388,10 +388,11 @@ final class HomeModel: ObservableObject {
                 closeGameMenu()
             } else if pcExpanded {
                 closePC()
+            } else if focus.handleBack() {
+                // A page or viewer opened from the game page (or a Settings screen) goes back first
+                break
             } else if detail != nil {
                 closeDetail()
-            } else if focus.handleBack() {
-                break
             } else if tab == .search {
                 closeSearch()
             }

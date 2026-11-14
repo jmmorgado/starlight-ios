@@ -18,6 +18,8 @@ struct SettingsTab: View {
     @State private var route: String?
     /// Read by MainFrameViewController when a pinned game, link or Shortcut launches a game
     @AppStorage("StarlightAutoWake") private var autoWake = true
+    /// Read by MainFrameViewController on opening the app and a game page
+    @AppStorage("StarlightConnectEarly") private var connectEarly = true
 
     private var version: String {
         let info = Bundle.main.infoDictionary
@@ -68,10 +70,14 @@ struct SettingsTab: View {
                             Label("Wake PC Automatically", systemImage: "power")
                         }
                         .settingsFocus("set-autowake", scope: "settings", adjust: { autoWake = $0 > 0 }) { autoWake.toggle() }
+                        Toggle(isOn: $connectEarly) {
+                            Label("Connect Early", systemImage: "bolt.horizontal")
+                        }
+                        .settingsFocus("set-connectearly", scope: "settings", adjust: { connectEarly = $0 > 0 }) { connectEarly.toggle() }
                     } header: {
                         Text("Launching")
                     } footer: {
-                        Text("When a pinned game, a starlight:// link or a Shortcut starts a game and the PC is asleep, Starlight sends a Wake-on-LAN request and waits for it before streaming. Wake-on-LAN has to be enabled on the PC.")
+                        Text("Wake PC Automatically: when a pinned game, a starlight:// link or a Shortcut starts a game and the PC is asleep, Starlight wakes it and waits before streaming.\nConnect Early: when you open Starlight or a game page, Starlight checks the PC and wakes it if it's asleep, so it's ready when you press Play.\nBoth need Wake-on-LAN enabled on the PC.")
                     }
 
                     Section("Library") {

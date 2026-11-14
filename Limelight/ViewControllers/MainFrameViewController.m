@@ -60,6 +60,8 @@
     BOOL _pendingLaunchFallbackScheduled;
     // Auto Wake-on-LAN for pinned games / links / Shortcuts
     BOOL _pendingLaunchWaking;
+    // Connect Early: when each PC was last woken, so it isn't sent again and again
+    NSMutableDictionary<NSString*, NSDate*>* _connectEarlyWoken;
     UILabel* _launchStatusLabel;
     UIView* _launchOverlay;
 #if TARGET_OS_TV
@@ -1196,6 +1198,51 @@ static NSMutableSet* hostList;
     return host.mac != nil && ![host.mac isEqualToString:@"00:00:00:00:00:00"];
 }
 
+// Settings → Launching → Connect Early (on unless turned off)
+- (BOOL)connectEarlyEnabled {
+    id value = [[NSUserDefaults standardUserDefaults] objectForKey:@"StarlightConnectEarly"];
+    return value == nil || [value boolValue];
+}
+
+// Wakes a paired PC that isn't online yet, so it's ready by the time Play is pressed.
+// At most once a minute per PC; a PC that's already awake ignores the request anyway.
+- (void)connectEarlyToHost:(TemporaryHost*)host {
+    if (![self connectEarlyEnabled] || host == nil) {
+        return;
+    }
+    if (host.pairState != PairStatePaired && host.serverCert == nil) {
+        return;
+    }
+    if (host.state == StateOnline || ![self canWakeHost:host]) {
+        return;
+    }
+    if (_connectEarlyWoken == nil) {
+        _connectEarlyWoken = [NSMutableDictionary dictionary];
+    }
+    NSDate* last = _connectEarlyWoken[host.uuid];
+    if (last != nil && -[last timeIntervalSinceNow] < 60) {
+        return;
+    }
+    _connectEarlyWoken[host.uuid] = [NSDate date];
+    Log(LOG_I, @"Connect Early: waking %@", host.name);
+    [self sendWakeToHost:host];
+}
+
+// On opening / returning to the app: give discovery a few seconds to see whether the PC is up first
+- (void)scheduleConnectEarly {
+    [NSObject cancelPreviousPerformRequestsWithTarget:self selector:@selector(connectEarlyForCurrentHost) object:nil];
+    [self performSelector:@selector(connectEarlyForCurrentHost) withObject:nil afterDelay:4.0];
+}
+
+- (void)connectEarlyForCurrentHost {
+    AppDelegate* delegate = (AppDelegate*)[UIApplication sharedApplication].delegate;
+    if (_background || delegate.pendingLaunchHost != nil) {
+        // A pinned game / link launch handles waking itself
+        return;
+    }
+    [self connectEarlyToHost:[self hostWithUUID:[self homeCurrentHostUUID]]];
+}
+
 - (void)sendWakeToHost:(TemporaryHost*)host {
     dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
         [WakeOnLanManager wakeHost:host];
@@ -1506,6 +1553,10 @@ static const NSUInteger kMaxQuickActions = 4;
 
     // Check for a pending deep link launch
     [self handlePendingLaunch:NO];
+
+#if !TARGET_OS_TV
+    [self scheduleConnectEarly];
+#endif
 }
 
 -(void)handleEnterBackground
@@ -1536,6 +1587,10 @@ static const NSUInteger kMaxQuickActions = 4;
     
     // Check for a pending shortcut action when appearing
     [self handlePendingShortcutAction];
+
+#if !TARGET_OS_TV
+    [self scheduleConnectEarly];
+#endif
     
     [[NSNotificationCenter defaultCenter] addObserver: self
                                              selector: @selector(handleReturnToForeground)
@@ -2082,6 +2137,11 @@ static const NSUInteger kMaxQuickActions = 4;
 - (void)homeHostAction:(NSString*)action host:(NSString*)hostUUID {
     TemporaryHost* host = [self hostWithUUID:hostUUID];
     if (host == nil) {
+        return;
+    }
+    if ([action isEqualToString:@"connectEarly"]) {
+        // A game page was opened
+        [self connectEarlyToHost:host];
         return;
     }
     

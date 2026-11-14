@@ -576,73 +576,6 @@ enum GameCollection {
     }
 }
 
-/// Playtime and achievements on the game page (Steam games only)
-struct SteamStatsSection: View {
-    let appid: Int
-    @ObservedObject private var steam = SteamManager.shared
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            if let owned = steam.owned(appid) {
-                HStack(spacing: 22) {
-                    stat(SteamManager.formatPlaytime(owned.playtimeForever), "Played")
-                    if let recent = steam.recent(appid), recent.playtimeTwoWeeks > 0 {
-                        stat(SteamManager.formatPlaytime(recent.playtimeTwoWeeks), "Last 2 weeks")
-                    }
-                    if let last = owned.lastPlayed {
-                        stat(last.formatted(date: .abbreviated, time: .omitted), "Last played")
-                    }
-                }
-            }
-
-            if let stats = steam.achievements[appid] {
-                if !stats.achievements.isEmpty {
-                    VStack(alignment: .leading, spacing: 8) {
-                        HStack {
-                            Text("Achievements")
-                                .font(.system(size: 17, weight: .bold))
-                            Spacer()
-                            Text("\(stats.unlockedCount) of \(stats.achievements.count)")
-                                .font(.system(size: 14, weight: .semibold))
-                                .foregroundStyle(.secondary)
-                        }
-                        ProgressView(value: Double(stats.unlockedCount), total: Double(max(stats.achievements.count, 1)))
-                            .tint(starlightGold)
-                    }
-                    .frame(maxWidth: 560)
-
-                    ForEach(sorted(stats.achievements)) { achievement in
-                        AchievementRow(achievement: achievement)
-                            .gameFocus("ach-\(achievement.id)", scope: "detail", corner: 14) {}
-                    }
-                }
-            } else if steam.isConfigured {
-                HStack(spacing: 8) {
-                    ProgressView()
-                    Text("Loading Steam stats…").foregroundStyle(.secondary)
-                }
-            }
-        }
-        .task(id: appid) { await steam.loadAchievements(appid) }
-    }
-
-    private func stat(_ value: String, _ label: String) -> some View {
-        VStack(alignment: .leading, spacing: 2) {
-            Text(value).font(.system(size: 18, weight: .bold))
-            Text(label).font(.system(size: 12)).foregroundStyle(.secondary)
-        }
-    }
-
-    /// Unlocked first (most recent first), then locked from most to least common
-    private func sorted(_ list: [SteamAchievement]) -> [SteamAchievement] {
-        list.sorted { a, b in
-            if a.achieved != b.achieved { return a.achieved }
-            if a.achieved { return (a.unlocked ?? .distantPast) > (b.unlocked ?? .distantPast) }
-            return (a.percent ?? 0) > (b.percent ?? 0)
-        }
-    }
-}
-
 struct AchievementRow: View {
     let achievement: SteamAchievement
 
@@ -686,5 +619,291 @@ struct AchievementRow: View {
         .frame(maxWidth: 560)
         .modifier(PanelGlass(corner: 14))
         .accessibilityElement(children: .combine)
+    }
+}
+
+// MARK: - Store page data (description, trailers, screenshots) and official news
+
+struct SteamScreenshot: Codable, Equatable, Identifiable {
+    let id: Int
+    let thumb: String
+    let full: String
+}
+
+struct SteamMovie: Codable, Equatable, Identifiable {
+    let id: Int
+    let name: String
+    let thumb: String
+    /// HLS (H.264 + AAC): plays in AVPlayer as is
+    let hls: String
+    let highlight: Bool
+}
+
+struct SteamStoreInfo: Codable, Equatable {
+    let appid: Int
+    let shortDescription: String
+    let aboutHTML: String
+    let developers: [String]
+    let publishers: [String]
+    let genres: [String]
+    let releaseDate: String
+    let screenshots: [SteamScreenshot]
+    let movies: [SteamMovie]
+    let updated: Date
+
+    /// The trailers shown on the game page: Steam's highlighted ones, at most three
+    var featuredMovies: [SteamMovie] {
+        let highlighted = movies.filter(\.highlight)
+        return Array((highlighted.isEmpty ? movies : highlighted).prefix(3))
+    }
+}
+
+struct SteamNewsItem: Codable, Equatable, Identifiable {
+    let id: String
+    let title: String
+    let url: String
+    let author: String
+    let date: Date
+    let contents: String
+    let tags: [String]
+
+    /// Steam's "patchnotes" tag isn't set on every patch, so the title counts too
+    var isPatch: Bool {
+        if tags.contains("patchnotes") { return true }
+        let pattern = #"(?i)\b(patch|hotfix|changelog|change log|release notes|update\s*v?\d|v\d+(\.\d+)+)\b|\b\d+\.\d+(\.\d+)*\b"#
+        return title.range(of: pattern, options: .regularExpression) != nil
+    }
+}
+
+struct SteamNews: Codable, Equatable {
+    let appid: Int
+    let items: [SteamNewsItem]
+    let updated: Date
+
+    var patches: [SteamNewsItem] { items.filter(\.isPatch) }
+    var news: [SteamNewsItem] { items.filter { !$0.isPatch } }
+}
+
+/// Store details and news for the game page. No key needed; cached on disk
+/// (store details for a day, news for three hours).
+final class SteamStore: ObservableObject {
+    static let shared = SteamStore()
+
+    @Published private(set) var info: [Int: SteamStoreInfo] = [:]
+    @Published private(set) var news: [Int: SteamNews] = [:]
+    /// appids Steam has no store page for (delisted, tools…), so the page doesn't keep asking
+    private var missing: Set<Int> = []
+    private var loading: Set<String> = []
+
+    private static let infoStale: TimeInterval = 24 * 60 * 60
+    private static let newsStale: TimeInterval = 3 * 60 * 60
+
+    private static func fileURL(_ name: String) -> URL {
+        FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("Steam/\(name)")
+    }
+
+    private static func load<T: Decodable>(_ type: T.Type, _ name: String) -> T? {
+        guard let data = try? Data(contentsOf: fileURL(name)) else { return nil }
+        return try? JSONDecoder().decode(type, from: data)
+    }
+
+    private static func save<T: Encodable>(_ value: T, _ name: String) {
+        let url = fileURL(name)
+        try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        if let data = try? JSONEncoder().encode(value) { try? data.write(to: url, options: .atomic) }
+    }
+
+    private static func json(_ url: URL) async -> [String: Any]? {
+        guard let (data, response) = try? await URLSession.shared.data(from: url),
+              (response as? HTTPURLResponse)?.statusCode == 200 else { return nil }
+        return (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
+    }
+
+    @MainActor
+    func load(_ appid: Int) async {
+        async let a: Void = loadInfo(appid)
+        async let b: Void = loadNews(appid)
+        _ = await (a, b)
+    }
+
+    @MainActor
+    private func loadInfo(_ appid: Int) async {
+        if let cached = info[appid], Date().timeIntervalSince(cached.updated) < Self.infoStale { return }
+        if missing.contains(appid) { return }
+        let file = "store-\(appid).json"
+        if let stored = Self.load(SteamStoreInfo.self, file), Date().timeIntervalSince(stored.updated) < Self.infoStale {
+            info[appid] = stored
+            return
+        }
+        let key = "info-\(appid)"
+        guard !loading.contains(key) else { return }
+        loading.insert(key)
+        defer { loading.remove(key) }
+
+        guard let url = URL(string: "https://store.steampowered.com/api/appdetails?appids=\(appid)&l=english"),
+              let root = await Self.json(url),
+              let entry = root[String(appid)] as? [String: Any] else {
+            // Offline: keep showing what we had
+            if let stored = Self.load(SteamStoreInfo.self, file) { info[appid] = stored }
+            return
+        }
+        guard (entry["success"] as? Bool) == true, let data = entry["data"] as? [String: Any] else {
+            missing.insert(appid)
+            return
+        }
+        let shots: [SteamScreenshot] = (data["screenshots"] as? [[String: Any]] ?? []).compactMap { item in
+            guard let full = item["path_full"] as? String else { return nil }
+            return SteamScreenshot(id: item["id"] as? Int ?? 0, thumb: item["path_thumbnail"] as? String ?? full, full: full)
+        }
+        let movies: [SteamMovie] = (data["movies"] as? [[String: Any]] ?? []).compactMap { item in
+            guard let hls = item["hls_h264"] as? String else { return nil }
+            return SteamMovie(id: item["id"] as? Int ?? 0, name: item["name"] as? String ?? "Trailer",
+                              thumb: item["thumbnail"] as? String ?? "", hls: hls,
+                              highlight: item["highlight"] as? Bool ?? false)
+        }
+        let result = SteamStoreInfo(
+            appid: appid,
+            shortDescription: SteamText.plain(fromHTML: data["short_description"] as? String ?? ""),
+            aboutHTML: data["about_the_game"] as? String ?? data["detailed_description"] as? String ?? "",
+            developers: data["developers"] as? [String] ?? [],
+            publishers: data["publishers"] as? [String] ?? [],
+            genres: (data["genres"] as? [[String: Any]] ?? []).compactMap { $0["description"] as? String },
+            releaseDate: (data["release_date"] as? [String: Any])?["date"] as? String ?? "",
+            screenshots: shots,
+            movies: movies,
+            updated: Date())
+        info[appid] = result
+        Self.save(result, file)
+    }
+
+    @MainActor
+    private func loadNews(_ appid: Int) async {
+        if let cached = news[appid], Date().timeIntervalSince(cached.updated) < Self.newsStale { return }
+        let file = "news-\(appid).json"
+        if let stored = Self.load(SteamNews.self, file), Date().timeIntervalSince(stored.updated) < Self.newsStale {
+            news[appid] = stored
+            return
+        }
+        let key = "news-\(appid)"
+        guard !loading.contains(key) else { return }
+        loading.insert(key)
+        defer { loading.remove(key) }
+
+        // Only the developer's own announcements: without the feed filter Steam mixes in
+        // articles from news sites in any language
+        guard let url = URL(string: "https://api.steampowered.com/ISteamNews/GetNewsForApp/v2/?appid=\(appid)&count=40&maxlength=0&feeds=steam_community_announcements&format=json"),
+              let root = await Self.json(url),
+              let list = (root["appnews"] as? [String: Any])?["newsitems"] as? [[String: Any]] else {
+            if let stored = Self.load(SteamNews.self, file) { news[appid] = stored }
+            return
+        }
+        let items: [SteamNewsItem] = list.compactMap { item in
+            guard let gid = item["gid"] as? String, let title = item["title"] as? String else { return nil }
+            return SteamNewsItem(id: gid,
+                                 title: title,
+                                 url: item["url"] as? String ?? "",
+                                 author: item["author"] as? String ?? "",
+                                 date: Date(timeIntervalSince1970: item["date"] as? Double ?? 0),
+                                 contents: item["contents"] as? String ?? "",
+                                 tags: item["tags"] as? [String] ?? [])
+        }
+        let result = SteamNews(appid: appid, items: items, updated: Date())
+        news[appid] = result
+        Self.save(result, file)
+    }
+}
+
+/// Turns Steam's BBCode (news) and HTML (store descriptions) into readable text with bold, italics and links
+enum SteamText {
+    private static func replace(_ text: String, _ pattern: String, _ template: String) -> String {
+        guard let regex = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive, .dotMatchesLineSeparators]) else { return text }
+        return regex.stringByReplacingMatches(in: text, range: NSRange(text.startIndex..., in: text), withTemplate: template)
+    }
+
+    private static func decodeEntities(_ text: String) -> String {
+        var result = text
+        for (entity, value) in [("&nbsp;", " "), ("&quot;", "\""), ("&#39;", "'"), ("&apos;", "'"), ("&lt;", "<"), ("&gt;", ">"),
+                                ("&reg;", "®"), ("&trade;", "™"), ("&copy;", "©"), ("&mdash;", "—"), ("&ndash;", "–"),
+                                ("&hellip;", "…"), ("&rsquo;", "’"), ("&lsquo;", "‘"), ("&rdquo;", "”"), ("&ldquo;", "“"), ("&amp;", "&")] {
+            result = result.replacingOccurrences(of: entity, with: value)
+        }
+        return result
+    }
+
+    /// Markdown special characters in the source text would be read as formatting
+    private static func escapeMarkdown(_ text: String) -> String {
+        var result = ""
+        for ch in text {
+            if "*_`[]\\~".contains(ch) { result.append("\\") }
+            result.append(ch)
+        }
+        return result
+    }
+
+    private static func tidy(_ text: String) -> String {
+        var result = replace(text, #"[ \t]+\n"#, "\n")
+        result = replace(result, #"\n{3,}"#, "\n\n")
+        return result.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    static func plain(fromHTML html: String) -> String {
+        tidy(decodeEntities(replace(replace(html, #"<br\s*/?>"#, "\n"), #"<[^>]+>"#, "")))
+    }
+
+    /// Placeholders Steam uses for images inside announcements
+    static func imageURLs(inBBCode text: String) -> [URL] {
+        guard let regex = try? NSRegularExpression(pattern: #"\[img(?:\s+src=["']?([^"'\]\s]+)["']?)?[^\]]*\]([^\[]*)\[/img\]|\[img\s+src=["']?([^"'\]\s]+)"#, options: .caseInsensitive) else { return [] }
+        var urls: [URL] = []
+        for match in regex.matches(in: text, range: NSRange(text.startIndex..., in: text)) {
+            for group in [1, 2, 3] {
+                guard let range = Range(match.range(at: group), in: text) else { continue }
+                let raw = String(text[range]).trimmingCharacters(in: .whitespaces)
+                guard !raw.isEmpty else { continue }
+                let resolved = raw.replacingOccurrences(of: "{STEAM_CLAN_IMAGE}", with: "https://clan.akamai.steamstatic.com/images/")
+                if let url = URL(string: resolved), url.scheme?.hasPrefix("http") == true { urls.append(url) }
+                break
+            }
+        }
+        return urls
+    }
+
+    static func attributed(fromBBCode text: String) -> AttributedString {
+        var s = escapeMarkdown(text)
+        // The escape also hit the BBCode brackets: put them back
+        s = s.replacingOccurrences(of: "\\[", with: "[").replacingOccurrences(of: "\\]", with: "]")
+        s = replace(s, #"\[img[^\]]*\].*?\[/img\]|\[img[^\]]*\]"#, "")
+        s = replace(s, #"\[(previewyoutube|video)[^\]]*\].*?\[/\1\]|\[(previewyoutube|video)[^\]]*\]"#, "")
+        s = replace(s, #"\[h[1-6][^\]]*\](.*?)\[/h[1-6]\]"#, "\n\n**$1**\n")
+        s = replace(s, #"\[b\](.*?)\[/b\]"#, "**$1**")
+        s = replace(s, #"\[i\](.*?)\[/i\]"#, "*$1*")
+        s = replace(s, #"\[url=["']?([^"'\]]+)["']?\](.*?)\[/url\]"#, "[$2]($1)")
+        s = replace(s, #"\[url\](.*?)\[/url\]"#, "[$1]($1)")
+        s = replace(s, #"\[\*\]"#, "\n• ")
+        s = replace(s, #"\[/?(list|olist|ul|ol)[^\]]*\]"#, "\n")
+        s = replace(s, #"\[/p\]|\[br\]|\[hr\]\[/hr\]|\[hr\]"#, "\n\n")
+        s = replace(s, #"\[/?[a-z0-9]+(=[^\]]*)?[^\]]*\]"#, "")
+        s = decodeEntities(replace(s, #"<[^>]+>"#, ""))
+        return markdown(tidy(s))
+    }
+
+    static func attributed(fromHTML html: String) -> AttributedString {
+        var s = escapeMarkdown(html)
+        s = replace(s, #"<img[^>]*>"#, "")
+        s = replace(s, #"<h[1-6][^>]*>(.*?)</h[1-6]>"#, "\n\n**$1**\n")
+        s = replace(s, #"<(b|strong)>(.*?)</\1>"#, "**$2**")
+        s = replace(s, #"<(i|em)>(.*?)</\1>"#, "*$2*")
+        s = replace(s, #"<a [^>]*href=["']([^"']+)["'][^>]*>(.*?)</a>"#, "[$2]($1)")
+        s = replace(s, #"<li[^>]*>"#, "\n• ")
+        s = replace(s, #"<br\s*/?>|</p>|</ul>|</ol>"#, "\n\n")
+        s = decodeEntities(replace(s, #"<[^>]+>"#, ""))
+        return markdown(tidy(s))
+    }
+
+    private static func markdown(_ text: String) -> AttributedString {
+        if let result = try? AttributedString(markdown: text, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace)) {
+            return result
+        }
+        return AttributedString(text)
     }
 }
