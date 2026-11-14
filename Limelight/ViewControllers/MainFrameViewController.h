@@ -23,9 +23,6 @@
 
 // Starlight: quit the game on this PC once the stream screen has closed
 - (void)quitAppAfterStreamOnHostAddress:(NSString*)address;
-
-// Starlight: the game's page shown on the device while the stream plays on a TV (nil if the game isn't known)
-- (UIViewController*)streamCompanionForHost:(NSString*)hostUUID app:(NSString*)appID onAction:(void (^)(NSString* action))onAction;
 #endif
 
 @end

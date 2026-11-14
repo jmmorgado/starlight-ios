@@ -2378,13 +2378,6 @@ static const NSUInteger kMaxQuickActions = 4;
     return filtered;
 }
 
-- (UIViewController*)streamCompanionForHost:(NSString*)hostUUID app:(NSString*)appID onAction:(void (^)(NSString* action))onAction {
-    if (_home == nil || hostUUID == nil || appID == nil) {
-        return nil;
-    }
-    return [_home streamCompanionForHost:hostUUID app:appID onAction:onAction];
-}
-
 - (void)quitAppAfterStreamOnHostAddress:(NSString*)address {
     _pendingQuitHostAddress = address;
 }

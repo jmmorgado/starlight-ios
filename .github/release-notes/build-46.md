@@ -12,10 +12,9 @@ Turn it on in **Settings › Picture in Picture** (off by default; when off, lea
 
 Choose it in **Settings › External Display**: **Mirror** (default, the iOS behaviour) or **Second Screen**.
 
-- With Second Screen and a TV connected by USB-C (or AirPlay), the stream plays full screen on the TV and the iPhone/iPad shows the **game's page** (description, trailers, patches, news, achievements), with the stream controls in its toolbar:
-  - **Notes** per game, kept on the device.
-  - **Play on iPhone/iPad** (back to the device for the rest of the stream), **Stop Streaming** and **Quit Game**.
-- **Start + Select** opens the stream menu **on the TV**, so you can drive it with the controller from the sofa.
+- With Second Screen and a TV connected by USB-C (or AirPlay), the stream plays full screen on the TV and the iPhone/iPad shows just the game's artwork, full screen.
+- **Start + Select** opens the stream menu **on the TV**, so you can drive it with the controller from the sofa. Tapping the artwork opens it on the device.
+- With a TV connected, the stream menu has **External Display** / **Mirror Display** to switch for the current stream.
 - **Match TV Resolution** (on by default): streams at the TV's resolution (up to 4K) and refresh rate instead of the one in Stream Settings. It applies when the TV is connected before the stream starts.
 - Connecting or disconnecting the TV during a stream moves the video between the TV and the iPhone.
 - Play with a controller, and keep the iPhone unlocked: locking it ends the stream. A hub with charging (and Ethernet) helps.

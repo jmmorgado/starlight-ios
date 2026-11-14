@@ -72,17 +72,8 @@ struct GameDetailView: View {
     @ObservedObject private var steamArt = SteamOnlyArtwork.shared
     @ObservedObject private var store = SteamStore.shared
     let game: GameItem
-    /// Shown on the iPhone/iPad while the stream plays on a TV: no Play/Quit (the toolbar has the stream controls)
-    var streaming = false
     @State private var page: GameDetailPage?
     @State private var media: GameMediaViewer?
-
-    // Explicit, so the second-screen page (another file) can build it despite the private state
-    init(model: HomeModel, game: GameItem, streaming: Bool = false) {
-        self.model = model
-        self.game = game
-        self.streaming = streaming
-    }
 
     private var subtitle: String {
         var parts: [String] = []
@@ -107,7 +98,6 @@ struct GameDetailView: View {
                         .id("detail-top")
 
                     VStack(alignment: .leading, spacing: 18) {
-                        if !streaming {
                         HStack(spacing: 10) {
                             if !game.isInstalled {
                                 Label("Not on this PC", systemImage: "icloud.and.arrow.down")
@@ -170,7 +160,6 @@ struct GameDetailView: View {
                             .accessibilityLabel("Game options")
                             }
                         }
-                        }
 
                         if let appid = game.steamAppId {
                             SteamPlaytimeRow(appid: appid)
@@ -208,12 +197,11 @@ struct GameDetailView: View {
             pageView
         }
         .onAppear {
-            guard !streaming else { return }
             GameFocus.shared.push("detail")
             // Connect Early: make sure the PC is awake before Play
             if game.isInstalled { model.onHostAction?("connectEarly", game.host) }
         }
-        .onDisappear { if !streaming { GameFocus.shared.pop("detail") } }
+        .onDisappear { GameFocus.shared.pop("detail") }
         .task(id: game.steamAppId) {
             if let appid = game.steamAppId { await store.load(appid) }
         }

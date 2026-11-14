@@ -90,8 +90,8 @@ struct SettingsTab: View {
                         Text("External Display")
                     } footer: {
                         Text(externalMode == 1
-                             ? "With a TV connected by USB-C (or AirPlay), the stream plays on the TV and the iPhone shows achievements, notes and the stream controls. Play with a controller. Keep the iPhone unlocked; a hub with charging (and Ethernet) helps.\nMatch TV Resolution: stream at the TV's resolution (up to 4K) instead of the one in Stream Settings."
-                             : "Mirror: the TV shows the same as the iPhone (iOS default).")
+                             ? "With a TV connected by USB-C (or AirPlay), the stream plays on the TV and the iPhone or iPad shows the game's artwork. Start + Select opens the stream menu on the TV (tap the artwork to open it on the device). Play with a controller. Keep the iPhone unlocked; a hub with charging (and Ethernet) helps.\nMatch TV Resolution: stream at the TV's resolution (up to 4K) instead of the one in Stream Settings."
+                             : "Mirror: the TV shows the same as the iPhone (iOS default).\nWith a TV connected, the stream menu also switches between the two for the current stream.")
                     }
 
                     Section("PCs") {

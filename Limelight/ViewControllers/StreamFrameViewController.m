@@ -74,12 +74,13 @@
     BOOL _pipActive;
     BOOL _pipRestoring;
     BOOL _leavingStream;
+    BOOL _menuOnDevice;
     
     // Starlight: second screen (stream on the TV, companion panel on the iPhone)
     UIWindow *_externalWindow;
     UIViewController *_companionVC;
-    StarlightCompanionPanel *_companionPanel;
-    BOOL _externalSuppressed;
+    // Choice made in the stream menu for this stream: 0 = follow Settings, 1 = TV only, 2 = mirror
+    NSInteger _externalOverride;
 #endif
 }
 
@@ -530,13 +531,17 @@
     _streamMenu = [[StarlightStreamMenu alloc] initWithGameName:self.streamConfig.appName ?: @"Game"
                                                    statsVisible:(_statsUpdateTimer != nil)];
     [_streamMenu setPictureInPictureAvailable:[self pipCanStartManually]];
+    [_streamMenu setDisplayOption:[self displayMenuOption]];
     __weak StreamFrameViewController* weakSelf = self;
     _streamMenu.onAction = ^(NSString* action) {
         [weakSelf streamMenuAction:action];
     };
     
-    // With the stream on a TV the menu opens there, where you're looking (and you drive it with the controller)
-    UIViewController* host = _externalWindow != nil ? _externalWindow.rootViewController : self;
+    // With the stream on a TV the menu opens there, where you're looking (and you drive it with the controller);
+    // a tap on the device's artwork opens it on the device instead
+    UIViewController* host = _menuOnDevice && _companionVC != nil ? _companionVC
+        : (_externalWindow != nil ? _externalWindow.rootViewController : self);
+    _menuOnDevice = NO;
     UIViewController* menuVC = _streamMenu.viewController;
     [host addChildViewController:menuVC];
     menuVC.view.frame = host.view.bounds;
@@ -598,6 +603,12 @@
     else if ([action isEqualToString:@"pip"]) {
         [self hideStreamMenu];
         [self startPictureInPicture];
+    }
+    else if ([action isEqualToString:@"display"]) {
+        // Switch between the TV only and mirroring for the rest of this stream
+        [self hideStreamMenu];
+        _externalOverride = _externalWindow != nil ? 2 : 1;
+        [self updateExternalDisplay];
     }
     else if ([action isEqualToString:@"disconnect"]) {
         [self hideStreamMenu];
@@ -1163,14 +1174,30 @@
 - (void)externalScreensChanged:(NSNotification*)notification {
     dispatch_async(dispatch_get_main_queue(), ^{
         [self updateExternalDisplay];
+        [self->_streamMenu setDisplayOption:[self displayMenuOption]];
     });
+}
+
+// Stream menu: 0 = no TV, 1 = mirroring (offer External Display), 2 = on the TV (offer Mirror Display)
+- (NSInteger)displayMenuOption {
+    if ([self connectedExternalScene] == nil) {
+        return 0;
+    }
+    return _externalWindow != nil ? 2 : 1;
+}
+
+- (BOOL)wantsSecondScreen {
+    if (_externalOverride != 0) {
+        return _externalOverride == 1;
+    }
+    return [self externalDisplayMode] == 1;
 }
 
 - (void)updateExternalDisplay {
     if (_leavingStream) {
         return;
     }
-    UIWindowScene* scene = ([self externalDisplayMode] == 1 && !_externalSuppressed) ? [self connectedExternalScene] : nil;
+    UIWindowScene* scene = [self wantsSecondScreen] ? [self connectedExternalScene] : nil;
     if (scene != nil && _externalWindow == nil) {
         [self attachToExternalScene:scene];
     }
@@ -1275,49 +1302,31 @@
     _externalWindow = nil;
 }
 
-- (NSInteger)steamAppIdForStream {
-    NSString* host = self.streamConfig.hostUUID;
-    NSString* app = self.streamConfig.appID;
-    if (host != nil && app != nil) {
-        NSDictionary* ids = [[NSUserDefaults standardUserDefaults] dictionaryForKey:@"StarlightSteamAppIds"];
-        NSNumber* appid = ids[[NSString stringWithFormat:@"%@|%@", host, app]];
-        if (appid != nil) {
-            return appid.integerValue;
-        }
-    }
-    return 0;
-}
-
+// On the device while the stream plays on the TV: the game's artwork, full screen, nothing else.
+// A tap opens the stream menu on the device.
 - (void)showCompanionPanel {
     // Can only present once this screen is on screen (viewDidAppear calls this again)
     if (_companionVC != nil || self.view.window == nil) {
         return;
     }
-    __weak StreamFrameViewController* weakSelf = self;
-    void (^onAction)(NSString*) = ^(NSString* action) {
-        [weakSelf companionAction:action];
-    };
+    UIViewController* page = [[UIViewController alloc] init];
+    page.view.backgroundColor = [UIColor blackColor];
     
-    // The game's page (same as in the app), with the stream controls in its toolbar
-    UIViewController* root = self.navigationController.viewControllers.firstObject;
-    UIViewController* page = nil;
-    if ([root isKindOfClass:[MainFrameViewController class]]) {
-        page = [(MainFrameViewController*)root streamCompanionForHost:self.streamConfig.hostUUID
-                                                                  app:self.streamConfig.appID
-                                                             onAction:onAction];
+    SteamGridDBManager* sgdb = [SteamGridDBManager sharedManager];
+    NSString* appName = self.streamConfig.appName ?: @"";
+    NSString* path = [sgdb cachedPathForAppName:appName kind:SteamGridDBKindHero]
+        ?: [sgdb cachedPathForAppName:appName kind:SteamGridDBKindGrid];
+    UIImage* image = path != nil ? [UIImage imageWithContentsOfFile:path] : nil;
+    if (image != nil) {
+        UIImageView* art = [[UIImageView alloc] initWithFrame:page.view.bounds];
+        art.image = image;
+        art.contentMode = UIViewContentModeScaleAspectFill;
+        art.clipsToBounds = YES;
+        art.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
+        art.accessibilityLabel = [NSString stringWithFormat:@"%@, playing on the TV", appName];
+        [page.view addSubview:art];
     }
-    if (page == nil) {
-        // Game not in the list: a simpler panel with achievements and notes
-        SteamGridDBManager* sgdb = [SteamGridDBManager sharedManager];
-        NSString* appName = self.streamConfig.appName ?: @"Game";
-        NSString* heroPath = [sgdb cachedPathForAppName:appName kind:SteamGridDBKindHero]
-            ?: [sgdb cachedPathForAppName:appName kind:SteamGridDBKindGrid];
-        _companionPanel = [[StarlightCompanionPanel alloc] initWithGameName:appName
-                                                                 steamAppId:[self steamAppIdForStream]
-                                                                   heroPath:heroPath];
-        _companionPanel.onAction = onAction;
-        page = _companionPanel.viewController;
-    }
+    [page.view addGestureRecognizer:[[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(companionTapped)]];
     
     // Presented full screen, so it fills the device whatever the stream view's geometry
     page.modalPresentationStyle = UIModalPresentationOverFullScreen;
@@ -1326,26 +1335,22 @@
     [[self alertPresenter] presentViewController:page animated:YES completion:nil];
 }
 
+- (void)companionTapped {
+    if (_streamMenu != nil) {
+        return;
+    }
+    _menuOnDevice = YES;
+    [self showStreamMenu];
+}
+
 - (void)hideCompanionPanel {
     if (_companionVC == nil) {
         return;
     }
     UIViewController* page = _companionVC;
     _companionVC = nil;
-    _companionPanel = nil;
     if (page.presentingViewController != nil) {
         [page.presentingViewController dismissViewControllerAnimated:NO completion:nil];
-    }
-}
-
-- (void)companionAction:(NSString*)action {
-    if ([action isEqualToString:@"here"]) {
-        // Back to this device for the rest of this stream (iOS mirrors the TV again)
-        _externalSuppressed = YES;
-        [self detachFromExternalScreen];
-    }
-    else if ([action isEqualToString:@"disconnect"] || [action isEqualToString:@"quit"]) {
-        [self streamMenuAction:action];
     }
 }
 #endif

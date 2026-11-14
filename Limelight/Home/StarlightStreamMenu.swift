@@ -23,7 +23,7 @@ final class StarlightStreamMenu: NSObject {
         return controller
     }()
 
-    /// "resume", "keyboard", "pip", "stats", "disconnect", "quit"
+    /// "resume", "keyboard", "pip", "display", "stats", "disconnect", "quit"
     @objc var onAction: ((String) -> Void)? {
         didSet { state.onAction = onAction }
     }
@@ -44,6 +44,11 @@ final class StarlightStreamMenu: NSObject {
         state.pipAvailable = available
     }
 
+    /// With a TV connected: 1 = mirroring (offer the TV as a second screen), 2 = stream on the TV (offer mirroring), 0 = no TV
+    @objc func setDisplayOption(_ option: Int) {
+        state.displayOption = option
+    }
+
     /// Controller input: "up", "down", "select", "back"
     @objc func navigate(_ action: String) {
         state.navigate(action)
@@ -62,6 +67,7 @@ final class StreamMenuState: ObservableObject {
     let gameName: String
     @Published var statsVisible: Bool
     @Published var pipAvailable = false
+    @Published var displayOption = 0
     @Published var confirmQuit = false
     @Published var focus = 0
     var onAction: ((String) -> Void)?
@@ -84,6 +90,11 @@ final class StreamMenuState: ObservableObject {
         ]
         if pipAvailable {
             list.append(Item(id: "pip", title: "Picture in Picture", symbol: "pip.enter"))
+        }
+        if displayOption == 1 {
+            list.append(Item(id: "display", title: "External Display", symbol: "tv"))
+        } else if displayOption == 2 {
+            list.append(Item(id: "display", title: "Mirror Display", symbol: "rectangle.on.rectangle"))
         }
         list += [
             Item(id: "stats", title: statsVisible ? "Hide Statistics" : "Show Statistics", symbol: "chart.bar.xaxis"),
