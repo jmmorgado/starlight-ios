@@ -317,6 +317,9 @@ static NSMutableSet* hostList;
 - (void)showClassicHostList {
 #if !TARGET_OS_TV
     if (_home != nil) {
+        // It covered the top of the screen and the PC button. Home shows the PC as offline instead.
+        [hostScrollView removeFromSuperview];
+        [self pushHomeState];
         return;
     }
 #endif
@@ -1803,6 +1806,7 @@ static const NSUInteger kMaxQuickActions = 4;
         return;
     }
     _home = [[StarlightHomeController alloc] init];
+    [hostScrollView removeFromSuperview];
     __weak MainFrameViewController* weakSelf = self;
     
     _home.onSelectHost = ^(NSString* hostUUID) {
