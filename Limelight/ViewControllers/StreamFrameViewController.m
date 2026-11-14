@@ -23,7 +23,6 @@
 
 #if !TARGET_OS_TV
 #import <AVKit/AVKit.h>
-@import GameController;
 #endif
 
 #if TARGET_OS_TV
@@ -210,13 +209,6 @@
                                              selector:@selector(externalScreensChanged:)
                                                  name:UIScreenDidDisconnectNotification
                                                object:nil];
-    
-    if ([self pipSettingEnabled] && [self pipControllerInputEnabled]) {
-        if (@available(iOS 14.5, *)) {
-            // Keep reading the controller while the stream plays in Picture in Picture
-            GCController.shouldMonitorBackgroundEvents = YES;
-        }
-    }
 #endif
 
 #if 0
@@ -304,9 +296,6 @@
 #if !TARGET_OS_TV
         [self tearDownPictureInPicture];
         [self tearDownExternalDisplay];
-        if (@available(iOS 14.5, *)) {
-            GCController.shouldMonitorBackgroundEvents = NO;
-        }
 #endif
         [_controllerSupport cleanup];
         [UIApplication sharedApplication].idleTimerDisabled = NO;
@@ -983,10 +972,6 @@
 - (BOOL)pipAutoStartEnabled {
     id value = [[NSUserDefaults standardUserDefaults] objectForKey:@"StarlightPiPAuto"];
     return value == nil ? YES : [value boolValue];
-}
-
-- (BOOL)pipControllerInputEnabled {
-    return [[NSUserDefaults standardUserDefaults] boolForKey:@"StarlightPiPControllerInput"];
 }
 
 - (BOOL)pipKeepsStreamAlive {

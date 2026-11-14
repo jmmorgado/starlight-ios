@@ -23,7 +23,6 @@ struct SettingsTab: View {
     /// Read by StreamFrameViewController when a stream starts
     @AppStorage("StarlightPiPEnabled") private var pipEnabled = false
     @AppStorage("StarlightPiPAuto") private var pipAuto = true
-    @AppStorage("StarlightPiPControllerInput") private var pipControllerInput = false
     /// 0 = Mirror, 1 = Second Screen. Read by StreamFrameViewController and MainFrameViewController
     @AppStorage("StarlightExternalDisplayMode") private var externalMode = 0
     @AppStorage("StarlightExternalMatchResolution") private var externalMatchResolution = true
@@ -62,16 +61,12 @@ struct SettingsTab: View {
                                 Label("Start Automatically", systemImage: "arrow.down.right.and.arrow.up.left")
                             }
                             .settingsFocus("set-pipauto", scope: "settings", adjust: { pipAuto = $0 > 0 }) { pipAuto.toggle() }
-                            Toggle(isOn: $pipControllerInput) {
-                                Label("Controller in Picture in Picture", systemImage: "gamecontroller")
-                            }
-                            .settingsFocus("set-pipcontroller", scope: "settings", adjust: { pipControllerInput = $0 > 0 }) { pipControllerInput.toggle() }
                         }
                     } header: {
                         Text("Picture in Picture")
                     } footer: {
                         Text(pipEnabled
-                             ? "Start Automatically: leaving Starlight during a stream moves it to a floating window. When off, use Picture in Picture in the stream menu.\nController in Picture in Picture: your controller keeps playing while the window floats (experimental). Touch doesn't reach the PC in the window.\nThe PC keeps streaming at full quality, which uses more battery. Closing the window ends the stream."
+                             ? "Start Automatically: leaving Starlight during a stream moves it to a floating window. When off, use Picture in Picture in the stream menu.\nThe window is for watching: iOS sends the controller and touch to the app in front, not to Starlight.\nThe PC keeps streaming at full quality, which uses more battery. Closing the window ends the stream."
                              : "When off, leaving Starlight ends the stream, as before.")
                     }
 

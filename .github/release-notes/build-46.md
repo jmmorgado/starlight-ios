@@ -4,7 +4,7 @@ Turn it on in **Settings › Picture in Picture** (off by default; when off, lea
 
 - **Start Automatically** (on by default): leaving Starlight during a stream moves it to the system's floating window. Tap the window's button to go back to the full-screen stream; close the window to end the stream.
 - When automatic start is off, the stream menu has a **Picture in Picture** button.
-- **Controller in Picture in Picture** (experimental, off by default): the controller keeps sending input to the PC while the window floats. Touch never reaches the PC from the window.
+- The window is for watching: iOS sends the controller and touch to the app in front, not to Starlight.
 - The PC keeps streaming at full quality in the window, which uses more battery.
 - Video keeps playing while Starlight is in the background (the screen's refresh timer pauses there, so a separate timer feeds the video).
 
@@ -20,3 +20,9 @@ Choose it in **Settings › External Display**: **Mirror** (default, the iOS beh
 - Connecting or disconnecting the TV during a stream moves the video between the TV and the iPhone.
 - Play with a controller, and keep the iPhone unlocked: locking it ends the stream. A hub with charging (and Ethernet) helps.
 - Picture in Picture is off while the stream is on the TV.
+
+## Fixes (iPad)
+
+- The D-pad no longer reaches the game while the stream menu is open.
+- The sticks no longer move more than they should.
+- Cause: iPadOS also turns the controller's D-pad and sticks into arrow keys, and Starlight was sending those to the PC as keyboard input on top of the controller.
