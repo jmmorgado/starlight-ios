@@ -12,6 +12,7 @@
 #import "StreamManager.h"
 #import "ControllerSupport.h"
 #import "DataManager.h"
+#import "AppDelegate.h"
 #if !TARGET_OS_TV
 #import "SteamGridDBManager.h"
 #endif
@@ -201,13 +202,10 @@
                                                object: nil];
     
 #if !TARGET_OS_TV
+    // A TV connecting or disconnecting (StarlightSceneDelegate)
     [[NSNotificationCenter defaultCenter] addObserver:self
                                              selector:@selector(externalScreensChanged:)
-                                                 name:UIScreenDidConnectNotification
-                                               object:nil];
-    [[NSNotificationCenter defaultCenter] addObserver:self
-                                             selector:@selector(externalScreensChanged:)
-                                                 name:UIScreenDidDisconnectNotification
+                                                 name:StarlightExternalDisplayDidChangeNotification
                                                object:nil];
 #endif
 
@@ -1137,13 +1135,12 @@
     return [[NSUserDefaults standardUserDefaults] integerForKey:@"StarlightExternalDisplayMode"];
 }
 
-- (UIScreen*)connectedExternalScreen {
-    for (UIScreen* screen in [UIScreen screens]) {
-        if (screen != [UIScreen mainScreen]) {
-            return screen;
-        }
+- (UIWindowScene*)connectedExternalScene {
+    UIWindowScene* scene = [StarlightSceneDelegate externalDisplayScene];
+    if (scene == nil || scene.activationState == UISceneActivationStateUnattached) {
+        return nil;
     }
-    return nil;
+    return scene;
 }
 
 - (void)externalScreensChanged:(NSNotification*)notification {
@@ -1156,11 +1153,11 @@
     if (_leavingStream) {
         return;
     }
-    UIScreen* screen = ([self externalDisplayMode] == 1 && !_externalSuppressed) ? [self connectedExternalScreen] : nil;
-    if (screen != nil && _externalWindow == nil) {
-        [self attachToExternalScreen:screen];
+    UIWindowScene* scene = ([self externalDisplayMode] == 1 && !_externalSuppressed) ? [self connectedExternalScene] : nil;
+    if (scene != nil && _externalWindow == nil) {
+        [self attachToExternalScene:scene];
     }
-    else if (screen == nil && _externalWindow != nil) {
+    else if (scene == nil && _externalWindow != nil) {
         [self detachFromExternalScreen];
     }
 }
@@ -1212,7 +1209,8 @@
     [CATransaction commit];
 }
 
-- (void)attachToExternalScreen:(UIScreen*)screen {
+- (void)attachToExternalScene:(UIWindowScene*)scene {
+    UIScreen* screen = scene.screen;
     Log(LOG_I, @"External display connected (%.0fx%.0f): moving the stream to the TV",
         screen.bounds.size.width, screen.bounds.size.height);
     
@@ -1220,8 +1218,8 @@
     [self tearDownPictureInPicture];
     
     screen.overscanCompensation = UIScreenOverscanCompensationNone;
-    UIWindow* window = [[UIWindow alloc] initWithFrame:screen.bounds];
-    window.screen = screen;
+    UIWindow* window = [[UIWindow alloc] initWithWindowScene:scene];
+    window.frame = scene.coordinateSpace.bounds;
     UIViewController* root = [[UIViewController alloc] init];
     root.view.backgroundColor = [UIColor blackColor];
     window.rootViewController = root;

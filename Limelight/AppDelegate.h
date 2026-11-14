@@ -26,4 +26,24 @@
 - (NSURL *)applicationDocumentsDirectory;
 - (NSURL*) getStoreURL;
 
+// Launch requests, also called by StarlightSceneDelegate
+- (BOOL)queueLaunchFromURL:(NSURL*)url;
+- (BOOL)handleUserActivity:(NSUserActivity*)userActivity;
+#if !TARGET_OS_TV
+- (void)handleShortcutItem:(UIApplicationShortcutItem*)shortcutItem;
+#endif
+
 @end
+
+#if !TARGET_OS_TV
+// Starlight: the iOS app uses the UIScene life cycle. One scene for the app's window, and one
+// for a TV connected by cable or AirPlay (external display, non-interactive), which the stream
+// uses when Settings › External Display is set to Second Screen.
+extern NSString* const StarlightExternalDisplayDidChangeNotification;
+
+@interface StarlightSceneDelegate : UIResponder <UIWindowSceneDelegate>
+@property (strong, nonatomic) UIWindow *window;
+// The connected TV's scene, or nil
++ (UIWindowScene*)externalDisplayScene;
+@end
+#endif

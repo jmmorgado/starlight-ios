@@ -21,6 +21,10 @@ Choose it in **Settings › External Display**: **Mirror** (default, the iOS beh
 - Play with a controller, and keep the iPhone unlocked: locking it ends the stream. A hub with charging (and Ethernet) helps.
 - Picture in Picture is off while the stream is on the TV.
 
+## Under the hood
+
+- Starlight now uses the iOS scene life cycle (`UIScene`), which Apple requires for apps built with the iOS 27 SDK. The TV gets its own scene. Links, pinned games, Shortcuts and Spotlight now arrive through the scene; they should behave exactly as before.
+
 ## Fixes (iPad)
 
 - The D-pad no longer reaches the game while the stream menu is open.

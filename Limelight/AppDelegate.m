@@ -108,6 +108,10 @@ static NSString* DB_NAME = @"Limelight_iOS.sqlite";
 
 // A game tapped in Spotlight (StarlightSpotlight in StarlightHome.swift): open its game page
 - (BOOL)application:(UIApplication *)application continueUserActivity:(NSUserActivity *)userActivity restorationHandler:(void (^)(NSArray<id<UIUserActivityRestoring>> * _Nullable))restorationHandler {
+    return [self handleUserActivity:userActivity];
+}
+
+- (BOOL)handleUserActivity:(NSUserActivity*)userActivity {
     // CSSearchableItemActionType / CSSearchableItemActivityIdentifier
     if ([userActivity.activityType isEqualToString:@"com.apple.corespotlightitem"]) {
         NSString* identifier = userActivity.userInfo[@"kCSSearchableItemActivityIdentifier"];
@@ -127,6 +131,13 @@ static NSString* DB_NAME = @"Limelight_iOS.sqlite";
 }
 
 #if !TARGET_OS_TV
+// Every scene (the app's window and a connected TV) gets StarlightSceneDelegate
+- (UISceneConfiguration *)application:(UIApplication *)application configurationForConnectingSceneSession:(UISceneSession *)connectingSceneSession options:(UISceneConnectionOptions *)options {
+    UISceneConfiguration* configuration = [[UISceneConfiguration alloc] initWithName:nil sessionRole:connectingSceneSession.role];
+    configuration.delegateClass = [StarlightSceneDelegate class];
+    return configuration;
+}
+
 - (void)application:(UIApplication *)application performActionForShortcutItem:(UIApplicationShortcutItem *)shortcutItem completionHandler:(void (^)(BOOL succeeded))completionHandler {
     if ([shortcutItem.type isEqualToString:@"App"]) {
         [self handleShortcutItem:shortcutItem];
@@ -311,3 +322,80 @@ static NSString* DB_NAME = @"Limelight_iOS.sqlite";
 }
 
 @end
+
+#if !TARGET_OS_TV
+#pragma mark - Scenes (Starlight)
+
+NSString* const StarlightExternalDisplayDidChangeNotification = @"StarlightExternalDisplayDidChange";
+
+static __weak UIWindowScene* sExternalDisplayScene;
+
+@implementation StarlightSceneDelegate
+
++ (UIWindowScene*)externalDisplayScene {
+    return sExternalDisplayScene;
+}
+
+- (void)scene:(UIScene *)scene willConnectToSession:(UISceneSession *)session options:(UISceneConnectionOptions *)connectionOptions {
+    if (![scene isKindOfClass:[UIWindowScene class]]) {
+        return;
+    }
+    UIWindowScene* windowScene = (UIWindowScene*)scene;
+    
+    if (![session.role isEqualToString:UIWindowSceneSessionRoleApplication]) {
+        // A TV. Without a window iOS keeps mirroring; the stream adds one in Second Screen mode.
+        Log(LOG_I, @"External display scene connected (%@)", session.role);
+        sExternalDisplayScene = windowScene;
+        [[NSNotificationCenter defaultCenter] postNotificationName:StarlightExternalDisplayDidChangeNotification object:nil];
+        return;
+    }
+    
+    AppDelegate* app = (AppDelegate*)[UIApplication sharedApplication].delegate;
+    
+    // Cold start from a link, a pinned game or Spotlight: queue it before the main screen
+    // loads, so the main screen never shows
+    for (UIOpenURLContext* context in connectionOptions.URLContexts) {
+        [app queueLaunchFromURL:context.URL];
+    }
+    if (connectionOptions.shortcutItem != nil) {
+        [app handleShortcutItem:connectionOptions.shortcutItem];
+    }
+    for (NSUserActivity* activity in connectionOptions.userActivities) {
+        [app handleUserActivity:activity];
+    }
+    
+    NSString* storyboard = [UIDevice currentDevice].userInterfaceIdiom == UIUserInterfaceIdiomPad ? @"iPad" : @"iPhone";
+    UIWindow* window = [[UIWindow alloc] initWithWindowScene:windowScene];
+    window.rootViewController = [[UIStoryboard storyboardWithName:storyboard bundle:nil] instantiateInitialViewController];
+    self.window = window;
+    app.window = window;
+    [window makeKeyAndVisible];
+}
+
+- (void)sceneDidDisconnect:(UIScene *)scene {
+    if (scene == sExternalDisplayScene) {
+        Log(LOG_I, @"External display scene disconnected");
+        sExternalDisplayScene = nil;
+        [[NSNotificationCenter defaultCenter] postNotificationName:StarlightExternalDisplayDidChangeNotification object:nil];
+    }
+}
+
+- (void)scene:(UIScene *)scene openURLContexts:(NSSet<UIOpenURLContext *> *)URLContexts {
+    AppDelegate* app = (AppDelegate*)[UIApplication sharedApplication].delegate;
+    for (UIOpenURLContext* context in URLContexts) {
+        [app queueLaunchFromURL:context.URL];
+    }
+}
+
+- (void)scene:(UIScene *)scene continueUserActivity:(NSUserActivity *)userActivity {
+    AppDelegate* app = (AppDelegate*)[UIApplication sharedApplication].delegate;
+    [app handleUserActivity:userActivity];
+}
+
+- (void)windowScene:(UIWindowScene *)windowScene performActionForShortcutItem:(UIApplicationShortcutItem *)shortcutItem completionHandler:(void (^)(BOOL))completionHandler {
+    AppDelegate* app = (AppDelegate*)[UIApplication sharedApplication].delegate;
+    [app application:[UIApplication sharedApplication] performActionForShortcutItem:shortcutItem completionHandler:completionHandler];
+}
+
+@end
+#endif

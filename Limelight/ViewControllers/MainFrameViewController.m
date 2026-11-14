@@ -702,13 +702,7 @@ static NSMutableSet* hostList;
     if (match != nil && ![match boolValue]) {
         return;
     }
-    UIScreen* external = nil;
-    for (UIScreen* screen in [UIScreen screens]) {
-        if (screen != [UIScreen mainScreen]) {
-            external = screen;
-            break;
-        }
-    }
+    UIScreen* external = [StarlightSceneDelegate externalDisplayScene].screen;
     if (external == nil) {
         return;
     }
