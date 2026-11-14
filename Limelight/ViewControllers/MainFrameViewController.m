@@ -690,6 +690,49 @@ static NSMutableSet* hostList;
     [[self activeViewController] presentViewController:alertController animated:YES completion:nil];
 }
 
+#if !TARGET_OS_TV
+// Starlight: with External Display set to Second Screen and Match TV Resolution on, stream at the
+// TV's resolution (up to 4K) and refresh rate instead of the iPhone's
+- (void)applyExternalDisplayModeToConfig:(StreamConfiguration*)config {
+    NSUserDefaults* defaults = [NSUserDefaults standardUserDefaults];
+    if ([defaults integerForKey:@"StarlightExternalDisplayMode"] != 1) {
+        return;
+    }
+    id match = [defaults objectForKey:@"StarlightExternalMatchResolution"];
+    if (match != nil && ![match boolValue]) {
+        return;
+    }
+    UIScreen* external = nil;
+    for (UIScreen* screen in [UIScreen screens]) {
+        if (screen != [UIScreen mainScreen]) {
+            external = screen;
+            break;
+        }
+    }
+    if (external == nil) {
+        return;
+    }
+    CGSize size = external.currentMode != nil ? external.currentMode.size : external.nativeBounds.size;
+    int width = (int)MAX(size.width, size.height);
+    int height = (int)MIN(size.width, size.height);
+    if (width <= 0 || height <= 0) {
+        return;
+    }
+    if (width > 3840 || height > 2160) {
+        // Keep the TV's shape, capped at 4K
+        double scale = MIN(3840.0 / width, 2160.0 / height);
+        width = (int)(width * scale);
+        height = (int)(height * scale);
+    }
+    config.width = width & ~1;
+    config.height = height & ~1;
+    if (external.maximumFramesPerSecond > 0 && config.frameRate > external.maximumFramesPerSecond) {
+        config.frameRate = (int)external.maximumFramesPerSecond;
+    }
+    Log(LOG_I, @"External display: streaming at %dx%d %d FPS", config.width, config.height, config.frameRate);
+}
+#endif
+
 - (void) prepareToStreamApp:(TemporaryApp *)app {
 #if !TARGET_OS_TV
     [self recordLastPlayedForApp:app];
@@ -715,6 +758,10 @@ static NSMutableSet* hostList;
     
     _streamConfig.height = [streamSettings.height intValue];
     _streamConfig.width = [streamSettings.width intValue];
+#if !TARGET_OS_TV
+    _streamConfig.hostUUID = app.host.uuid;
+    [self applyExternalDisplayModeToConfig:_streamConfig];
+#endif
 #if TARGET_OS_TV
     // Don't allow streaming 4K on the Apple TV HD
     struct utsname systemInfo;

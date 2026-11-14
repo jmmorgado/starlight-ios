@@ -23,7 +23,7 @@ final class StarlightStreamMenu: NSObject {
         return controller
     }()
 
-    /// "resume", "keyboard", "stats", "disconnect", "quit"
+    /// "resume", "keyboard", "pip", "stats", "disconnect", "quit"
     @objc var onAction: ((String) -> Void)? {
         didSet { state.onAction = onAction }
     }
@@ -37,6 +37,11 @@ final class StarlightStreamMenu: NSObject {
 
     @objc func setStatsVisible(_ visible: Bool) {
         state.statsVisible = visible
+    }
+
+    /// Shows "Picture in Picture" (Settings › Picture in Picture on, and supported)
+    @objc func setPictureInPictureAvailable(_ available: Bool) {
+        state.pipAvailable = available
     }
 
     /// Controller input: "up", "down", "select", "back"
@@ -56,6 +61,7 @@ final class StreamMenuState: ObservableObject {
 
     let gameName: String
     @Published var statsVisible: Bool
+    @Published var pipAvailable = false
     @Published var confirmQuit = false
     @Published var focus = 0
     var onAction: ((String) -> Void)?
@@ -72,13 +78,19 @@ final class StreamMenuState: ObservableObject {
                 Item(id: "cancelQuit", title: "Cancel", symbol: "arrow.uturn.backward")
             ]
         }
-        return [
+        var list = [
             Item(id: "resume", title: "Back to Game", symbol: "play.fill", prominent: true),
-            Item(id: "keyboard", title: "Keyboard", symbol: "keyboard"),
+            Item(id: "keyboard", title: "Keyboard", symbol: "keyboard")
+        ]
+        if pipAvailable {
+            list.append(Item(id: "pip", title: "Picture in Picture", symbol: "pip.enter"))
+        }
+        list += [
             Item(id: "stats", title: statsVisible ? "Hide Statistics" : "Show Statistics", symbol: "chart.bar.xaxis"),
             Item(id: "disconnect", title: "Stop Streaming", symbol: "stop.fill"),
             Item(id: "askQuit", title: "Quit Game", symbol: "xmark.circle.fill", destructive: true)
         ]
+        return list
     }
 
     func activate(_ id: String) {

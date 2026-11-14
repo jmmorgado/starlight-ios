@@ -19,6 +19,9 @@
 extern int ff_isom_write_av1c(AVIOContext *pb, const uint8_t *buf, int size,
                               int write_seq_header);
 
+// TODO: Refactor this
+int DrSubmitDecodeUnit(PDECODE_UNIT decodeUnit);
+
 @implementation VideoDecoderRenderer {
     StreamView* _view;
     id<ConnectionCallbacks> _callbacks;
@@ -35,6 +38,11 @@ extern int ff_isom_write_av1c(AVIOContext *pb, const uint8_t *buf, int size,
     
     CADisplayLink* _displayLink;
     BOOL framePacing;
+    
+    // Starlight: the display link pauses while the app is in the background, so this
+    // timer keeps feeding the layer when the stream is shown in Picture in Picture
+    NSTimer* _backgroundTimer;
+    BOOL _running;
 }
 
 - (void)reinitializeDisplayLayer
@@ -109,10 +117,51 @@ extern int ff_isom_write_av1c(AVIOContext *pb, const uint8_t *buf, int size,
         _displayLink.preferredFramesPerSecond = self->frameRate;
     }
     [_displayLink addToRunLoop:[NSRunLoop mainRunLoop] forMode:NSDefaultRunLoopMode];
+    
+    _running = YES;
+    [[NSNotificationCenter defaultCenter] addObserver:self
+                                             selector:@selector(applicationDidEnterBackground:)
+                                                 name:UIApplicationDidEnterBackgroundNotification
+                                               object:nil];
+    [[NSNotificationCenter defaultCenter] addObserver:self
+                                             selector:@selector(applicationWillEnterForeground:)
+                                                 name:UIApplicationWillEnterForegroundNotification
+                                               object:nil];
 }
 
-// TODO: Refactor this
-int DrSubmitDecodeUnit(PDECODE_UNIT decodeUnit);
+#pragma mark - Background frame pump (Starlight, Picture in Picture)
+
+- (void)applicationDidEnterBackground:(NSNotification*)notification {
+    if (!_running || _backgroundTimer != nil) {
+        return;
+    }
+    // If the stream isn't kept alive (no Picture in Picture), it is torn down right after
+    // this and stop() invalidates the timer
+    int rate = self->frameRate > 0 ? self->frameRate : 60;
+    _backgroundTimer = [NSTimer timerWithTimeInterval:1.0 / rate
+                                               target:self
+                                             selector:@selector(backgroundTimerFired:)
+                                             userInfo:nil
+                                              repeats:YES];
+    [[NSRunLoop mainRunLoop] addTimer:_backgroundTimer forMode:NSRunLoopCommonModes];
+}
+
+- (void)applicationWillEnterForeground:(NSNotification*)notification {
+    [_backgroundTimer invalidate];
+    _backgroundTimer = nil;
+}
+
+- (void)backgroundTimerFired:(NSTimer*)timer {
+    if (!_running) {
+        return;
+    }
+    VIDEO_FRAME_HANDLE handle;
+    PDECODE_UNIT du;
+    while (LiPollNextVideoFrame(&handle, &du)) {
+        LiCompleteVideoFrame(handle, DrSubmitDecodeUnit(du));
+    }
+}
+
 
 - (void)displayLinkCallback:(CADisplayLink *)sender
 {
@@ -143,6 +192,14 @@ int DrSubmitDecodeUnit(PDECODE_UNIT decodeUnit);
 - (void)stop
 {
     [_displayLink invalidate];
+    
+    _running = NO;
+    [[NSNotificationCenter defaultCenter] removeObserver:self];
+    // The timer lives on the main run loop and must be invalidated there
+    dispatch_async(dispatch_get_main_queue(), ^{
+        [self->_backgroundTimer invalidate];
+        self->_backgroundTimer = nil;
+    });
 }
 
 #define NALU_START_PREFIX_SIZE 3

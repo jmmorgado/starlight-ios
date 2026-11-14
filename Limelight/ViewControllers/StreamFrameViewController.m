@@ -21,6 +21,11 @@
 #include <arpa/inet.h>
 #include <Limelight.h>
 
+#if !TARGET_OS_TV
+#import <AVKit/AVKit.h>
+@import GameController;
+#endif
+
 #if TARGET_OS_TV
 #import <AVFoundation/AVDisplayCriteria.h>
 #import <AVKit/AVDisplayManager.h>
@@ -32,6 +37,11 @@
 @property(readonly, nonatomic) float refreshRate;
 - (id)initWithRefreshRate:(float)arg1 videoDynamicRange:(int)arg2;
 @end
+
+#if !TARGET_OS_TV
+@interface StreamFrameViewController () <AVPictureInPictureControllerDelegate, AVPictureInPictureSampleBufferPlaybackDelegate>
+@end
+#endif
 
 @implementation StreamFrameViewController {
     ControllerSupport *_controllerSupport;
@@ -57,6 +67,18 @@
     
 #if !TARGET_OS_TV
     UIScreenEdgePanGestureRecognizer *_exitSwipeRecognizer;
+    
+    // Starlight: Picture in Picture (AVPictureInPictureController, iOS 15+)
+    id _pipController;
+    BOOL _pipStarting;
+    BOOL _pipActive;
+    BOOL _pipRestoring;
+    BOOL _leavingStream;
+    
+    // Starlight: second screen (stream on the TV, companion panel on the iPhone)
+    UIWindow *_externalWindow;
+    StarlightCompanionPanel *_companion;
+    BOOL _externalSuppressed;
 #endif
 }
 
@@ -178,6 +200,24 @@
                                              selector: @selector(applicationDidEnterBackground:)
                                                  name: UIApplicationDidEnterBackgroundNotification
                                                object: nil];
+    
+#if !TARGET_OS_TV
+    [[NSNotificationCenter defaultCenter] addObserver:self
+                                             selector:@selector(externalScreensChanged:)
+                                                 name:UIScreenDidConnectNotification
+                                               object:nil];
+    [[NSNotificationCenter defaultCenter] addObserver:self
+                                             selector:@selector(externalScreensChanged:)
+                                                 name:UIScreenDidDisconnectNotification
+                                               object:nil];
+    
+    if ([self pipSettingEnabled] && [self pipControllerInputEnabled]) {
+        if (@available(iOS 14.5, *)) {
+            // Keep reading the controller while the stream plays in Picture in Picture
+            GCController.shouldMonitorBackgroundEvents = YES;
+        }
+    }
+#endif
 
 #if 0
     // FIXME: This doesn't work reliably on iPad for some reason. Showing and hiding the keyboard
@@ -245,6 +285,13 @@
     [self.view addSubview:_stageLabel];
     [self.view addSubview:_spinner];
     [self.view addSubview:_tipLabel];
+    
+#if !TARGET_OS_TV
+    // A TV may already be connected when the stream starts
+    dispatch_async(dispatch_get_main_queue(), ^{
+        [self updateExternalDisplay];
+    });
+#endif
 }
 
 - (UIView *)viewForZoomingInScrollView:(UIScrollView *)scrollView {
@@ -254,6 +301,13 @@
 - (void)willMoveToParentViewController:(UIViewController *)parent {
     // Only cleanup when we're being destroyed
     if (parent == nil) {
+#if !TARGET_OS_TV
+        [self tearDownPictureInPicture];
+        [self tearDownExternalDisplay];
+        if (@available(iOS 14.5, *)) {
+            GCController.shouldMonitorBackgroundEvents = NO;
+        }
+#endif
         [_controllerSupport cleanup];
         [UIApplication sharedApplication].idleTimerDisabled = NO;
         [_streamMan stopStream];
@@ -342,6 +396,12 @@
 }
 
 - (void) returnToMainFrame {
+#if !TARGET_OS_TV
+    _leavingStream = YES;
+    [self tearDownPictureInPicture];
+    [self tearDownExternalDisplay];
+#endif
+    
     // Reset display mode back to default
     [self updatePreferredDisplayMode:NO];
     
@@ -369,6 +429,13 @@
 }
 
 - (void)inactiveTimerExpired:(NSTimer*)timer {
+#if !TARGET_OS_TV
+    if ([self pipKeepsStreamAlive]) {
+        Log(LOG_I, @"Inactivity timer expired, but the stream is in Picture in Picture");
+        _inactivityTimer = nil;
+        return;
+    }
+#endif
     Log(LOG_I, @"Terminating stream after inactivity");
 
     [self returnToMainFrame];
@@ -383,10 +450,43 @@
         [_inactivityTimer invalidate];
         _inactivityTimer = nil;
     }
+
+#if !TARGET_OS_TV
+    // Opening Starlight again (from its icon) brings the stream back full screen
+    if (_pipActive) {
+        if (@available(iOS 15.0, *)) {
+            _pipRestoring = YES;
+            [(AVPictureInPictureController*)_pipController stopPictureInPicture];
+        }
+    }
+#endif
 }
 
 // This fires when the home button is pressed
 - (void)applicationDidEnterBackground:(UIApplication *)application {
+#if !TARGET_OS_TV
+    // Starlight: Picture in Picture keeps the stream going in the background
+    if ([self pipKeepsStreamAlive]) {
+        Log(LOG_I, @"Entering background with the stream in Picture in Picture");
+        return;
+    }
+    if ([self pipCanStartAutomatically]) {
+        // The automatic start may still be on its way: give it a moment before tearing down
+        Log(LOG_I, @"Entering background: waiting for Picture in Picture to start");
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.5 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+            if ([UIApplication sharedApplication].applicationState == UIApplicationStateBackground &&
+                ![self pipKeepsStreamAlive] && !self->_leavingStream) {
+                Log(LOG_I, @"Picture in Picture didn't start: terminating stream for backgrounding");
+                [self terminateForBackgrounding];
+            }
+        });
+        return;
+    }
+#endif
+    [self terminateForBackgrounding];
+}
+
+- (void)terminateForBackgrounding {
     Log(LOG_I, @"Terminating stream immediately for backgrounding");
 
     if (_inactivityTimer != nil) {
@@ -436,6 +536,7 @@
     }
     _streamMenu = [[StarlightStreamMenu alloc] initWithGameName:self.streamConfig.appName ?: @"Game"
                                                    statsVisible:(_statsUpdateTimer != nil)];
+    [_streamMenu setPictureInPictureAvailable:[self pipCanStartManually]];
     __weak StreamFrameViewController* weakSelf = self;
     _streamMenu.onAction = ^(NSString* action) {
         [weakSelf streamMenuAction:action];
@@ -489,6 +590,10 @@
             [self updateStatsOverlay];
         }
         [_streamMenu setStatsVisible:(_statsUpdateTimer != nil)];
+    }
+    else if ([action isEqualToString:@"pip"]) {
+        [self hideStreamMenu];
+        [self startPictureInPicture];
     }
     else if ([action isEqualToString:@"disconnect"]) {
         [self hideStreamMenu];
@@ -771,6 +876,10 @@
 - (void) videoContentShown {
     [_spinner stopAnimating];
     [self.view setBackgroundColor:[UIColor blackColor]];
+#if !TARGET_OS_TV
+    // Called on every IDR frame: also picks up a display layer recreated after a decoder error
+    [self setupPictureInPicture];
+#endif
 }
 
 - (void)didReceiveMemoryWarning
@@ -827,10 +936,14 @@
 #if !TARGET_OS_TV
 // Require a confirmation when streaming to activate a system gesture
 - (UIRectEdge)preferredScreenEdgesDeferringSystemGestures {
-    return UIRectEdgeAll;
+    // With the stream on the TV, the iPhone shows a normal interface
+    return _externalWindow != nil ? UIRectEdgeNone : UIRectEdgeAll;
 }
 
 - (BOOL)prefersHomeIndicatorAutoHidden {
+    if (_externalWindow != nil) {
+        return NO;
+    }
     if ([_controllerSupport getConnectedGamepadCount] > 0 &&
         [_streamView getCurrentOscState] == OnScreenControlsLevelOff &&
         _userIsInteracting == NO) {
@@ -856,6 +969,371 @@
     // GCMouse is horribly broken on iOS 14.0 for certain mice. Only lock
     // the cursor if there is a GCMouse present.
     return [GCMouse mice].count > 0;
+}
+#endif
+
+
+#if !TARGET_OS_TV
+#pragma mark - Picture in Picture (Starlight)
+
+- (BOOL)pipSettingEnabled {
+    return [[NSUserDefaults standardUserDefaults] boolForKey:@"StarlightPiPEnabled"];
+}
+
+- (BOOL)pipAutoStartEnabled {
+    id value = [[NSUserDefaults standardUserDefaults] objectForKey:@"StarlightPiPAuto"];
+    return value == nil ? YES : [value boolValue];
+}
+
+- (BOOL)pipControllerInputEnabled {
+    return [[NSUserDefaults standardUserDefaults] boolForKey:@"StarlightPiPControllerInput"];
+}
+
+- (BOOL)pipKeepsStreamAlive {
+    return _pipStarting || _pipActive;
+}
+
+- (BOOL)pipCanStartAutomatically {
+    if (@available(iOS 15.0, *)) {
+        AVPictureInPictureController* pip = _pipController;
+        return pip != nil && pip.canStartPictureInPictureAutomaticallyFromInline;
+    }
+    return NO;
+}
+
+- (BOOL)pipCanStartManually {
+    if (@available(iOS 15.0, *)) {
+        AVPictureInPictureController* pip = _pipController;
+        return pip != nil && !pip.isPictureInPictureActive;
+    }
+    return NO;
+}
+
+- (AVSampleBufferDisplayLayer*)currentDisplayLayer {
+    for (CALayer* layer in _streamView.layer.sublayers) {
+        if ([layer isKindOfClass:[AVSampleBufferDisplayLayer class]]) {
+            return (AVSampleBufferDisplayLayer*)layer;
+        }
+    }
+    return nil;
+}
+
+- (void)setupPictureInPicture {
+    // Not while the stream is on the TV: it can't be in two places
+    if (![self pipSettingEnabled] || _externalWindow != nil || _leavingStream) {
+        return;
+    }
+    if (@available(iOS 15.0, *)) {
+        if (![AVPictureInPictureController isPictureInPictureSupported]) {
+            return;
+        }
+        AVSampleBufferDisplayLayer* layer = [self currentDisplayLayer];
+        if (layer == nil) {
+            return;
+        }
+        AVPictureInPictureController* pip = _pipController;
+        if (pip != nil && pip.contentSource.sampleBufferDisplayLayer == layer) {
+            return;
+        }
+        AVPictureInPictureControllerContentSource* source =
+            [[AVPictureInPictureControllerContentSource alloc] initWithSampleBufferDisplayLayer:layer
+                                                                               playbackDelegate:self];
+        if (pip != nil) {
+            // The renderer recreated its layer (decoder error): point PiP at the new one
+            pip.contentSource = source;
+            return;
+        }
+        pip = [[AVPictureInPictureController alloc] initWithContentSource:source];
+        pip.delegate = self;
+        pip.requiresLinearPlayback = YES;
+        pip.canStartPictureInPictureAutomaticallyFromInline = [self pipAutoStartEnabled];
+        _pipController = pip;
+        Log(LOG_I, @"Picture in Picture ready (automatic start: %d)", [self pipAutoStartEnabled]);
+    }
+}
+
+- (void)startPictureInPicture {
+    if (@available(iOS 15.0, *)) {
+        AVPictureInPictureController* pip = _pipController;
+        if (pip != nil && pip.isPictureInPicturePossible) {
+            [pip startPictureInPicture];
+        }
+        else {
+            Log(LOG_W, @"Picture in Picture isn't possible right now");
+        }
+    }
+}
+
+- (void)tearDownPictureInPicture {
+    if (@available(iOS 15.0, *)) {
+        AVPictureInPictureController* pip = _pipController;
+        _pipController = nil;
+        if (pip != nil) {
+            pip.delegate = nil;
+            if (pip.isPictureInPictureActive) {
+                [pip stopPictureInPicture];
+            }
+        }
+    }
+    _pipStarting = NO;
+    _pipActive = NO;
+}
+
+// AVPictureInPictureSampleBufferPlaybackDelegate: a live stream, never paused, no timeline
+
+- (void)pictureInPictureController:(AVPictureInPictureController *)pictureInPictureController setPlaying:(BOOL)playing API_AVAILABLE(ios(15.0)) {
+}
+
+- (CMTimeRange)pictureInPictureControllerTimeRangeForPlayback:(AVPictureInPictureController *)pictureInPictureController API_AVAILABLE(ios(15.0)) {
+    return CMTimeRangeMake(kCMTimeNegativeInfinity, kCMTimePositiveInfinity);
+}
+
+- (BOOL)pictureInPictureControllerIsPlaybackPaused:(AVPictureInPictureController *)pictureInPictureController API_AVAILABLE(ios(15.0)) {
+    return NO;
+}
+
+- (void)pictureInPictureController:(AVPictureInPictureController *)pictureInPictureController didTransitionToRenderSize:(CMVideoDimensions)newRenderSize API_AVAILABLE(ios(15.0)) {
+}
+
+- (void)pictureInPictureController:(AVPictureInPictureController *)pictureInPictureController skipByInterval:(CMTime)skipInterval completionHandler:(void (^)(void))completionHandler API_AVAILABLE(ios(15.0)) {
+    completionHandler();
+}
+
+// AVPictureInPictureControllerDelegate
+
+- (void)pictureInPictureControllerWillStartPictureInPicture:(AVPictureInPictureController *)pictureInPictureController {
+    Log(LOG_I, @"Picture in Picture starting");
+    _pipStarting = YES;
+    [self hideStreamMenu];
+}
+
+- (void)pictureInPictureControllerDidStartPictureInPicture:(AVPictureInPictureController *)pictureInPictureController {
+    _pipStarting = NO;
+    _pipActive = YES;
+    // The stream continues in the background: don't let the inactivity timer end it
+    if (_inactivityTimer != nil) {
+        [_inactivityTimer invalidate];
+        _inactivityTimer = nil;
+    }
+}
+
+- (void)pictureInPictureController:(AVPictureInPictureController *)pictureInPictureController failedToStartPictureInPictureWithError:(NSError *)error {
+    Log(LOG_W, @"Picture in Picture failed to start: %@", error);
+    _pipStarting = NO;
+    _pipActive = NO;
+    if ([UIApplication sharedApplication].applicationState == UIApplicationStateBackground && !_leavingStream) {
+        [self terminateForBackgrounding];
+    }
+}
+
+- (void)pictureInPictureController:(AVPictureInPictureController *)pictureInPictureController restoreUserInterfaceForPictureInPictureStopWithCompletionHandler:(void (^)(BOOL))completionHandler {
+    // The user tapped the button to go back to the full-screen stream
+    _pipRestoring = YES;
+    completionHandler(YES);
+}
+
+- (void)pictureInPictureControllerDidStopPictureInPicture:(AVPictureInPictureController *)pictureInPictureController {
+    BOOL restoring = _pipRestoring;
+    _pipRestoring = NO;
+    _pipActive = NO;
+    _pipStarting = NO;
+    if (!restoring && !_leavingStream &&
+        [UIApplication sharedApplication].applicationState != UIApplicationStateActive) {
+        // The PiP window was closed while Starlight is in the background: end the stream
+        Log(LOG_I, @"Picture in Picture closed: ending the stream");
+        [self terminateForBackgrounding];
+    }
+}
+
+#pragma mark - External display (Starlight)
+
+// 0 = Mirror (iOS default), 1 = Second Screen
+- (NSInteger)externalDisplayMode {
+    return [[NSUserDefaults standardUserDefaults] integerForKey:@"StarlightExternalDisplayMode"];
+}
+
+- (UIScreen*)connectedExternalScreen {
+    for (UIScreen* screen in [UIScreen screens]) {
+        if (screen != [UIScreen mainScreen]) {
+            return screen;
+        }
+    }
+    return nil;
+}
+
+- (void)externalScreensChanged:(NSNotification*)notification {
+    dispatch_async(dispatch_get_main_queue(), ^{
+        [self updateExternalDisplay];
+    });
+}
+
+- (void)updateExternalDisplay {
+    if (_leavingStream) {
+        return;
+    }
+    UIScreen* screen = ([self externalDisplayMode] == 1 && !_externalSuppressed) ? [self connectedExternalScreen] : nil;
+    if (screen != nil && _externalWindow == nil) {
+        [self attachToExternalScreen:screen];
+    }
+    else if (screen == nil && _externalWindow != nil) {
+        [self detachFromExternalScreen];
+    }
+}
+
+// The view that holds the video: the zoomable scroll view in touchscreen mode, else the stream view
+- (UIView*)streamContainer {
+    return _scrollView != nil ? (UIView*)_scrollView : (UIView*)_streamView;
+}
+
+- (void)moveStreamContainerTo:(UIView*)parent frame:(CGRect)frame atBottom:(BOOL)atBottom {
+    UIView* container = [self streamContainer];
+    [container removeFromSuperview];
+    if (_scrollView != nil) {
+        _scrollView.zoomScale = 1.0;
+    }
+    container.frame = frame;
+    container.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
+    if (_scrollView != nil) {
+        _streamView.frame = _scrollView.bounds;
+    }
+    if (atBottom) {
+        [parent insertSubview:container atIndex:0];
+    }
+    else {
+        [parent addSubview:container];
+    }
+    [self layoutDisplayLayer];
+}
+
+// Same sizing rule as VideoDecoderRenderer: fit the stream's aspect ratio inside the view
+- (void)layoutDisplayLayer {
+    AVSampleBufferDisplayLayer* layer = [self currentDisplayLayer];
+    if (layer == nil || self.streamConfig.height == 0) {
+        return;
+    }
+    CGRect bounds = _streamView.bounds;
+    CGFloat aspect = (CGFloat)self.streamConfig.width / (CGFloat)self.streamConfig.height;
+    CGSize size;
+    if (bounds.size.width > bounds.size.height * aspect) {
+        size = CGSizeMake(bounds.size.height * aspect, bounds.size.height);
+    }
+    else {
+        size = CGSizeMake(bounds.size.width, bounds.size.width / aspect);
+    }
+    [CATransaction begin];
+    [CATransaction setDisableActions:YES];
+    layer.position = CGPointMake(CGRectGetMidX(bounds), CGRectGetMidY(bounds));
+    layer.bounds = CGRectMake(0, 0, size.width, size.height);
+    [CATransaction commit];
+}
+
+- (void)attachToExternalScreen:(UIScreen*)screen {
+    Log(LOG_I, @"External display connected (%.0fx%.0f): moving the stream to the TV",
+        screen.bounds.size.width, screen.bounds.size.height);
+    
+    // Picture in Picture needs the video on the iPhone
+    [self tearDownPictureInPicture];
+    
+    screen.overscanCompensation = UIScreenOverscanCompensationNone;
+    UIWindow* window = [[UIWindow alloc] initWithFrame:screen.bounds];
+    window.screen = screen;
+    UIViewController* root = [[UIViewController alloc] init];
+    root.view.backgroundColor = [UIColor blackColor];
+    window.rootViewController = root;
+    window.hidden = NO;
+    _externalWindow = window;
+    
+    [self moveStreamContainerTo:root.view frame:window.bounds atBottom:NO];
+    [self showCompanionPanel];
+    
+    [self setNeedsUpdateOfScreenEdgesDeferringSystemGestures];
+    [self setNeedsUpdateOfHomeIndicatorAutoHidden];
+}
+
+- (void)detachFromExternalScreen {
+    Log(LOG_I, @"Moving the stream back to the iPhone");
+    [self hideCompanionPanel];
+    [self moveStreamContainerTo:self.view frame:self.view.bounds atBottom:YES];
+    _externalWindow.hidden = YES;
+    _externalWindow = nil;
+    
+    [self setNeedsUpdateOfScreenEdgesDeferringSystemGestures];
+    [self setNeedsUpdateOfHomeIndicatorAutoHidden];
+    [self setupPictureInPicture];
+}
+
+// Stream is ending: just let go of the TV (iOS goes back to mirroring)
+- (void)tearDownExternalDisplay {
+    if (_externalWindow == nil) {
+        return;
+    }
+    [self hideCompanionPanel];
+    _externalWindow.hidden = YES;
+    _externalWindow = nil;
+}
+
+- (NSInteger)steamAppIdForStream {
+    NSString* host = self.streamConfig.hostUUID;
+    NSString* app = self.streamConfig.appID;
+    if (host != nil && app != nil) {
+        NSDictionary* ids = [[NSUserDefaults standardUserDefaults] dictionaryForKey:@"StarlightSteamAppIds"];
+        NSNumber* appid = ids[[NSString stringWithFormat:@"%@|%@", host, app]];
+        if (appid != nil) {
+            return appid.integerValue;
+        }
+    }
+    return 0;
+}
+
+- (void)showCompanionPanel {
+    if (_companion != nil) {
+        return;
+    }
+    SteamGridDBManager* sgdb = [SteamGridDBManager sharedManager];
+    NSString* appName = self.streamConfig.appName ?: @"Game";
+    NSString* heroPath = [sgdb cachedPathForAppName:appName kind:SteamGridDBKindHero]
+        ?: [sgdb cachedPathForAppName:appName kind:SteamGridDBKindGrid];
+    _companion = [[StarlightCompanionPanel alloc] initWithGameName:appName
+                                                        steamAppId:[self steamAppIdForStream]
+                                                          heroPath:heroPath];
+    __weak StreamFrameViewController* weakSelf = self;
+    _companion.onAction = ^(NSString* action) {
+        [weakSelf companionAction:action];
+    };
+    UIViewController* panelVC = _companion.viewController;
+    [self addChildViewController:panelVC];
+    panelVC.view.frame = self.view.bounds;
+    panelVC.view.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
+    if (_streamMenu != nil) {
+        // Keep the stream menu on top
+        [self.view insertSubview:panelVC.view belowSubview:_streamMenu.viewController.view];
+    }
+    else {
+        [self.view addSubview:panelVC.view];
+    }
+    [panelVC didMoveToParentViewController:self];
+}
+
+- (void)hideCompanionPanel {
+    if (_companion == nil) {
+        return;
+    }
+    UIViewController* panelVC = _companion.viewController;
+    _companion = nil;
+    [panelVC willMoveToParentViewController:nil];
+    [panelVC.view removeFromSuperview];
+    [panelVC removeFromParentViewController];
+}
+
+- (void)companionAction:(NSString*)action {
+    if ([action isEqualToString:@"iphone"]) {
+        // Back to the iPhone for the rest of this stream (iOS mirrors the TV again)
+        _externalSuppressed = YES;
+        [self detachFromExternalScreen];
+    }
+    else if ([action isEqualToString:@"disconnect"] || [action isEqualToString:@"quit"]) {
+        [self streamMenuAction:action];
+    }
 }
 #endif
 

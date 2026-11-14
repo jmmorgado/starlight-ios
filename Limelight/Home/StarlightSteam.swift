@@ -269,9 +269,10 @@ final class SteamManager: ObservableObject {
 
     /// Player progress + names/icons + global rarity for one game, cached for a few hours
     @MainActor
-    func loadAchievements(_ appid: Int) async {
-        if let cached = achievements[appid], Date().timeIntervalSince(cached.updated) < Self.staleAfter { return }
-        if let stored = Self.loadStats(appid), Date().timeIntervalSince(stored.updated) < Self.staleAfter {
+    /// force: skip the cache (the second-screen panel refreshes during play)
+    func loadAchievements(_ appid: Int, force: Bool = false) async {
+        if !force, let cached = achievements[appid], Date().timeIntervalSince(cached.updated) < Self.staleAfter { return }
+        if !force, let stored = Self.loadStats(appid), Date().timeIntervalSince(stored.updated) < Self.staleAfter {
             achievements[appid] = stored
             return
         }

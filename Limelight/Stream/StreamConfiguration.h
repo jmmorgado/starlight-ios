@@ -14,6 +14,8 @@
 @property NSString* gfeVersion;
 @property NSString* appID;
 @property NSString* appName;
+// Starlight: the PC's UUID, used to look up the game's Steam appid during the stream
+@property NSString* hostUUID;
 @property NSString* rtspSessionUrl;
 @property int serverCodecModeSupport;
 @property int width;

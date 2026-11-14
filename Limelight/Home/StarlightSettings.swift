@@ -20,6 +20,13 @@ struct SettingsTab: View {
     @AppStorage("StarlightAutoWake") private var autoWake = true
     /// Read by MainFrameViewController on opening the app and a game page
     @AppStorage("StarlightConnectEarly") private var connectEarly = true
+    /// Read by StreamFrameViewController when a stream starts
+    @AppStorage("StarlightPiPEnabled") private var pipEnabled = false
+    @AppStorage("StarlightPiPAuto") private var pipAuto = true
+    @AppStorage("StarlightPiPControllerInput") private var pipControllerInput = false
+    /// 0 = Mirror, 1 = Second Screen. Read by StreamFrameViewController and MainFrameViewController
+    @AppStorage("StarlightExternalDisplayMode") private var externalMode = 0
+    @AppStorage("StarlightExternalMatchResolution") private var externalMatchResolution = true
 
     private var version: String {
         let info = Bundle.main.infoDictionary
@@ -43,6 +50,53 @@ struct SettingsTab: View {
                             Label("Stream Settings", systemImage: "slider.horizontal.3")
                         }
                         .settingsFocus("set-stream", scope: "settings") { route = "stream" }
+                    }
+
+                    Section {
+                        Toggle(isOn: $pipEnabled) {
+                            Label("Picture in Picture", systemImage: "pip")
+                        }
+                        .settingsFocus("set-pip", scope: "settings", adjust: { pipEnabled = $0 > 0 }) { pipEnabled.toggle() }
+                        if pipEnabled {
+                            Toggle(isOn: $pipAuto) {
+                                Label("Start Automatically", systemImage: "arrow.down.right.and.arrow.up.left")
+                            }
+                            .settingsFocus("set-pipauto", scope: "settings", adjust: { pipAuto = $0 > 0 }) { pipAuto.toggle() }
+                            Toggle(isOn: $pipControllerInput) {
+                                Label("Controller in Picture in Picture", systemImage: "gamecontroller")
+                            }
+                            .settingsFocus("set-pipcontroller", scope: "settings", adjust: { pipControllerInput = $0 > 0 }) { pipControllerInput.toggle() }
+                        }
+                    } header: {
+                        Text("Picture in Picture")
+                    } footer: {
+                        Text(pipEnabled
+                             ? "Start Automatically: leaving Starlight during a stream moves it to a floating window. When off, use Picture in Picture in the stream menu.\nController in Picture in Picture: your controller keeps playing while the window floats (experimental). Touch doesn't reach the PC in the window.\nThe PC keeps streaming at full quality, which uses more battery. Closing the window ends the stream."
+                             : "When off, leaving Starlight ends the stream, as before.")
+                    }
+
+                    Section {
+                        Picker(selection: $externalMode) {
+                            Text("Mirror").tag(0)
+                            Text("Second Screen").tag(1)
+                        } label: {
+                            Label("External Display", systemImage: "tv")
+                        }
+                        .settingsFocus("set-external", scope: "settings", adjust: { externalMode = $0 > 0 ? 1 : 0 }) {
+                            externalMode = externalMode == 0 ? 1 : 0
+                        }
+                        if externalMode == 1 {
+                            Toggle(isOn: $externalMatchResolution) {
+                                Label("Match TV Resolution", systemImage: "rectangle.expand.vertical")
+                            }
+                            .settingsFocus("set-externalres", scope: "settings", adjust: { externalMatchResolution = $0 > 0 }) { externalMatchResolution.toggle() }
+                        }
+                    } header: {
+                        Text("External Display")
+                    } footer: {
+                        Text(externalMode == 1
+                             ? "With a TV connected by USB-C (or AirPlay), the stream plays on the TV and the iPhone shows achievements, notes and the stream controls. Play with a controller. Keep the iPhone unlocked; a hub with charging (and Ethernet) helps.\nMatch TV Resolution: stream at the TV's resolution (up to 4K) instead of the one in Stream Settings."
+                             : "Mirror: the TV shows the same as the iPhone (iOS default).")
                     }
 
                     Section("PCs") {
