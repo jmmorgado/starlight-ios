@@ -35,7 +35,15 @@
                 // Unhandled press type
                 return NO;
         }
-        
+
+#if !TARGET_OS_TV
+        // Starlight: on iOS a real keyboard always sets press.key. Arrow presses without a key come
+        // from a game controller (iPadOS turns the D-pad and sticks into arrows for UI navigation).
+        // The controller already reaches the PC as a gamepad, so sending these as keys doubled the
+        // stick movement and got past the stream menu. Swallow them.
+        return YES;
+#endif
+
         LiSendKeyboardEvent(0x8000 | keyCode,
                             down ? KEY_ACTION_DOWN : KEY_ACTION_UP,
                             0);
