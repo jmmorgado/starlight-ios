@@ -304,7 +304,7 @@ struct HomeCarousel: View {
                 .frame(width: width, height: height)
                 .clipped()
 
-            if isCurrent, let player = player {
+            if isCurrent, let player = playback.player {
                 TrailerLayerView(player: player)
                     .frame(width: width, height: height)
                     .clipped()
