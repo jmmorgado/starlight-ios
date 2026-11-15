@@ -22,3 +22,9 @@
 - The trailer's sound button is white, like the other icons at the top right.
 - iPad Search: the search field is always open at the top and gets the keyboard as soon as you open the tab (no second magnifier).
 - iPad: the carousel and game page art continue under the glass sidebar.
+
+## Top bar
+
+- The PC button and the status (time, controller, network, battery) are now one capsule; tapping it opens the PC menu. The trailer's sound button sits in the same capsule. Settings has it too.
+- iPhone in landscape: once you scroll, the capsule shrinks to the PC (with its online dot) and the sound button, so the title fits; back at the top it opens up again.
+- iPhone upright: the iOS status bar (time, signal, battery) is back at the top, and the capsule shows just the PC (and the sound button during a trailer).

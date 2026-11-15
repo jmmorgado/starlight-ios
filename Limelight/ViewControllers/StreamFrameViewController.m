@@ -998,6 +998,11 @@
     return YES;
 }
 
+// Starlight: no system status bar over the stream
+- (BOOL)prefersStatusBarHidden {
+    return YES;
+}
+
 - (BOOL)prefersPointerLocked {
     // Pointer lock breaks the UIKit mouse APIs, which is a problem because
     // GCMouse is horribly broken on iOS 14.0 for certain mice. Only lock

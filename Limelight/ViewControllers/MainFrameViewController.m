@@ -1776,6 +1776,7 @@ static const NSUInteger kMaxQuickActions = 4;
     
     // Back from a stream (or first appearance): the Starlight screens turn freely
     [AppDelegate setStreamOrientationLocked:NO window:self.view.window ?: [UIApplication sharedApplication].delegate.window];
+    [self setNeedsStatusBarAppearanceUpdate];
 #endif
 }
 
@@ -2948,6 +2949,16 @@ static const NSUInteger kMaxQuickActions = 4;
 #if !TARGET_OS_TV
 - (BOOL)shouldAutorotate {
     return YES;
+}
+
+// Starlight: the system status bar shows on iPhone (iOS hides it in landscape by itself, where the
+// navigation bar's capsule has the time, network and battery). iPad keeps the capsule only.
+- (BOOL)prefersStatusBarHidden {
+    return [UIDevice currentDevice].userInterfaceIdiom == UIUserInterfaceIdiomPad;
+}
+
+- (UIStatusBarStyle)preferredStatusBarStyle {
+    return UIStatusBarStyleLightContent;
 }
 #endif
 

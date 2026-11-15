@@ -80,4 +80,10 @@
     return presented;
 }
 
+#if !TARGET_OS_TV
+- (BOOL)prefersStatusBarHidden {
+    return YES;
+}
+#endif
+
 @end

@@ -91,6 +91,15 @@ final class DeviceStatus: ObservableObject {
 }
 
 struct StatusCluster: View {
+    var body: some View {
+        StatusIcons()
+            .padding(.horizontal, 6)
+            .modifier(ToolbarItemGlass())
+    }
+}
+
+/// Clock, controller, network and battery (inside the PC capsule in the navigation bar)
+struct StatusIcons: View {
     @ObservedObject private var status = DeviceStatus.shared
 
     private var timeText: String {
@@ -150,8 +159,6 @@ struct StatusCluster: View {
         .foregroundStyle(.white)
         .lineLimit(1)
         .fixedSize()
-        .padding(.horizontal, 6)
-        .modifier(ToolbarItemGlass())
     }
 }
 

@@ -207,8 +207,7 @@ struct SettingsTab: View {
                 .modifier(TabBarAutoHideScroll())
             }
             .modifier(FadingTabTitle(title: "Settings"))
-            .navigationBarTitleDisplayMode(.inline)
-            .starlightStatusToolbar()
+            .starlightToolbar(model)
             .modifier(TabBarAutoHideVisibility())
         }
         .navigationViewStyle(.stack)

@@ -149,8 +149,17 @@ final class TabBarAutoHide: ObservableObject {
     /// The tab bar only goes once the title is fully in
     private static let hideAfter: CGFloat = 120
 
+    /// iPhone: the PC capsule shrinks to the PC (and the trailer sound) once the list has moved
+    @Published private(set) var compact = false
+
     func update(offset: CGFloat) {
-        guard UIDevice.current.userInterfaceIdiom == .pad else { return }
+        if UIDevice.current.userInterfaceIdiom == .phone {
+            let value = offset > 30
+            if value != compact {
+                withAnimation(.easeInOut(duration: 0.25)) { compact = value }
+            }
+            return
+        }
         let progress = (min(1, max(0, Double(offset - 8) / 60)) * 20).rounded() / 20
         if progress != titleProgress { titleProgress = progress }
         let delta = offset - lastOffset
@@ -167,6 +176,7 @@ final class TabBarAutoHide: ObservableObject {
     func reset() {
         lastOffset = 0
         titleProgress = 0
+        if compact { withAnimation(.easeInOut(duration: 0.25)) { compact = false } }
         set(false)
     }
 
@@ -261,9 +271,10 @@ extension View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 // Same side, same group: iOS 26 draws the PC button and the status in one Liquid Glass capsule
+                // One capsule: the PC menu with the status inside it, and the trailer's sound button
                 ToolbarItemGroup(placement: .navigationBarTrailing) {
                     PCToolbarButton(model: model)
-                    StatusCluster()
+                    TrailerMuteButton()
                 }
             }
     }
@@ -333,6 +344,16 @@ private struct FocusedSearch: View {
 struct PCToolbarButton: View {
     @ObservedObject var model: HomeModel
     @ObservedObject private var device = DeviceStatus.shared
+    @ObservedObject private var bar = TabBarAutoHide.shared
+    @Environment(\.verticalSizeClass) private var verticalSizeClass
+
+    /// iPhone upright: the system status bar shows the time, network and battery.
+    /// iPhone after scrolling: just the PC. iPad and the top of the list: everything.
+    private var showsStatus: Bool {
+        guard UIDevice.current.userInterfaceIdiom == .phone else { return true }
+        if verticalSizeClass == .regular { return false }
+        return !bar.compact
+    }
 
     var body: some View {
         // Always the system menu on touch; □ on the controller opens the navigable PC panel
@@ -398,6 +419,11 @@ struct PCToolbarButton: View {
                 Image(systemName: "chevron.down")
                     .font(.system(size: 10, weight: .bold))
                     .foregroundStyle(.secondary)
+            }
+            if showsStatus {
+                StatusIcons()
+                    .padding(.leading, 8)
+                    .transition(.opacity.combined(with: .move(edge: .trailing)))
             }
         }
         .foregroundStyle(.white)

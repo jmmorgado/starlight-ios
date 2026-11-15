@@ -80,9 +80,6 @@ struct HomeTab: View {
                         .opacity(model.featured != nil ? titleProgress : 0)
                 }
             }
-            ToolbarItem(placement: .navigationBarTrailing) {
-                TrailerMuteButton()
-            }
         }
         .modifier(GameDetailDestination(model: model, tab: .home, zoom: zoom))
     }
