@@ -170,9 +170,10 @@ struct HomeCarousel: View {
                         .accessibilityHidden(true)
                 }
 
-                // Changing game, like the Apple TV app: the text and buttons fade out, the art drifts a little
-                // sideways as the next one dissolves in (darkening on the way), then the next text fades in.
-                // The art is drawn a little wider than the slide, so the drift never shows an edge
+                // Changing game, like the Apple TV app: the text and buttons fade out, the next art dissolves in
+                // over the old one (which stays, darkening, until it's covered), with a slight sideways drift;
+                // then the next text fades in. The art is drawn a little wider than the slide, so the drift
+                // never shows an edge
                 ZStack(alignment: .bottom) {
                     ZStack {
                         Color.black
@@ -180,6 +181,8 @@ struct HomeCarousel: View {
                             background(game, isCurrent: true, width: width + Self.drift * 2)
                                 .id(game.id)
                                 .transition(artTransition)
+                                // The incoming art above the outgoing one
+                                .zIndex(Double(playback.transitionToken))
                         }
                     }
                     .offset(x: max(-Self.drift, min(Self.drift, drag * 0.15)))
@@ -255,9 +258,10 @@ struct HomeCarousel: View {
         games.indices.contains(playback.infoIndex) ? games[playback.infoIndex] : current
     }
 
+    /// In: fades in over the old art with a slight drift. Out: stays opaque and darkens until it's covered
     private var artTransition: AnyTransition {
         .asymmetric(insertion: .opacity.combined(with: .offset(x: Self.drift * playback.direction)),
-                    removal: .opacity.combined(with: .offset(x: -Self.drift * playback.direction)))
+                    removal: .modifier(active: Darkened(amount: 0.5), identity: Darkened(amount: 0)))
     }
 
     /// The Apple TV app's change: text out, art dissolves with a slight drift, text in
@@ -266,18 +270,18 @@ struct HomeCarousel: View {
         playback.transitionToken += 1
         let token = playback.transitionToken
         playback.direction = direction
-        withAnimation(.easeOut(duration: 0.15)) { playback.infoOpacity = 0 }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+        withAnimation(.easeOut(duration: 0.25)) { playback.infoOpacity = 0 }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
             guard token == playback.transitionToken else { return }
-            withAnimation(.easeInOut(duration: 0.55)) {
+            withAnimation(.easeInOut(duration: 0.9)) {
                 playback.index = target
                 drag = 0
             }
         }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.1) {
             guard token == playback.transitionToken else { return }
             playback.infoIndex = target
-            withAnimation(.easeOut(duration: 0.3)) { playback.infoOpacity = 1 }
+            withAnimation(.easeOut(duration: 0.35)) { playback.infoOpacity = 1 }
         }
     }
 
@@ -547,6 +551,15 @@ struct HomeCarousel: View {
             @unknown default: break
             }
         }
+    }
+}
+
+/// The outgoing carousel art: darkens while the next one covers it
+private struct Darkened: ViewModifier {
+    let amount: Double
+
+    func body(content: Content) -> some View {
+        content.overlay(Color.black.opacity(amount))
     }
 }
 
