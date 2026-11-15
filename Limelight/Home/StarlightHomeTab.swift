@@ -24,32 +24,34 @@ struct HomeTab: View {
             let compact = geo.size.height < 440
             let leading = geo.safeAreaInsets.leading + 24
             let trailing = geo.safeAreaInsets.trailing + 24
+            let screenHeight = geo.size.height + geo.safeAreaInsets.top + geo.safeAreaInsets.bottom
+            // iPhone in landscape: the carousel fills the screen. iPhone in portrait and iPad: Apple TV app proportion
+            let phoneLandscape = UIDevice.current.userInterfaceIdiom == .phone && geo.size.width > geo.size.height
+            let carouselHeight = phoneLandscape ? screenHeight : (screenHeight * 0.78).rounded()
+            let recent = Array(model.continueGames.prefix(5))
             Group {
-                if let featured = model.featured {
+                if model.featured != nil {
                     ScrollViewReader { proxy in
                         ScrollView(.vertical, showsIndicators: false) {
                             VStack(alignment: .leading, spacing: compact ? 14 : 22) {
-                                FeaturedSection(game: featured, model: model, compact: compact)
-                                    .padding(.leading, leading)
-                                    .padding(.trailing, trailing)
-                                    .id("section-featured")
-
-                                if !model.continueGames.isEmpty {
-                                    GameRow(id: "continue", title: "Continue Playing", games: model.continueGames, model: model,
-                                            compact: compact, leadingInset: leading, trailingInset: trailing, zoom: zoom)
-                                        .id("section-continue")
+                                if recent.isEmpty {
+                                    Color.clear.frame(height: geo.safeAreaInsets.top)
+                                } else {
+                                    HomeCarousel(games: recent, model: model, height: carouselHeight,
+                                                 bottomInset: phoneLandscape ? geo.safeAreaInsets.bottom : 0, compact: compact)
+                                        .id("section-featured")
                                 }
 
                                 GameRow(id: "all", title: "Ready to Play", games: model.libraryGames, model: model,
                                         compact: compact, leadingInset: leading, trailingInset: trailing, zoom: zoom)
                                     .id("section-all")
                             }
-                            .padding(.top, 4)
                             .padding(.bottom, 40)
                         }
-                        // Scroll across the full width so the rows reach the screen edges
-                        .ignoresSafeArea(.container, edges: .horizontal)
+                        // Under the navigation bar (the carousel starts at the top of the screen) and edge to edge
+                        .ignoresSafeArea(.container, edges: [.horizontal, .top])
                         .modifier(HomeScrollState(progress: $titleProgress))
+                        .modifier(TopEdgeEffect(hidden: titleProgress < 0.5))
                         .onChange(of: focus.focusedID) { id in
                             scroll(to: id, proxy: proxy)
                         }
@@ -59,15 +61,16 @@ struct HomeTab: View {
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-            // Behind the content (not beside it) so the navigation bar finds the scroll view
-            // and draws its native scroll-edge effect, like Library and Settings
-            .background(backdrop)
+            .background(Color.black.ignoresSafeArea())
         }
         .toolbar {
             ToolbarItem(placement: .principal) {
                 Text("Play Now")
                     .font(.headline)
                     .opacity(model.featured != nil ? titleProgress : 0)
+            }
+            ToolbarItem(placement: .navigationBarTrailing) {
+                TrailerMuteButton()
             }
         }
         .modifier(GameDetailDestination(model: model, tab: .home, zoom: zoom))
@@ -76,9 +79,7 @@ struct HomeTab: View {
     private func scroll(to id: String?, proxy: ScrollViewProxy) {
         guard let id = id else { return }
         let section: String?
-        if id.hasPrefix("card-continue-") {
-            section = "section-continue"
-        } else if id.hasPrefix("card-all-") {
+        if id.hasPrefix("card-all-") {
             section = "section-all"
         } else if id.hasPrefix("featured-") || id == "pc-button" || id == "search-button" {
             section = "section-featured"
@@ -91,29 +92,18 @@ struct HomeTab: View {
             }
         }
     }
+}
 
-    private var backdrop: some View {
-        ZStack {
-            Color.black
-            if let featured = model.featured, let hero = ArtworkCache.shared.image(featured.heroPath ?? featured.gridPath) {
-                // Fill the whole screen (edge to edge, behind the safe areas) by zooming, never stretching
-                Color.clear
-                    .overlay(
-                        Image(uiImage: hero)
-                            .resizable()
-                            .scaledToFill()
-                    )
-                    .clipped()
-                    .id(featured.id)
-                    .transition(.opacity)
-            }
-            LinearGradient(colors: [.black.opacity(0.85), .black.opacity(0.45), .black.opacity(0.15)],
-                           startPoint: .leading, endPoint: .trailing)
-            LinearGradient(colors: [.clear, .black.opacity(0.9)],
-                           startPoint: .center, endPoint: .bottom)
+/// The navigation bar's blur over the carousel only once the list scrolls (iOS 26)
+struct TopEdgeEffect: ViewModifier {
+    let hidden: Bool
+
+    func body(content: Content) -> some View {
+        if #available(iOS 26.0, *) {
+            content.scrollEdgeEffectHidden(hidden, for: .top)
+        } else {
+            content
         }
-        .ignoresSafeArea()
-        .animation(.easeInOut(duration: 0.35), value: model.featured?.id)
     }
 }
 
@@ -133,113 +123,6 @@ struct HomeScrollState: ViewModifier {
         } else {
             content
         }
-    }
-}
-
-struct FeaturedSection: View {
-    let game: GameItem
-    @ObservedObject var model: HomeModel
-    @ObservedObject private var device = DeviceStatus.shared
-    let compact: Bool
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            if let logo = ArtworkCache.shared.image(game.logoPath) {
-                Image(uiImage: logo)
-                    .resizable()
-                    .aspectRatio(contentMode: .fit)
-                    .frame(maxWidth: compact ? 280 : 380, maxHeight: compact ? 70 : 110, alignment: .leading)
-                    .shadow(color: .black.opacity(0.5), radius: 8)
-                    .accessibilityLabel(game.name)
-            } else {
-                Text(game.name)
-                    .font(.system(size: compact ? 30 : 40, weight: .heavy))
-                    .lineLimit(2)
-                    .shadow(color: .black.opacity(0.5), radius: 8)
-            }
-
-            HStack(spacing: 8) {
-                if game.running {
-                    HStack(spacing: 6) {
-                        Circle().fill(.green).frame(width: 8, height: 8)
-                        Text("Running on PC")
-                            .font(.system(size: 12, weight: .semibold))
-                            .foregroundStyle(.white)
-                    }
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 5)
-                    .glassCapsule()
-                }
-                if game.pinned {
-                    Image(systemName: "pin.fill")
-                        .font(.system(size: 11, weight: .semibold))
-                        .foregroundStyle(starlightGold)
-                        .accessibilityLabel("Pinned")
-                }
-                Text(subtitle)
-                    .font(.system(size: 13, weight: .medium))
-                    .foregroundStyle(.white.opacity(0.8))
-            }
-
-            HStack(spacing: 10) {
-                Button { model.launch(game) } label: {
-                    HStack(spacing: 8) {
-                        Label(game.running ? "Resume" : "Play", systemImage: "play.fill")
-                        if device.controllerConnected {
-                            Image(systemName: PadGlyph.play)
-                                .font(.system(size: 16, weight: .regular))
-                                .opacity(0.6)
-                        }
-                    }
-                    .font(.system(size: 16, weight: .bold))
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 3)
-                }
-                .primaryGlassButton()
-                .tint(.white)
-                .foregroundStyle(.black)
-
-                if game.running {
-                    Button(role: .destructive) { model.action("quit", game) } label: {
-                        Label("Quit", systemImage: "xmark")
-                            .font(.system(size: 16, weight: .semibold))
-                            .padding(.horizontal, 6)
-                            .padding(.vertical, 3)
-                    }
-                    .secondaryGlassButton()
-                    .tint(.red)
-                }
-
-                // Always the system menu on touch. With a controller the button shows the Options glyph,
-                // and pressing Options opens the navigable version (system menus can't be driven by a controller).
-                Menu {
-                    GameMenuItems(game: game, model: model)
-                } label: {
-                    Image(systemName: device.controllerConnected ? PadGlyph.options : "ellipsis")
-                        .font(.system(size: device.controllerConnected ? 18 : 16, weight: .semibold))
-                        .frame(width: 22, height: 22)
-                }
-                .secondaryGlassButton()
-                .accessibilityLabel("Game options")
-            }
-        }
-        .padding(.top, compact ? 0 : 12)
-    }
-
-    private var subtitle: String {
-        var parts: [String] = []
-        if !game.hostName.isEmpty { parts.append(game.hostName) }
-        if let last = model.effectiveLastPlayed(game) {
-            let formatter = RelativeDateTimeFormatter()
-            formatter.unitsStyle = .full
-            parts.append("Played " + formatter.localizedString(for: last, relativeTo: Date()))
-        } else {
-            parts.append("Not played yet")
-        }
-        if let appid = game.steamAppId, let owned = SteamManager.shared.owned(appid), owned.playtimeForever > 0 {
-            parts.append(SteamManager.formatPlaytime(owned.playtimeForever) + " in total")
-        }
-        return parts.joined(separator: " · ")
     }
 }
 
@@ -272,17 +155,17 @@ struct GameRow: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             Text(title)
-                .font(.system(size: 15, weight: .bold))
+                .font(.system(size: 20, weight: .bold))
                 .padding(.leading, leadingInset)
             ScrollViewReader { proxy in
                 ScrollView(.horizontal, showsIndicators: false) {
                     // Not lazy: every card needs a frame for controller navigation
                     HStack(spacing: 14) {
                         ForEach(games) { game in
-                            GameCard(game: game,
-                                     selected: game.id == model.featured?.id && model.featuredRow == id,
-                                     portrait: portrait,
-                                     height: portrait ? (compact ? 150 : 180) : (compact ? 84 : 110))
+                            ShelfCard(game: game,
+                                      selected: game.id == model.featured?.id && model.featuredRow == id,
+                                      height: compact ? 140 : 170,
+                                      model: model)
                                 .modifier(ZoomSource(id: prefix + game.id, zoom: zoom))
                                 .onTapGesture { activate(game) }
                                 .contextMenu { GameMenuItems(game: game, model: model) }

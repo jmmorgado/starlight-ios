@@ -725,6 +725,12 @@ final class SteamStore: ObservableObject {
         _ = await (a, b)
     }
 
+    /// Store details only (Library posters show the genre)
+    @MainActor
+    func loadInfoOnly(_ appid: Int) async {
+        await loadInfo(appid)
+    }
+
     @MainActor
     private func loadInfo(_ appid: Int) async {
         if let cached = info[appid], Date().timeIntervalSince(cached.updated) < Self.infoStale { return }

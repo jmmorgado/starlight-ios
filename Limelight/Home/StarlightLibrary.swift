@@ -82,15 +82,10 @@ struct GameGrid<Header: View>: View {
                               alignment: .leading, spacing: 18) {
                         ForEach(games) { game in
                             let focusID = "\(prefix)-\(game.id)"
-                            VStack(alignment: .leading, spacing: 6) {
-                                GameCard(game: game, selected: false, portrait: true, height: 180, showsReadyBadge: showsReadyBadge)
-                                    .modifier(ZoomSource(id: focusID, zoom: zoom))
-                                    .gameFocus(focusID) { model.openDetail(game, source: focusID) }
-                                Text(game.name)
-                                    .font(.system(size: 12.5, weight: .semibold))
-                                    .lineLimit(1)
-                            }
-                            .frame(width: cardWidth)
+                            PosterCard(game: game, height: 180, showsReadyBadge: showsReadyBadge)
+                                .modifier(ZoomSource(id: focusID, zoom: zoom))
+                                .gameFocus(focusID, corner: 14) { model.openDetail(game, source: focusID) }
+                                .frame(width: cardWidth)
                             .onTapGesture { model.openDetail(game, source: focusID) }
                             .contextMenu {
                                 GameMenuItems(game: game, model: model)

@@ -20,6 +20,8 @@ struct SettingsTab: View {
     @AppStorage("StarlightAutoWake") private var autoWake = true
     /// Read by MainFrameViewController on opening the app and a game page
     @AppStorage("StarlightConnectEarly") private var connectEarly = true
+    /// "wifi", "always", "off" (HomeTrailerState)
+    @AppStorage(HomeTrailerState.autoplayKey) private var trailerAutoplay = "wifi"
     /// Read by StreamFrameViewController when a stream starts
     @AppStorage("StarlightPiPEnabled") private var pipEnabled = false
     @AppStorage("StarlightPiPAuto") private var pipAuto = true
@@ -127,6 +129,29 @@ struct SettingsTab: View {
                         Text("Launching")
                     } footer: {
                         Text("Wake PC Automatically: when a pinned game, a starlight:// link or a Shortcut starts a game and the PC is asleep, Starlight wakes it and waits before streaming.\nConnect Early: when you open Starlight or a game page, Starlight checks the PC and wakes it if it's asleep, so it's ready when you press Play.\nBoth need Wake-on-LAN enabled on the PC.")
+                    }
+
+                    Section {
+                        Picker(selection: $trailerAutoplay) {
+                            Text("Always").tag("always")
+                            Text("Wi-Fi Only").tag("wifi")
+                            Text("Off").tag("off")
+                        } label: {
+                            Label("Autoplay Trailers", systemImage: "play.rectangle")
+                        }
+                        .settingsFocus("set-trailers", scope: "settings", adjust: { delta in
+                            let options = ["always", "wifi", "off"]
+                            let i = options.firstIndex(of: trailerAutoplay) ?? 1
+                            trailerAutoplay = options[min(max(i + delta, 0), options.count - 1)]
+                        }) {
+                            let options = ["always", "wifi", "off"]
+                            let i = options.firstIndex(of: trailerAutoplay) ?? 1
+                            trailerAutoplay = options[(i + 1) % options.count]
+                        }
+                    } header: {
+                        Text("Home")
+                    } footer: {
+                        Text("The carousel plays each game's Steam trailer, muted, 5 seconds after it appears. Wi-Fi Only skips them on cellular data and Personal Hotspot.")
                     }
 
                     Section("Library") {

@@ -61,6 +61,8 @@ final class StarlightHomeController: NSObject {
     /// On while the Starlight screens are visible, off during a stream
     @objc func setControllerInputActive(_ active: Bool) {
         GamepadInput.shared.active = active
+        // Same moments: the carousel trailer pauses while a stream (or anything else) covers the Home screen
+        HomeTrailerState.shared.screenActive = active
     }
 
     /// (hostUUID) – choose a PC (pairs it if needed)
