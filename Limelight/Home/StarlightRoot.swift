@@ -237,7 +237,7 @@ struct PhoneTitle: ViewModifier {
 
     private var leadingTitle: some View {
         Text(upright ? title : "")
-            .font(.system(size: 28, weight: .bold))
+            .font(.headline)
             .lineLimit(1)
             .fixedSize()
             .opacity(opacity)
