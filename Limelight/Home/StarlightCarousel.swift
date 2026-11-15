@@ -22,14 +22,26 @@ final class HomeTrailerState: ObservableObject {
     @Published var playing = false
     /// The Starlight screens are on top (false during a stream)
     @Published var screenActive = true
+    /// The app is in the foreground (scenePhase isn't reliable under UIKit's life cycle)
+    @Published private(set) var appActive = true
     @Published private(set) var expensiveNetwork = false
     private let monitor = NWPathMonitor()
+
+    /// One shared clock for the carousel (a publisher made in the view would restart on every update)
+    static let ticker = Timer.publish(every: 0.1, on: .main, in: .common).autoconnect()
 
     private init() {
         monitor.pathUpdateHandler = { [weak self] path in
             DispatchQueue.main.async { self?.expensiveNetwork = path.isExpensive }
         }
         monitor.start(queue: DispatchQueue.global(qos: .utility))
+        let center = NotificationCenter.default
+        center.addObserver(forName: UIApplication.didBecomeActiveNotification, object: nil, queue: .main) { [weak self] _ in
+            self?.appActive = true
+        }
+        center.addObserver(forName: UIApplication.willResignActiveNotification, object: nil, queue: .main) { [weak self] _ in
+            self?.appActive = false
+        }
     }
 
     var autoplayAllowed: Bool {
@@ -82,7 +94,6 @@ struct HomeCarousel: View {
     @ObservedObject private var trailer = HomeTrailerState.shared
     @ObservedObject private var store = SteamStore.shared
     @ObservedObject private var steam = SteamManager.shared
-    @Environment(\.scenePhase) private var scenePhase
 
     @State private var index = 0
     /// Seconds on the current game (art, then trailer)
@@ -91,14 +102,13 @@ struct HomeCarousel: View {
     @State private var videoVisible = false
     @State private var endObserver: NSObjectProtocol?
 
-    private let tick = Timer.publish(every: 0.1, on: .main, in: .common).autoconnect()
     private static let artDelay: Double = 5
     private static let artOnly: Double = 8
 
     private var current: GameItem? { games.indices.contains(index) ? games[index] : nil }
 
     private var active: Bool {
-        trailer.screenActive && scenePhase == .active && model.tab == .home && model.detail == nil
+        trailer.screenActive && trailer.appActive && model.tab == .home && model.detail == nil
             && model.gameMenu == nil && !model.pcExpanded
     }
 
@@ -132,7 +142,7 @@ struct HomeCarousel: View {
             }
         }
         .frame(height: height)
-        .onReceive(tick) { _ in step() }
+        .onReceive(HomeTrailerState.ticker) { _ in step() }
         .onChange(of: index) { _ in
             stopVideo()
             elapsed = 0
@@ -593,13 +603,13 @@ struct ShelfCard: View {
     }
 }
 
-/// Library and Search: portrait cover (Steam's or SteamGridDB's) with the genre at the bottom,
+/// Library and Search: portrait cover (Steam's or SteamGridDB's) with the hours played at the bottom,
 /// like the Apple TV app's posters
 struct PosterCard: View {
     let game: GameItem
     let height: CGFloat
     var showsReadyBadge = false
-    @ObservedObject private var store = SteamStore.shared
+    @ObservedObject private var steam = SteamManager.shared
     @ObservedObject private var steamArt = SteamOnlyArtwork.shared
 
     var body: some View {
@@ -611,11 +621,11 @@ struct PosterCard: View {
                 .clipped()
                 .onAppear { steamArt.ensure(game) }
 
-            if let genre = genre {
+            if let hours = hours {
                 LinearGradient(colors: [.clear, .black.opacity(0.85)], startPoint: .top, endPoint: .bottom)
                     .frame(height: height * 0.3)
-                Text(genre)
-                    .font(.system(size: 11.5, weight: .semibold))
+                Text(hours)
+                    .font(.system(size: height > 200 ? 13 : 11.5, weight: .semibold))
                     .foregroundStyle(.white.opacity(0.85))
                     .lineLimit(1)
                     .padding(.horizontal, 8)
@@ -657,15 +667,13 @@ struct PosterCard: View {
         )
         .shadow(color: .black.opacity(0.35), radius: 5, y: 3)
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel(game.name + (genre.map { ", " + $0 } ?? "") + (game.isInstalled ? ", ready to play" : ""))
+        .accessibilityLabel(game.name + (hours.map { ", " + $0 } ?? "") + (game.isInstalled ? ", ready to play" : ""))
         .accessibilityAddTraits(.isButton)
-        .task(id: game.steamAppId) {
-            if let appid = game.steamAppId { await store.loadInfoOnly(appid) }
-        }
     }
 
-    /// The first genre from the Steam store, once its details are cached
-    private var genre: String? {
-        game.steamAppId.flatMap { store.info[$0]?.genres.first }
+    /// Hours played on Steam; nothing when the game hasn't been played
+    private var hours: String? {
+        guard let appid = game.steamAppId, let owned = steam.owned(appid), owned.playtimeForever > 0 else { return nil }
+        return SteamManager.formatPlaytime(owned.playtimeForever) + " played"
     }
 }

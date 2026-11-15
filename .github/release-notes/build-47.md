@@ -13,4 +13,4 @@
 ## Cards
 
 - **Ready to Play**: Apple TV-style landscape cards with the game's art and logo, and a status line at the bottom: achievements progress bar, hours played and a ••• menu.
-- **Library and Search**: portrait covers (Steam or SteamGridDB) with the game's genre at the bottom, like the Apple TV app's posters. A green dot marks games ready to play.
+- **Library and Search**: portrait covers (Steam or SteamGridDB) like the Apple TV app's posters, with your hours played at the bottom (nothing when you haven't played). Bigger on iPad, at the Apple TV app's size. A green dot marks games ready to play.

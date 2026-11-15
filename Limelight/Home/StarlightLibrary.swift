@@ -64,8 +64,11 @@ struct GameGrid<Header: View>: View {
     @ViewBuilder var header: () -> Header
     @ObservedObject private var focus = GameFocus.shared
 
-    private let cardWidth: CGFloat = 120
-    private let spacing: CGFloat = 18
+    /// iPad: Apple TV app poster size; iPhone: smaller
+    private var isPad: Bool { UIDevice.current.userInterfaceIdiom == .pad }
+    private var cardHeight: CGFloat { isPad ? 240 : 180 }
+    private var cardWidth: CGFloat { (cardHeight * 2 / 3).rounded() }
+    private var spacing: CGFloat { isPad ? 22 : 18 }
 
     private var columns: Int {
         let width = UIScreen.main.bounds.width - 100
@@ -79,10 +82,10 @@ struct GameGrid<Header: View>: View {
                 VStack(alignment: .leading, spacing: 14) {
                     header()
                     LazyVGrid(columns: Array(repeating: GridItem(.fixed(cardWidth), spacing: spacing, alignment: .top), count: columns),
-                              alignment: .leading, spacing: 18) {
+                              alignment: .leading, spacing: spacing) {
                         ForEach(games) { game in
                             let focusID = "\(prefix)-\(game.id)"
-                            PosterCard(game: game, height: 180, showsReadyBadge: showsReadyBadge)
+                            PosterCard(game: game, height: cardHeight, showsReadyBadge: showsReadyBadge)
                                 .modifier(ZoomSource(id: focusID, zoom: zoom))
                                 .gameFocus(focusID, corner: 14) { model.openDetail(game, source: focusID) }
                                 .frame(width: cardWidth)
