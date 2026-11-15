@@ -258,6 +258,7 @@ final class HomeModel: ObservableObject {
         didSet {
             guard tab != oldValue else { return }
             previousTab = oldValue
+            TabBarAutoHide.shared.reset()
             detail = nil
             closePC()
             closeGameMenu()
@@ -305,6 +306,8 @@ final class HomeModel: ObservableObject {
     }
 
     func openDetail(_ game: GameItem, source: String) {
+        // A result picked from a search: remember the search
+        if tab == .search { RecentSearches.add(searchQuery) }
         guard #available(iOS 16.0, *) else {
             launch(game)
             return

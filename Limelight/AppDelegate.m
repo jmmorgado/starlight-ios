@@ -131,6 +131,38 @@ static NSString* DB_NAME = @"Limelight_iOS.sqlite";
 }
 
 #if !TARGET_OS_TV
+#pragma mark - Orientation (Starlight)
+
+static BOOL sStreamOrientationLocked = NO;
+
++ (UIInterfaceOrientationMask)freeOrientations {
+    return [UIDevice currentDevice].userInterfaceIdiom == UIUserInterfaceIdiomPad
+        ? UIInterfaceOrientationMaskAll : UIInterfaceOrientationMaskAllButUpsideDown;
+}
+
++ (void)setStreamOrientationLocked:(BOOL)locked window:(UIWindow*)window {
+    if (sStreamOrientationLocked == locked) {
+        return;
+    }
+    sStreamOrientationLocked = locked;
+    if (@available(iOS 16.0, *)) {
+        [window.rootViewController setNeedsUpdateOfSupportedInterfaceOrientations];
+        UIWindowScene* scene = window.windowScene;
+        if (scene != nil) {
+            UIInterfaceOrientationMask mask = locked ? UIInterfaceOrientationMaskLandscape : [self freeOrientations];
+            UIWindowSceneGeometryPreferencesIOS* preferences = [[UIWindowSceneGeometryPreferencesIOS alloc] initWithInterfaceOrientations:mask];
+            [scene requestGeometryUpdateWithPreferences:preferences errorHandler:^(NSError* error) {
+                Log(LOG_W, @"Orientation update refused: %@", error);
+            }];
+        }
+    }
+}
+
+// Asked by UIKit for every window, whatever the view controller hierarchy says
+- (UIInterfaceOrientationMask)application:(UIApplication *)application supportedInterfaceOrientationsForWindow:(UIWindow *)window {
+    return sStreamOrientationLocked ? UIInterfaceOrientationMaskLandscape : [AppDelegate freeOrientations];
+}
+
 // Every scene (the app's window and a connected TV) gets StarlightSceneDelegate
 - (UISceneConfiguration *)application:(UIApplication *)application configurationForConnectingSceneSession:(UISceneSession *)connectingSceneSession options:(UISceneConnectionOptions *)options {
     UISceneConfiguration* configuration = [[UISceneConfiguration alloc] initWithName:nil sessionRole:connectingSceneSession.role];

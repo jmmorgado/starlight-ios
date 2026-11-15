@@ -26,8 +26,11 @@ struct HomeTab: View {
             let trailing = geo.safeAreaInsets.trailing + 24
             let screenHeight = geo.size.height + geo.safeAreaInsets.top + geo.safeAreaInsets.bottom
             // iPhone in landscape: the carousel fills the screen. iPhone in portrait and iPad: Apple TV app proportion
-            let phoneLandscape = UIDevice.current.userInterfaceIdiom == .phone && geo.size.width > geo.size.height
-            let carouselHeight = phoneLandscape ? screenHeight : (screenHeight * 0.78).rounded()
+            let isPad = UIDevice.current.userInterfaceIdiom == .pad
+            let phoneLandscape = !isPad && geo.size.width > geo.size.height
+            // iPad upright: no taller than the screen is wide, so the rows below still show
+            let carouselHeight = phoneLandscape ? screenHeight
+                : (isPad ? min(screenHeight * 0.78, geo.size.width) : screenHeight * 0.78).rounded()
             let recent = Array(model.continueGames.prefix(5))
             Group {
                 if model.featured != nil {
@@ -38,7 +41,8 @@ struct HomeTab: View {
                                     Color.clear.frame(height: geo.safeAreaInsets.top)
                                 } else {
                                     HomeCarousel(games: recent, model: model, height: carouselHeight,
-                                                 bottomInset: phoneLandscape ? geo.safeAreaInsets.bottom : 0, compact: compact)
+                                                 bottomInset: phoneLandscape ? geo.safeAreaInsets.bottom : 0, compact: compact,
+                                                 leadingAligned: isPad, leadingInset: leading + 16)
                                         .id("section-featured")
                                 }
 
@@ -51,6 +55,7 @@ struct HomeTab: View {
                         // Under the navigation bar (the carousel starts at the top of the screen) and edge to edge
                         .ignoresSafeArea(.container, edges: [.horizontal, .top])
                         .modifier(HomeScrollState(progress: $titleProgress))
+                        .modifier(TabBarAutoHideScroll())
                         .modifier(TopEdgeEffect(hidden: titleProgress < 0.5))
                         .onChange(of: focus.focusedID) { id in
                             scroll(to: id, proxy: proxy)

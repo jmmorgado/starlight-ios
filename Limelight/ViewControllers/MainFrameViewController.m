@@ -881,7 +881,7 @@ static NSMutableSet* hostList;
             [self prepareToStreamApp:app];
         }
 
-        [self performSegueWithIdentifier:@"createStreamFrame" sender:nil];
+        [self performStreamSegue];
     }]];
     
     if (currentApp != nil) {
@@ -935,7 +935,7 @@ static NSMutableSet* hostList;
                                                         if (![app.id isEqualToString:currentApp.id]) {
                                                             [self prepareToStreamApp:app];
                                                             [self hideLoadingFrame: ^{
-                                                                [self performSegueWithIdentifier:@"createStreamFrame" sender:nil];
+                                                                [self performStreamSegue];
                                                             }];
                                                         }
                                                         else {
@@ -1014,7 +1014,7 @@ static NSMutableSet* hostList;
         [self appLongClicked:app view:view];
     } else {
         [self prepareToStreamApp:app];
-        [self performSegueWithIdentifier:@"createStreamFrame" sender:nil];
+        [self performStreamSegue];
     }
 }
 
@@ -1041,6 +1041,31 @@ static NSMutableSet* hostList;
 #if TARGET_OS_TV
 - (void)collectionView:(UICollectionView *)collectionView didSelectItemAtIndexPath:(NSIndexPath *)indexPath {
     [self appClicked:_sortedAppList[indexPath.row] view:nil];
+}
+#endif
+
+// Starlight: streams are always landscape. Turn the screen first (when held upright), then open the
+// stream screen once it's landscape, so the video is laid out for its final size.
+- (void)performStreamSegue {
+#if !TARGET_OS_TV
+    UIWindow* window = self.view.window;
+    [AppDelegate setStreamOrientationLocked:YES window:window];
+    [self performStreamSegueWhenLandscape:window attempts:0];
+#else
+    [self performSegueWithIdentifier:@"createStreamFrame" sender:nil];
+#endif
+}
+
+#if !TARGET_OS_TV
+- (void)performStreamSegueWhenLandscape:(UIWindow*)window attempts:(int)attempts {
+    CGSize size = window != nil ? window.bounds.size : self.view.bounds.size;
+    if (size.width >= size.height || attempts >= 20) {
+        [self performSegueWithIdentifier:@"createStreamFrame" sender:nil];
+        return;
+    }
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.05 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        [self performStreamSegueWhenLandscape:window attempts:attempts + 1];
+    });
 }
 #endif
 
@@ -1447,7 +1472,7 @@ static NSMutableSet* hostList;
         // Start (or resume) straight away, keeping the start screen up until the stream view appears
         [_appManager stopRetrieving];
         [self prepareToStreamApp:app];
-        [self performSegueWithIdentifier:@"createStreamFrame" sender:nil];
+        [self performStreamSegue];
     }
     else {
         // A different app is running on the PC: show the usual resume/quit menu
@@ -1748,6 +1773,9 @@ static const NSUInteger kMaxQuickActions = 4;
     
 #if !TARGET_OS_TV
     [self.navigationController setNavigationBarHidden:(_home != nil) animated:NO];
+    
+    // Back from a stream (or first appearance): the Starlight screens turn freely
+    [AppDelegate setStreamOrientationLocked:NO window:self.view.window ?: [UIApplication sharedApplication].delegate.window];
 #endif
 }
 

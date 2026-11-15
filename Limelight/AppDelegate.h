@@ -31,6 +31,9 @@
 - (BOOL)handleUserActivity:(NSUserActivity*)userActivity;
 #if !TARGET_OS_TV
 - (void)handleShortcutItem:(UIApplicationShortcutItem*)shortcutItem;
+
+// Starlight: the app turns freely outside a stream; a stream is always landscape
++ (void)setStreamOrientationLocked:(BOOL)locked window:(UIWindow*)window;
 #endif
 
 @end

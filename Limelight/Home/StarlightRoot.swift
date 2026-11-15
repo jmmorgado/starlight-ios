@@ -79,13 +79,14 @@ struct HomeRootView: View {
         if #available(iOS 18.0, *) {
             TabView(selection: $model.tab) {
                 Tab(StarlightTab.home.title, systemImage: StarlightTab.home.symbol, value: StarlightTab.home) {
-                    StarlightStack { HomeTab(model: model).starlightToolbar(model) }
+                    StarlightStack { HomeTab(model: model).starlightToolbar(model).modifier(TabBarAutoHideVisibility()) }
                 }
                 Tab(StarlightTab.library.title, systemImage: StarlightTab.library.symbol, value: StarlightTab.library) {
                     StarlightStack {
                         LibraryTab(model: model)
                             .navigationTitle("Library")
                             .starlightToolbar(model)
+                            .modifier(TabBarAutoHideVisibility())
                     }
                     .environment(\.focusTabScope, "library")
                 }
@@ -93,10 +94,13 @@ struct HomeRootView: View {
                     SettingsTab(model: model)
                 }
                 Tab(value: StarlightTab.search, role: .search) {
-                    StarlightStack { NativeSearchScreen(model: model) }
+                    StarlightStack { NativeSearchScreen(model: model).modifier(TabBarAutoHideVisibility()) }
                         .environment(\.focusTabScope, "search")
                 }
             }
+            // iPad: tab bar on top with the button that turns it into a sidebar (like the Apple TV app);
+            // iPhone: the usual tab bar
+            .tabViewStyle(.sidebarAdaptable)
             .modifier(TabBarMinimizeOnScroll())
         } else {
             TabView(selection: $model.tab) {
@@ -128,6 +132,65 @@ struct TabBarMinimizeOnScroll: ViewModifier {
     func body(content: Content) -> some View {
         if #available(iOS 26.0, *) {
             content.tabBarMinimizeBehavior(.onScrollDown)
+        } else {
+            content
+        }
+    }
+}
+
+/// iPad: the tab bar on top slides away while you scroll down a tab and comes back when you
+/// scroll up or reach the top, leaving the tab's title in the glass navigation bar (as on iPhone)
+final class TabBarAutoHide: ObservableObject {
+    static let shared = TabBarAutoHide()
+    @Published private(set) var hidden = false
+    private var lastOffset: CGFloat = 0
+
+    func update(offset: CGFloat) {
+        guard UIDevice.current.userInterfaceIdiom == .pad else { return }
+        let delta = offset - lastOffset
+        lastOffset = offset
+        if offset < 40 {
+            set(false)
+        } else if delta > 6 {
+            set(true)
+        } else if delta < -12 {
+            set(false)
+        }
+    }
+
+    func reset() {
+        lastOffset = 0
+        set(false)
+    }
+
+    private func set(_ value: Bool) {
+        guard hidden != value else { return }
+        withAnimation(.easeInOut(duration: 0.25)) { hidden = value }
+    }
+}
+
+/// Feeds a tab's scroll position to TabBarAutoHide (iOS 18+)
+struct TabBarAutoHideScroll: ViewModifier {
+    func body(content: Content) -> some View {
+        if #available(iOS 18.0, *) {
+            content.onScrollGeometryChange(for: CGFloat.self) { geo in
+                geo.contentOffset.y + geo.contentInsets.top
+            } action: { _, offset in
+                TabBarAutoHide.shared.update(offset: offset)
+            }
+        } else {
+            content
+        }
+    }
+}
+
+/// Hides the tab bar while TabBarAutoHide says so (applied inside each tab's navigation stack)
+struct TabBarAutoHideVisibility: ViewModifier {
+    @ObservedObject private var state = TabBarAutoHide.shared
+
+    func body(content: Content) -> some View {
+        if #available(iOS 16.0, *) {
+            content.toolbar(state.hidden ? .hidden : .visible, for: .tabBar)
         } else {
             content
         }
@@ -184,6 +247,7 @@ struct NativeSearchScreen: View {
                 .navigationTitle("Search")
                 .starlightToolbar(model)
                 .searchable(text: $model.searchQuery, prompt: "Search game")
+                .onSubmit(of: .search) { RecentSearches.add(model.searchQuery) }
         }
     }
 }
@@ -198,6 +262,7 @@ private struct FocusedSearch: View {
             .navigationTitle("Search")
             .starlightToolbar(model)
             .searchable(text: $model.searchQuery, prompt: "Search game")
+            .onSubmit(of: .search) { RecentSearches.add(model.searchQuery) }
             .searchFocused($focused)
             .onAppear { focused = model.searchFieldFocused }
             .onChange(of: model.searchFieldFocused) { _, value in

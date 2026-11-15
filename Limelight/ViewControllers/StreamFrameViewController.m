@@ -291,6 +291,25 @@
 #endif
 }
 
+#if !TARGET_OS_TV
+// Starlight: the screen may still be turning to landscape when the stream screen loads.
+// Keep the video sized to the screen (on the device; the TV has its own window).
+- (void)viewDidLayoutSubviews {
+    [super viewDidLayoutSubviews];
+    if (_externalWindow != nil || _streamView == nil) {
+        return;
+    }
+    UIView* container = [self streamContainer];
+    if (container.superview == self.view && !CGRectEqualToRect(container.frame, self.view.bounds)) {
+        container.frame = self.view.bounds;
+        if (_scrollView != nil && _scrollView.zoomScale == 1.0) {
+            _streamView.frame = _scrollView.bounds;
+        }
+        [self layoutDisplayLayer];
+    }
+}
+#endif
+
 - (UIView *)viewForZoomingInScrollView:(UIScrollView *)scrollView {
     return _streamView;
 }

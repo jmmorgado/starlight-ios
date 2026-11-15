@@ -204,10 +204,12 @@ struct SettingsTab: View {
                     }
                 }
                 .modifier(FocusScrollFollower(proxy: proxy))
+                .modifier(TabBarAutoHideScroll())
             }
             .navigationTitle("Settings")
             .navigationBarTitleDisplayMode(.inline)
             .starlightStatusToolbar()
+            .modifier(TabBarAutoHideVisibility())
         }
         .navigationViewStyle(.stack)
     }

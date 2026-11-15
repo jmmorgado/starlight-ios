@@ -90,6 +90,9 @@ struct HomeCarousel: View {
     /// Space to keep clear at the bottom (tab bar) when the carousel fills the screen
     let bottomInset: CGFloat
     let compact: Bool
+    /// iPad: logo, text and buttons on the left (the dots stay centred), like the Apple TV app on iPad
+    var leadingAligned = false
+    var leadingInset: CGFloat = 40
 
     @ObservedObject private var trailer = HomeTrailerState.shared
     @ObservedObject private var store = SteamStore.shared
@@ -282,8 +285,11 @@ struct HomeCarousel: View {
             .allowsHitTesting(false)
 
             info(game, isCurrent: isCurrent, width: width)
+                .frame(maxWidth: leadingAligned ? min(max(width * 0.55, 380), 560) : .infinity, alignment: leadingAligned ? .leading : .center)
+                .frame(maxWidth: .infinity, alignment: leadingAligned ? .leading : .center)
                 .padding(.bottom, bottomInset + (games.count > 1 ? 40 : 18))
-                .padding(.horizontal, 24)
+                .padding(.leading, leadingAligned ? leadingInset : 24)
+                .padding(.trailing, 24)
         }
         .frame(width: width, height: height)
         .contentShape(Rectangle())
@@ -295,8 +301,9 @@ struct HomeCarousel: View {
         // While the trailer plays, the name, hours and achievements fade out (keeping their space,
         // so the buttons stay put) and come back with the next game
         let trailerOn = isCurrent && videoVisible
-        return VStack(spacing: compact ? 8 : 10) {
-            VStack(spacing: compact ? 8 : 10) {
+        let alignment: HorizontalAlignment = leadingAligned ? .leading : .center
+        return VStack(alignment: alignment, spacing: compact ? 8 : 10) {
+            VStack(alignment: alignment, spacing: compact ? 8 : 10) {
             if game.running {
                 HStack(spacing: 6) {
                     Circle().fill(.green).frame(width: 8, height: 8)
@@ -311,13 +318,14 @@ struct HomeCarousel: View {
                 Image(uiImage: logo)
                     .resizable()
                     .aspectRatio(contentMode: .fit)
-                    .frame(maxWidth: min(width * 0.6, compact ? 320 : 440), maxHeight: compact ? 80 : 120)
+                    .frame(maxWidth: min(width * 0.6, compact ? 320 : 440), maxHeight: compact ? 80 : 120,
+                           alignment: leadingAligned ? .leading : .center)
                     .shadow(color: .black.opacity(0.5), radius: 10)
                     .accessibilityLabel(game.name)
             } else {
                 Text(game.name)
                     .font(.system(size: compact ? 30 : 38, weight: .heavy))
-                    .multilineTextAlignment(.center)
+                    .multilineTextAlignment(leadingAligned ? .leading : .center)
                     .lineLimit(2)
                     .shadow(color: .black.opacity(0.5), radius: 10)
             }
