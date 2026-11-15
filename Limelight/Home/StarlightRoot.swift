@@ -400,11 +400,11 @@ final class SidebarInset: ObservableObject {
     /// The sidebar's width, learnt from views that see it showing
     private var width: CGFloat = 0
 
-    /// Decided by whether the sidebar shows (the same for every view), not by the leading safe area alone: while the
-    /// tab is rebuilt the outgoing views still report the old safe area, and the last report would win
-    func update(sidebar: Bool, leading: CGFloat) {
-        if sidebar, leading > 50 { width = leading.rounded() }
-        follow(sidebar ? width : 0)
+    /// Whether the sidebar shows, and its measured right edge when known (the probe reads both from UIKit)
+    func set(visible: Bool, measured: CGFloat?) {
+        if let measured = measured, measured > 100 { width = measured.rounded() }
+        // Until it has been measured: about the sidebar's usual width
+        follow(visible ? (width > 0 ? width : 300) : 0)
     }
 
     private func follow(_ new: CGFloat) {
@@ -420,22 +420,120 @@ final class SidebarInset: ObservableObject {
     }
 }
 
-/// Feeds SidebarInset with whether the sidebar shows and the leading safe area (its width on iPad; nothing on iPhone)
+/// Feeds SidebarInset on iPad. The views that draw edge to edge (Home, the game page) don't get the sidebar as a safe
+/// area, so a UIKit probe asks the tab bar controller whether the sidebar shows and measures the sidebar itself
 struct FollowSidebarInset: ViewModifier {
     let leading: CGFloat
 
     func body(content: Content) -> some View {
-        SidebarAware { sidebar in
+        if #available(iOS 18.0, *), UIDevice.current.userInterfaceIdiom == .pad {
+            SidebarAware { sidebar in
+                content.background(SidebarProbe(hint: sidebar, leading: leading).allowsHitTesting(false))
+            }
+        } else {
             content
-                .onAppear { report(sidebar) }
-                .onChange(of: sidebar) { report($0) }
-                .onChange(of: leading) { _ in report(sidebar) }
         }
     }
+}
 
-    private func report(_ sidebar: Bool) {
-        guard UIDevice.current.userInterfaceIdiom == .pad else { return }
-        SidebarInset.shared.update(sidebar: sidebar, leading: leading)
+@available(iOS 18.0, *)
+private struct SidebarProbe: UIViewRepresentable {
+    /// SwiftUI's placement: a change triggers a check, and it's the fallback when UIKit can't be read
+    let hint: Bool
+    let leading: CGFloat
+
+    func makeUIView(context: Context) -> ProbeView {
+        let view = ProbeView()
+        view.isUserInteractionEnabled = false
+        view.backgroundColor = .clear
+        return view
+    }
+
+    func updateUIView(_ view: ProbeView, context: Context) {
+        view.hint = hint
+        view.leading = leading
+        view.scheduleChecks()
+    }
+
+    final class ProbeView: UIView {
+        var hint = false
+        var leading: CGFloat = 0
+
+        override func didMoveToWindow() {
+            super.didMoveToWindow()
+            scheduleChecks()
+        }
+
+        override func layoutSubviews() {
+            super.layoutSubviews()
+            scheduleChecks()
+        }
+
+        override func safeAreaInsetsDidChange() {
+            super.safeAreaInsetsDidChange()
+            scheduleChecks()
+        }
+
+        /// Now, and again while the system's own transition settles
+        func scheduleChecks() {
+            for delay in [0.0, 0.08, 0.3, 0.6] {
+                DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in self?.check() }
+            }
+        }
+
+        private func check() {
+            guard let window = window else { return }
+            guard let tabs = tabBarController(in: window) else {
+                SidebarInset.shared.set(visible: hint, measured: hint ? max(leading, safeAreaInsets.left) : nil)
+                return
+            }
+            let visible = !tabs.sidebar.isHidden
+            var measured: CGFloat?
+            if visible {
+                if let frame = sidebarFrame(in: tabs.view, window: window), frame.minX > -1 {
+                    measured = frame.maxX
+                } else if max(leading, safeAreaInsets.left) > 100 {
+                    measured = max(leading, safeAreaInsets.left)
+                }
+            }
+            SidebarInset.shared.set(visible: visible, measured: measured)
+        }
+
+        private func tabBarController(in window: UIWindow) -> UITabBarController? {
+            var responder: UIResponder? = self
+            while let current = responder {
+                if let tabs = current as? UITabBarController { return tabs }
+                responder = current.next
+            }
+            return find(window.rootViewController)
+        }
+
+        private func find(_ controller: UIViewController?) -> UITabBarController? {
+            guard let controller = controller else { return nil }
+            if let tabs = controller as? UITabBarController { return tabs }
+            for child in controller.children {
+                if let tabs = find(child) { return tabs }
+            }
+            return nil
+        }
+
+        /// The sidebar's frame in the window: the tallest visible view named like a sidebar
+        private func sidebarFrame(in root: UIView, window: UIWindow) -> CGRect? {
+            var best: CGRect?
+            func walk(_ view: UIView, depth: Int) {
+                guard depth < 14, !view.isHidden, view.alpha > 0.01 else { return }
+                if String(describing: type(of: view)).localizedCaseInsensitiveContains("sidebar") {
+                    let frame = view.convert(view.bounds, to: window)
+                    if frame.width > 150, frame.width < 600, frame.height > window.bounds.height * 0.5 {
+                        if best == nil || frame.width > best!.width { best = frame }
+                        return
+                    }
+                }
+                for subview in view.subviews { walk(subview, depth: depth + 1) }
+            }
+            walk(root, depth: 0)
+            return best
+        }
     }
 }
 
