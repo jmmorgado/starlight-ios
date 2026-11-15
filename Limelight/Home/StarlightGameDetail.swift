@@ -108,15 +108,7 @@ struct GameDetailView: View {
                                     .modifier(PanelGlass(corner: 20))
                                     .gameFocus("detail-play", scope: "detail", corner: 20) {}
                                 // Only Edit Artwork applies to a game that isn't on the PC
-                                Menu {
-                                    GameMenuItems(game: game, model: model)
-                                } label: {
-                                    Image(systemName: device.controllerConnected ? PadGlyph.options : "ellipsis")
-                                        .font(.system(size: device.controllerConnected ? 18 : 16, weight: .semibold))
-                                        .frame(width: 22, height: 26)
-                                }
-                                .secondaryGlassButton()
-                                .accessibilityLabel("Game options")
+                                optionsMenu
                             } else {
                             Button { model.launch(game) } label: {
                                 HStack(spacing: 8) {
@@ -149,21 +141,16 @@ struct GameDetailView: View {
                             }
 
                             // Same native menu as on Home; with a controller, Options opens the navigable version
-                            Menu {
-                                GameMenuItems(game: game, model: model)
-                            } label: {
-                                Image(systemName: device.controllerConnected ? PadGlyph.options : "ellipsis")
-                                    .font(.system(size: device.controllerConnected ? 18 : 16, weight: .semibold))
-                                    .frame(width: 22, height: 26)
-                            }
-                            .secondaryGlassButton()
-                            .accessibilityLabel("Game options")
+                            optionsMenu
                             }
                         }
+                        // iPhone: centred under the art, like the Home carousel
+                        .frame(maxWidth: .infinity, alignment: isPhone ? .center : .leading)
 
                         if let appid = game.steamAppId {
                             SteamPlaytimeRow(appid: appid)
                                 .padding(.top, 4)
+                                .frame(maxWidth: .infinity, alignment: isPhone ? .center : .leading)
                             steamSections(appid: appid, mediaHeight: min(170, max(110, geo.size.height * 0.26)))
                         }
                     }
@@ -252,6 +239,23 @@ struct GameDetailView: View {
         }
     }
 
+    private var isPhone: Bool { UIDevice.current.userInterfaceIdiom == .phone }
+
+    /// Round glass ••• like the carousel's
+    private var optionsMenu: some View {
+        Menu {
+            GameMenuItems(game: game, model: model)
+        } label: {
+            Image(systemName: device.controllerConnected ? PadGlyph.options : "ellipsis")
+                .font(.system(size: device.controllerConnected ? 19 : 18, weight: .bold))
+                .foregroundStyle(.white)
+                .frame(width: 44, height: 44)
+                .contentShape(Circle())
+        }
+        .modifier(RoundGlass())
+        .accessibilityLabel("Game options")
+    }
+
     private func hero(height: CGFloat) -> some View {
         ZStack(alignment: .bottomLeading) {
             Color.clear
@@ -260,6 +264,7 @@ struct GameDetailView: View {
                                  remoteURL: game.isInstalled ? nil : game.steamAppId.flatMap { SteamManager.heroURL($0) })
                 )
                 .clipped()
+                .modifier(ExtendsUnderSidebar())
             LinearGradient(colors: [.clear, .black.opacity(0.35), .black], startPoint: .center, endPoint: .bottom)
             VStack(alignment: .leading, spacing: 8) {
                 if let logo = ArtworkCache.shared.image(game.artPath("logo")) {

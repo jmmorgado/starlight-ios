@@ -73,7 +73,9 @@ struct TrailerMuteButton: View {
                 trailer.muted.toggle()
             } label: {
                 Image(systemName: trailer.muted ? "speaker.slash.fill" : "speaker.wave.2.fill")
+                    .foregroundStyle(.white)
             }
+            .tint(.white)
             .accessibilityLabel(trailer.muted ? "Unmute trailer" : "Mute trailer")
         }
     }
@@ -264,6 +266,7 @@ struct HomeCarousel: View {
                          remoteURL: game.steamAppId.flatMap { SteamManager.heroURL($0) })
                 .frame(width: width, height: height)
                 .clipped()
+                .modifier(ExtendsUnderSidebar())
 
             if isCurrent, let player = player {
                 TrailerLayerView(player: player)
@@ -354,6 +357,7 @@ struct HomeCarousel: View {
                 } label: {
                     Image(systemName: "ellipsis")
                         .font(.system(size: 18, weight: .bold))
+                        .foregroundStyle(.white)
                         .frame(width: compact ? 44 : 50, height: compact ? 44 : 50)
                         .contentShape(Circle())
                 }
@@ -465,7 +469,19 @@ private struct CarouselFocus: ViewModifier {
     }
 }
 
-private struct RoundGlass: ViewModifier {
+/// iPad (iOS 26): the art continues under the glass sidebar instead of stopping at its edge
+struct ExtendsUnderSidebar: ViewModifier {
+    func body(content: Content) -> some View {
+        if #available(iOS 26.0, *), UIDevice.current.userInterfaceIdiom == .pad {
+            content.backgroundExtensionEffect()
+        } else {
+            content
+        }
+    }
+}
+
+/// Round Liquid Glass button (the carousel's ••• and the game page's)
+struct RoundGlass: ViewModifier {
     func body(content: Content) -> some View {
         if #available(iOS 26.0, *) {
             content.buttonStyle(.plain).glassEffect(.regular.interactive(), in: Circle())

@@ -14,3 +14,11 @@
 ## Search
 
 - Before you type, Search shows your recent searches and two rows (Recently Played, Ready to Play) instead of repeating the Library. Results appear as you type. A search is remembered when you submit it or open one of its results; **Clear** forgets them.
+
+## Details
+
+- iPhone game page: Play, ••• and the playtime stats are centred, in line with the carousel.
+- The game page's ••• is now the same round glass button as the carousel's.
+- The trailer's sound button is white, like the other icons at the top right.
+- iPad Search: the search field is always open at the top and gets the keyboard as soon as you open the tab (no second magnifier).
+- iPad: the carousel and game page art continue under the glass sidebar.

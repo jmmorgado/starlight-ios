@@ -256,15 +256,27 @@ struct NativeSearchScreen: View {
 private struct FocusedSearch: View {
     @ObservedObject var model: HomeModel
     @FocusState private var focused: Bool
+    private var isPad: Bool { UIDevice.current.userInterfaceIdiom == .pad }
 
     var body: some View {
         SearchTab(model: model)
             .navigationTitle("Search")
             .starlightToolbar(model)
-            .searchable(text: $model.searchQuery, prompt: "Search game")
+            // iPad: the field always open at the top (the tab bar's magnifier is the way in, so no second
+            // magnifier in the toolbar). iPhone: the system's search tab field, as before
+            .searchable(text: $model.searchQuery, placement: isPad ? .navigationBarDrawer(displayMode: .always) : .automatic,
+                        prompt: "Search game")
             .onSubmit(of: .search) { RecentSearches.add(model.searchQuery) }
             .searchFocused($focused)
-            .onAppear { focused = model.searchFieldFocused }
+            .onAppear {
+                focused = model.searchFieldFocused
+                // Straight into typing when the tab opens (the field appears a moment after the tab)
+                if isPad {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
+                        if model.tab == .search { focused = true }
+                    }
+                }
+            }
             .onChange(of: model.searchFieldFocused) { _, value in
                 if focused != value { focused = value }
             }
