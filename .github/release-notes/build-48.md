@@ -17,11 +17,11 @@
 
 ## Details
 
-- iPhone game page: Play, ••• and the playtime stats are centred, in line with the carousel.
+- iPhone game page: the logo, PC and hours, Play, ••• and the playtime stats are centred, in line with the carousel.
 - The game page's ••• is now the same round glass button as the carousel's.
 - The trailer's sound button is white, like the other icons at the top right.
 - iPad Search: the search field is always open at the top and gets the keyboard as soon as you open the tab (no second magnifier).
-- iPad: the carousel and game page art continue under the glass sidebar.
+- iPad with the sidebar: the carousel and game page start at the sidebar's edge (logo and text no longer behind it) and their art continues, blurred, under the glass sidebar, like the Apple TV app.
 
 ## Top bar
 

@@ -20,9 +20,11 @@ struct HomeTab: View {
     @State private var titleProgress: Double = 0
 
     var body: some View {
+        // iPad sidebar: the list starts at the sidebar's edge (the art continues under the glass by itself)
+        SidebarAware { sidebar in
         GeometryReader { geo in
             let compact = geo.size.height < 440
-            let leading = geo.safeAreaInsets.leading + 24
+            let leading = (sidebar ? 0 : geo.safeAreaInsets.leading) + 24
             let trailing = geo.safeAreaInsets.trailing + 24
             let screenHeight = geo.size.height + geo.safeAreaInsets.top + geo.safeAreaInsets.bottom
             // iPhone in landscape: the carousel fills the screen. iPhone in portrait and iPad: Apple TV app proportion
@@ -53,7 +55,8 @@ struct HomeTab: View {
                             .padding(.bottom, 40)
                         }
                         // Under the navigation bar (the carousel starts at the top of the screen) and edge to edge
-                        .ignoresSafeArea(.container, edges: [.horizontal, .top])
+                        // (with the sidebar: from its edge)
+                        .ignoresSafeArea(.container, edges: sidebar ? [.trailing, .top] : [.horizontal, .top])
                         .modifier(HomeScrollState(progress: $titleProgress))
                         .modifier(TabBarAutoHideScroll())
                         .modifier(TopEdgeEffect(hidden: titleProgress < 0.5))
@@ -67,6 +70,7 @@ struct HomeTab: View {
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
             .background(Color.black.ignoresSafeArea())
+        }
         }
         .modifier(HomeTitle(visible: model.featured != nil, progress: titleProgress))
         .modifier(GameDetailDestination(model: model, tab: .home, zoom: zoom))

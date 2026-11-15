@@ -89,6 +89,8 @@ struct GameDetailView: View {
     }
 
     var body: some View {
+        // iPad sidebar: the page starts at the sidebar's edge (the art continues under the glass by itself)
+        SidebarAware { sidebar in
         GeometryReader { geo in
             let heroHeight = max(220, geo.size.height * 0.62)
             ScrollViewReader { proxy in
@@ -154,11 +156,11 @@ struct GameDetailView: View {
                             steamSections(appid: appid, mediaHeight: min(170, max(110, geo.size.height * 0.26)))
                         }
                     }
-                    .padding(.horizontal, geo.safeAreaInsets.leading + 24)
+                    .padding(.horizontal, (sidebar ? 0 : geo.safeAreaInsets.leading) + 24)
                     .padding(.bottom, 40)
                 }
             }
-            .ignoresSafeArea(.container, edges: [.top, .horizontal])
+            .ignoresSafeArea(.container, edges: sidebar ? [.top, .trailing] : [.top, .horizontal])
             .onChange(of: focus.focusedID) { focused in
                 guard let focused = focused else { return }
                 withAnimation(.easeInOut(duration: 0.2)) {
@@ -170,6 +172,7 @@ struct GameDetailView: View {
                 }
             }
             }
+        }
         }
         .overlay {
             if let media = media {
@@ -257,7 +260,8 @@ struct GameDetailView: View {
     }
 
     private func hero(height: CGFloat) -> some View {
-        ZStack(alignment: .bottomLeading) {
+        // iPhone: centred, in line with the Home carousel and the buttons below
+        ZStack(alignment: isPhone ? .bottom : .bottomLeading) {
             Color.clear
                 .overlay(
                     ArtworkImage(path: game.artPath("hero") ?? game.artPath("grid"), fallbackText: "",
@@ -266,12 +270,12 @@ struct GameDetailView: View {
                 .clipped()
                 .modifier(ExtendsUnderSidebar())
             LinearGradient(colors: [.clear, .black.opacity(0.35), .black], startPoint: .center, endPoint: .bottom)
-            VStack(alignment: .leading, spacing: 8) {
+            VStack(alignment: isPhone ? .center : .leading, spacing: 8) {
                 if let logo = ArtworkCache.shared.image(game.artPath("logo")) {
                     Image(uiImage: logo)
                         .resizable()
                         .aspectRatio(contentMode: .fit)
-                        .frame(maxWidth: 380, maxHeight: 110, alignment: .leading)
+                        .frame(maxWidth: 380, maxHeight: 110, alignment: isPhone ? .center : .leading)
                         .shadow(color: .black.opacity(0.5), radius: 8)
                         .accessibilityLabel(game.name)
                 } else if !game.isInstalled, let appid = game.steamAppId, let url = SteamManager.logoURL(appid) {
@@ -283,12 +287,13 @@ struct GameDetailView: View {
                             Text(game.name).font(.system(size: 36, weight: .heavy)).lineLimit(2)
                         }
                     }
-                    .frame(maxWidth: 380, maxHeight: 110, alignment: .leading)
+                    .frame(maxWidth: 380, maxHeight: 110, alignment: isPhone ? .center : .leading)
                     .shadow(color: .black.opacity(0.5), radius: 8)
                 } else {
                     Text(game.name)
                         .font(.system(size: 36, weight: .heavy))
                         .lineLimit(2)
+                        .multilineTextAlignment(isPhone ? .center : .leading)
                 }
                 HStack(spacing: 8) {
                     if game.running {
@@ -305,7 +310,7 @@ struct GameDetailView: View {
                         .foregroundStyle(.white.opacity(0.85))
                 }
             }
-            .padding(.horizontal, 48)
+            .padding(.horizontal, isPhone ? 24 : 48)
             .padding(.bottom, 16)
         }
         .frame(maxWidth: .infinity)
