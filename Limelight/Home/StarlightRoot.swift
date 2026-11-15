@@ -204,8 +204,8 @@ struct TabBarAutoHideVisibility: ViewModifier {
     }
 }
 
-/// iPad: the tab's title fades in as you scroll (like "Play Now" on Home), then rises with the glass bar
-/// when the tab bar goes. iPhone: the usual title.
+/// iPad: as you scroll the glass bar comes in under the tab bar; once the tab bar has gone,
+/// the tab's title fades in on the glass. iPhone: the usual title.
 struct FadingTabTitle: ViewModifier {
     let title: String
     @ObservedObject private var state = TabBarAutoHide.shared
@@ -216,15 +216,26 @@ struct FadingTabTitle: ViewModifier {
                 .navigationTitle(title)
                 .toolbar {
                     ToolbarItem(placement: .principal) {
-                        Text(title)
-                            .font(.headline)
-                            .opacity(state.titleProgress)
-                            .accessibilityHidden(state.titleProgress == 0)
+                        PadTabTitle(title: title)
                     }
                 }
         } else {
             content.navigationTitle(title)
         }
+    }
+}
+
+/// The iPad title: hidden while the tab bar shows, fades in just after it goes
+struct PadTabTitle: View {
+    let title: String
+    @ObservedObject private var state = TabBarAutoHide.shared
+
+    var body: some View {
+        Text(title)
+            .font(.headline)
+            .opacity(state.hidden ? 1 : 0)
+            .animation(state.hidden ? .easeInOut(duration: 0.45).delay(0.2) : .easeOut(duration: 0.15), value: state.hidden)
+            .accessibilityHidden(!state.hidden)
     }
 }
 

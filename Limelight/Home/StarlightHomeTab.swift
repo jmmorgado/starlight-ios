@@ -70,9 +70,15 @@ struct HomeTab: View {
         }
         .toolbar {
             ToolbarItem(placement: .principal) {
-                Text("Play Now")
-                    .font(.headline)
-                    .opacity(model.featured != nil ? titleProgress : 0)
+                if UIDevice.current.userInterfaceIdiom == .pad {
+                    // iPad: glass first, then the title once the tab bar has gone (as in the other tabs)
+                    PadTabTitle(title: "Play Now")
+                        .opacity(model.featured != nil ? 1 : 0)
+                } else {
+                    Text("Play Now")
+                        .font(.headline)
+                        .opacity(model.featured != nil ? titleProgress : 0)
+                }
             }
             ToolbarItem(placement: .navigationBarTrailing) {
                 TrailerMuteButton()
