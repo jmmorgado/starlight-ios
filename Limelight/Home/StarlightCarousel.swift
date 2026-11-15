@@ -284,8 +284,10 @@ struct HomeCarousel: View {
         let enteringSide: UnitPoint = playback.direction > 0 ? .leading : .trailing
         let farSide: UnitPoint = playback.direction > 0 ? .trailing : .leading
         if incoming {
-            // The edge stays all but invisible until the art is almost fully over the old one
-            return LinearGradient(stops: [.init(color: .black.opacity(pow(p, 6)), location: 0),
+            // The edge stays transparent until the art is in place (it fills in over the last 5%, when it's
+            // less than 1% away)
+            let edge = pow(max(0, (p - 0.95) / 0.05), 2)
+            return LinearGradient(stops: [.init(color: .black.opacity(edge), location: 0),
                                           .init(color: .black, location: 0.45)],
                                   startPoint: enteringSide, endPoint: farSide)
         }
@@ -299,7 +301,8 @@ struct HomeCarousel: View {
     private func artOpacity(incoming: Bool) -> Double {
         guard neighborGame != nil else { return 1 }
         let p = Double(playback.progress)
-        return incoming ? p : 1 - p
+        // The old art stays underneath longer, so the incoming edge always fades over it, never over black
+        return incoming ? p : 1 - pow(p, 3)
     }
 
     private var infoGame: GameItem? {
