@@ -149,17 +149,8 @@ final class TabBarAutoHide: ObservableObject {
     /// The tab bar only goes once the title is fully in
     private static let hideAfter: CGFloat = 120
 
-    /// iPhone: the PC capsule shrinks to the PC (and the trailer sound) once the list has moved
-    @Published private(set) var compact = false
-
     func update(offset: CGFloat) {
-        if UIDevice.current.userInterfaceIdiom == .phone {
-            let value = offset > 30
-            if value != compact {
-                withAnimation(.easeInOut(duration: 0.25)) { compact = value }
-            }
-            return
-        }
+        guard UIDevice.current.userInterfaceIdiom == .pad else { return }
         let progress = (min(1, max(0, Double(offset - 8) / 60)) * 20).rounded() / 20
         if progress != titleProgress { titleProgress = progress }
         let delta = offset - lastOffset
@@ -176,7 +167,6 @@ final class TabBarAutoHide: ObservableObject {
     func reset() {
         lastOffset = 0
         titleProgress = 0
-        if compact { withAnimation(.easeInOut(duration: 0.25)) { compact = false } }
         set(false)
     }
 
@@ -230,7 +220,37 @@ struct FadingTabTitle: ViewModifier {
                     }
                 }
         } else {
-            content.navigationTitle(title)
+            content
+                .navigationTitle(title)
+                .modifier(PhoneTitle(title: title))
+        }
+    }
+}
+
+/// iPhone: the screen's title on the left when upright, centred in landscape
+struct PhoneTitle: ViewModifier {
+    let title: String
+    var opacity: Double = 1
+    @Environment(\.verticalSizeClass) private var verticalSizeClass
+
+    func body(content: Content) -> some View {
+        let upright = verticalSizeClass == .regular
+        content.toolbar {
+            ToolbarItem(placement: .navigationBarLeading) {
+                if upright {
+                    Text(title)
+                        .font(.system(size: 17, weight: .bold))
+                        .opacity(opacity)
+                        .accessibilityHidden(opacity == 0)
+                }
+            }
+            // Takes the centre slot, so the system doesn't draw the title a second time
+            ToolbarItem(placement: .principal) {
+                Text(title)
+                    .font(.headline)
+                    .opacity(upright ? 0 : opacity)
+                    .accessibilityHidden(upright || opacity == 0)
+            }
         }
     }
 }
@@ -344,15 +364,12 @@ private struct FocusedSearch: View {
 struct PCToolbarButton: View {
     @ObservedObject var model: HomeModel
     @ObservedObject private var device = DeviceStatus.shared
-    @ObservedObject private var bar = TabBarAutoHide.shared
     @Environment(\.verticalSizeClass) private var verticalSizeClass
 
-    /// iPhone upright: the system status bar shows the time, network and battery.
-    /// iPhone after scrolling: just the PC. iPad and the top of the list: everything.
+    /// iPhone upright: the system status bar shows the time, network and battery, so just the PC.
+    /// Landscape and iPad: everything (it fits).
     private var showsStatus: Bool {
-        guard UIDevice.current.userInterfaceIdiom == .phone else { return true }
-        if verticalSizeClass == .regular { return false }
-        return !bar.compact
+        !(UIDevice.current.userInterfaceIdiom == .phone && verticalSizeClass == .regular)
     }
 
     var body: some View {

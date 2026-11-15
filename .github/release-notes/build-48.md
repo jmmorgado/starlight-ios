@@ -26,5 +26,5 @@
 ## Top bar
 
 - The PC button and the status (time, controller, network, battery) are now one capsule; tapping it opens the PC menu. The trailer's sound button sits in the same capsule. Settings has it too.
-- iPhone in landscape: once you scroll, the capsule shrinks to the PC (with its online dot) and the sound button, so the title fits; back at the top it opens up again.
+- iPhone: the screen's title (Play Now, Library, Settings, Search) sits on the left when upright and in the centre in landscape.
 - iPhone upright: the iOS status bar (time, signal, battery) is back at the top, and the capsule shows just the PC (and the sound button during a trailer).

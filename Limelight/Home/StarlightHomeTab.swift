@@ -68,19 +68,7 @@ struct HomeTab: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
             .background(Color.black.ignoresSafeArea())
         }
-        .toolbar {
-            ToolbarItem(placement: .principal) {
-                if UIDevice.current.userInterfaceIdiom == .pad {
-                    // iPad: glass first, then the title once the tab bar has gone (as in the other tabs)
-                    PadTabTitle(title: "Play Now")
-                        .opacity(model.featured != nil ? 1 : 0)
-                } else {
-                    Text("Play Now")
-                        .font(.headline)
-                        .opacity(model.featured != nil ? titleProgress : 0)
-                }
-            }
-        }
+        .modifier(HomeTitle(visible: model.featured != nil, progress: titleProgress))
         .modifier(GameDetailDestination(model: model, tab: .home, zoom: zoom))
     }
 
@@ -98,6 +86,25 @@ struct HomeTab: View {
             withAnimation(.easeInOut(duration: 0.25)) {
                 proxy.scrollTo(section, anchor: section == "section-featured" ? .top : .center)
             }
+        }
+    }
+}
+
+/// "Play Now": iPad after the tab bar goes; iPhone fading in with the scroll (left when upright, centred in landscape)
+struct HomeTitle: ViewModifier {
+    let visible: Bool
+    let progress: Double
+
+    func body(content: Content) -> some View {
+        if UIDevice.current.userInterfaceIdiom == .pad {
+            content.toolbar {
+                ToolbarItem(placement: .principal) {
+                    PadTabTitle(title: "Play Now")
+                        .opacity(visible ? 1 : 0)
+                }
+            }
+        } else {
+            content.modifier(PhoneTitle(title: "Play Now", opacity: visible ? progress : 0))
         }
     }
 }
