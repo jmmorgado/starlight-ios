@@ -109,6 +109,7 @@ struct GameDetailView: View {
     @ObservedObject private var focus = GameFocus.shared
     @ObservedObject private var steamArt = SteamOnlyArtwork.shared
     @ObservedObject private var store = SteamStore.shared
+    @ObservedObject private var sidebar = SidebarInset.shared
     let game: GameItem
     @State private var page: GameDetailPage?
     @State private var media: GameMediaViewer?
@@ -127,14 +128,19 @@ struct GameDetailView: View {
     }
 
     var body: some View {
-        // The art runs edge to edge, under the iPad sidebar too (nothing resizes); the logo, text and the rest
-        // keep clear of the sidebar through the leading safe area
+        // The page runs edge to edge. iPad with the sidebar, like the Apple TV app: the art starts at the sidebar's edge
+        // and shrinks (16:9 of what's left), the text slides over, animated in step with the sidebar (SidebarInset),
+        // and a mirrored copy of the art sits under the glass to tint it
         GeometryReader { geo in
-            let heroHeight = max(220, geo.size.height * 0.62)
+            let side = isPhone ? 0 : sidebar.value
+            let screenWidth = geo.size.width + geo.safeAreaInsets.leading + geo.safeAreaInsets.trailing
+            let screenHeight = geo.size.height + geo.safeAreaInsets.top + geo.safeAreaInsets.bottom
+            let heroHeight = isPhone ? max(220, geo.size.height * 0.62)
+                : HeroLayout.padHeight(width: screenWidth - side, screenHeight: screenHeight).rounded()
             ScrollViewReader { proxy in
             ScrollView(.vertical, showsIndicators: false) {
                 VStack(alignment: .leading, spacing: 18) {
-                    hero(height: heroHeight, leading: geo.safeAreaInsets.leading)
+                    hero(height: heroHeight, side: side)
                         .id("detail-top")
 
                     VStack(alignment: .leading, spacing: 18) {
@@ -194,12 +200,13 @@ struct GameDetailView: View {
                             steamSections(appid: appid, mediaHeight: min(170, max(110, geo.size.height * 0.26)))
                         }
                     }
-                    .padding(.leading, geo.safeAreaInsets.leading + 24)
+                    .padding(.leading, (isPhone ? geo.safeAreaInsets.leading : side) + 24)
                     .padding(.trailing, geo.safeAreaInsets.trailing + 24)
                     .padding(.bottom, 40)
                 }
             }
             .ignoresSafeArea(.container, edges: [.top, .horizontal])
+            .modifier(FollowSidebarInset(leading: geo.safeAreaInsets.leading))
             .onChange(of: focus.focusedID) { focused in
                 guard let focused = focused else { return }
                 withAnimation(.easeInOut(duration: 0.2)) {
@@ -297,20 +304,48 @@ struct GameDetailView: View {
         .accessibilityLabel("Game options")
     }
 
-    private func hero(height: CGFloat, leading: CGFloat) -> some View {
-        // iPhone: centred, in line with the Home carousel and the buttons below
-        ZStack(alignment: isPhone ? .bottom : .bottomLeading) {
-            // Art and its fade together, so what continues under the sidebar fades the same way
-            ZStack {
-                Color.clear
-                    .overlay(
-                        ArtworkImage(path: game.artPath("hero") ?? game.artPath("grid"), fallbackText: "",
-                                     remoteURL: game.isInstalled ? nil : game.steamAppId.flatMap { SteamManager.heroURL($0) })
-                    )
-                    .clipped()
-                LinearGradient(colors: [.clear, .black.opacity(0.35), .black], startPoint: .center, endPoint: .bottom)
+    private func hero(height: CGFloat, side: CGFloat) -> some View {
+        GeometryReader { geo in
+            let width = max(1, geo.size.width - side)
+            ZStack(alignment: .topLeading) {
+                // Under the iPad sidebar: the art mirrored at the edge and blurred
+                if side > 0.5 {
+                    heroArt
+                        .frame(width: width, height: height)
+                        .scaleEffect(x: -1, y: 1)
+                        .frame(width: side, height: height, alignment: .trailing)
+                        .clipped()
+                        .blur(radius: 20, opaque: true)
+                        .clipped()
+                        .accessibilityHidden(true)
+                }
+                // iPhone: centred, in line with the Home carousel and the buttons below
+                ZStack(alignment: isPhone ? .bottom : .bottomLeading) {
+                    heroArt
+                    heroText
+                }
+                .frame(width: width, height: height)
+                .clipped()
+                .offset(x: side)
             }
-            .modifier(ExtendsUnderSidebar())
+        }
+        .frame(height: height)
+    }
+
+    /// The game's art and its fade into the page
+    private var heroArt: some View {
+        ZStack {
+            Color.clear
+                .overlay(
+                    ArtworkImage(path: game.artPath("hero") ?? game.artPath("grid"), fallbackText: "",
+                                 remoteURL: game.isInstalled ? nil : game.steamAppId.flatMap { SteamManager.heroURL($0) })
+                )
+                .clipped()
+            LinearGradient(colors: [.clear, .black.opacity(0.35), .black], startPoint: .center, endPoint: .bottom)
+        }
+    }
+
+    private var heroText: some View {
             VStack(alignment: isPhone ? .center : .leading, spacing: 8) {
                 if let logo = ArtworkCache.shared.image(game.artPath("logo")) {
                     Image(uiImage: logo)
@@ -352,13 +387,7 @@ struct GameDetailView: View {
                 }
             }
             .padding(.horizontal, isPhone ? 24 : 48)
-            // Clear of the iPad sidebar (and the iPhone's notch side)
-            .padding(.leading, isPhone ? 0 : leading)
             .padding(.bottom, 16)
-        }
-        .frame(maxWidth: .infinity)
-        .frame(height: height)
-        .clipped()
     }
 }
 

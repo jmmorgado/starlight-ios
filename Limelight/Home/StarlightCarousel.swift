@@ -109,7 +109,11 @@ struct HomeCarousel: View {
     let compact: Bool
     /// iPad: logo, text and buttons on the left (the dots stay centred), like the Apple TV app on iPad
     var leadingAligned = false
+    /// From the slide's leading edge
     var leadingInset: CGFloat = 40
+    /// iPad sidebar width (animated): the slides start at its edge, and a mirrored copy of the current one
+    /// (art and trailer) sits under its glass, so the glass takes their colours like in the Apple TV app
+    var sidebarInset: CGFloat = 0
 
     @ObservedObject private var trailer = HomeTrailerState.shared
     @ObservedObject private var store = SteamStore.shared
@@ -118,6 +122,8 @@ struct HomeCarousel: View {
     /// Slide, timing and trailer live outside the view, so they survive the carousel being rebuilt
     /// (e.g. when the iPad switches between the tab bar and the sidebar)
     @ObservedObject private var playback = CarouselPlayback.shared
+    /// Finger offset while swiping between games
+    @State private var drag: CGFloat = 0
 
     private static let artDelay: Double = 5
     private static let artOnly: Double = 8
@@ -143,19 +149,36 @@ struct HomeCarousel: View {
 
     var body: some View {
         GeometryReader { geo in
-            ZStack(alignment: .bottom) {
-                TabView(selection: $playback.index) {
-                    ForEach(Array(games.enumerated()), id: \.element.id) { i, game in
-                        slide(game, isCurrent: i == playback.index, width: geo.size.width)
-                            .tag(i)
+            let width = max(1, geo.size.width - sidebarInset)
+            ZStack(alignment: .topLeading) {
+                // Under the iPad sidebar: the current game's art and trailer, mirrored at the edge and blurred
+                if sidebarInset > 0.5, let game = current {
+                    background(game, isCurrent: true, width: width)
+                        .scaleEffect(x: -1, y: 1)
+                        .frame(width: sidebarInset, height: height, alignment: .trailing)
+                        .clipped()
+                        .blur(radius: 20, opaque: true)
+                        .clipped()
+                        .allowsHitTesting(false)
+                        .accessibilityHidden(true)
+                }
+
+                // The games side by side, moved by the slide width: unlike a paged TabView, this resizes
+                // smoothly when the sidebar comes or goes
+                ZStack(alignment: .bottom) {
+                    strip(width: width) { game, i in background(game, isCurrent: i == playback.index, width: width) }
+                        .allowsHitTesting(false)
+                    strip(width: width) { game, i in foreground(game, isCurrent: i == playback.index, width: width) }
+
+                    if games.count > 1 {
+                        dots
+                            .padding(.bottom, bottomInset + 14)
                     }
                 }
-                .tabViewStyle(.page(indexDisplayMode: .never))
-
-                if games.count > 1 {
-                    dots
-                        .padding(.bottom, bottomInset + 14)
-                }
+                .frame(width: width, height: height)
+                .modifier(CarouselSwipe(changed: { dx in swipeChanged(dx) },
+                                        ended: { dx, velocity in swipeEnded(dx, velocity: velocity, width: width) }))
+                .offset(x: sidebarInset)
             }
         }
         .frame(height: height)
@@ -196,6 +219,37 @@ struct HomeCarousel: View {
                 await store.load(appid)
                 if steam.isConfigured { await steam.loadAchievements(appid) }
             }
+        }
+    }
+
+    // MARK: Paging
+
+    private func strip<Page: View>(width: CGFloat, @ViewBuilder page: @escaping (GameItem, Int) -> Page) -> some View {
+        HStack(spacing: 0) {
+            ForEach(Array(games.enumerated()), id: \.element.id) { i, game in
+                page(game, i)
+                    .frame(width: width, height: height)
+            }
+        }
+        .frame(width: width, height: height, alignment: .leading)
+        .offset(x: -CGFloat(playback.index) * width + drag)
+        .clipped()
+    }
+
+    private func swipeChanged(_ dx: CGFloat) {
+        // Resistance past the first and last game
+        let atEdge = (playback.index == 0 && dx > 0) || (playback.index == games.count - 1 && dx < 0)
+        drag = atEdge ? dx / 3 : dx
+    }
+
+    private func swipeEnded(_ dx: CGFloat, velocity: CGFloat, width: CGFloat) {
+        let projected = dx + velocity * 0.2
+        var target = playback.index
+        if projected < -width / 3 { target += 1 } else if projected > width / 3 { target -= 1 }
+        target = min(max(target, 0), games.count - 1)
+        withAnimation(.spring(response: 0.4, dampingFraction: 1)) {
+            playback.index = target
+            drag = 0
         }
     }
 
@@ -295,9 +349,9 @@ struct HomeCarousel: View {
         }
     }
 
-    private func slide(_ game: GameItem, isCurrent: Bool, width: CGFloat) -> some View {
+    /// The game's art (zoomed to fill), its trailer when it's the current game, and the shade
+    private func background(_ game: GameItem, isCurrent: Bool, width: CGFloat) -> some View {
         ZStack(alignment: .bottom) {
-            // The game's background art, zoomed to fill
             Color.black
             ArtworkImage(path: game.artPath("hero") ?? game.artPath("grid"), fallbackText: "",
                          remoteURL: game.steamAppId.flatMap { SteamManager.heroURL($0) })
@@ -312,19 +366,23 @@ struct HomeCarousel: View {
                     .allowsHitTesting(false)
             }
 
-            shade.allowsHitTesting(false)
-
-            info(game, isCurrent: isCurrent, width: width)
-                .frame(maxWidth: leadingAligned ? min(max(width * 0.55, 380), 560) : .infinity, alignment: leadingAligned ? .leading : .center)
-                .frame(maxWidth: .infinity, alignment: leadingAligned ? .leading : .center)
-                .padding(.bottom, bottomInset + (games.count > 1 ? 40 : 18))
-                .padding(.leading, leadingAligned ? leadingInset : 24)
-                .padding(.trailing, 24)
+            shade
         }
         .frame(width: width, height: height)
-        .contentShape(Rectangle())
-        // Anywhere but the buttons: the game's page
-        .onTapGesture { model.openDetail(game, source: "featured-\(game.id)") }
+        .clipped()
+    }
+
+    /// Logo, stats and buttons; anywhere else opens the game's page
+    private func foreground(_ game: GameItem, isCurrent: Bool, width: CGFloat) -> some View {
+        info(game, isCurrent: isCurrent, width: width)
+            .frame(maxWidth: leadingAligned ? min(max(width * 0.55, 380), 560) : .infinity, alignment: leadingAligned ? .leading : .center)
+            .frame(maxWidth: .infinity, alignment: leadingAligned ? .leading : .center)
+            .padding(.bottom, bottomInset + (games.count > 1 ? 40 : 18))
+            .padding(.leading, leadingAligned ? leadingInset : 24)
+            .padding(.trailing, 24)
+            .frame(width: width, height: height, alignment: .bottom)
+            .contentShape(Rectangle())
+            .onTapGesture { model.openDetail(game, source: "featured-\(game.id)") }
     }
 
     private func info(_ game: GameItem, isCurrent: Bool, width: CGFloat) -> some View {
@@ -496,14 +554,72 @@ private struct CarouselFocus: ViewModifier {
     }
 }
 
-/// iPad (iOS 26): the art continues under the glass sidebar instead of stopping at its edge
-struct ExtendsUnderSidebar: ViewModifier {
+/// Horizontal swipe between the carousel's games. iOS 18: a UIKit pan that only starts when the finger moves
+/// sideways, so the list's vertical scrolling is untouched; earlier: a SwiftUI drag alongside the scroll
+private struct CarouselSwipe: ViewModifier {
+    let changed: (CGFloat) -> Void
+    let ended: (CGFloat, CGFloat) -> Void
+
     func body(content: Content) -> some View {
-        if #available(iOS 26.0, *), UIDevice.current.userInterfaceIdiom == .pad {
-            content.backgroundExtensionEffect()
+        if #available(iOS 18.0, *) {
+            content.gesture(HorizontalPan(changed: changed, ended: ended))
         } else {
-            content
+            content.simultaneousGesture(
+                DragGesture(minimumDistance: 12)
+                    .onChanged { value in
+                        guard abs(value.translation.width) > abs(value.translation.height) else { return }
+                        changed(value.translation.width)
+                    }
+                    .onEnded { value in
+                        ended(value.translation.width,
+                              (value.predictedEndTranslation.width - value.translation.width) / 0.2)
+                    }
+            )
         }
+    }
+}
+
+@available(iOS 18.0, *)
+private struct HorizontalPan: UIGestureRecognizerRepresentable {
+    let changed: (CGFloat) -> Void
+    let ended: (CGFloat, CGFloat) -> Void
+
+    final class Coordinator: NSObject, UIGestureRecognizerDelegate {
+        func gestureRecognizerShouldBegin(_ recognizer: UIGestureRecognizer) -> Bool {
+            guard let pan = recognizer as? UIPanGestureRecognizer else { return true }
+            let velocity = pan.velocity(in: pan.view)
+            return abs(velocity.x) > abs(velocity.y)
+        }
+    }
+
+    func makeCoordinator(converter: CoordinateSpaceConverter) -> Coordinator { Coordinator() }
+
+    func makeUIGestureRecognizer(context: Context) -> UIPanGestureRecognizer {
+        let pan = UIPanGestureRecognizer()
+        pan.delegate = context.coordinator
+        return pan
+    }
+
+    func handleUIGestureRecognizerAction(_ pan: UIPanGestureRecognizer, context: Context) {
+        let dx = pan.translation(in: pan.view).x
+        switch pan.state {
+        case .changed:
+            changed(dx)
+        case .ended, .cancelled:
+            ended(dx, pan.velocity(in: pan.view).x)
+        default:
+            break
+        }
+    }
+}
+
+/// iPad hero height (Home carousel, game page): 16:9 of the width beside the sidebar, like the Apple TV app, so the
+/// whole picture scales when the sidebar narrows it. Upright: no taller than that width, nor 78% of the screen
+enum HeroLayout {
+    static func padHeight(width: CGFloat, screenHeight: CGFloat) -> CGFloat {
+        let wide = width * 9 / 16
+        if wide >= screenHeight * 0.5 { return min(wide, screenHeight * 0.8) }
+        return min(screenHeight * 0.78, width)
     }
 }
 

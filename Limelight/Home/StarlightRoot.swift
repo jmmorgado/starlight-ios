@@ -388,6 +388,45 @@ private struct FocusedSearch: View {
 }
 
 /// iPad: whether the tab view currently shows the sidebar (iOS 18+)
+/// iPad: the sidebar's width as the Home and game page lay themselves out with it. The system hands a new width over
+/// at once (and rebuilds the tab's views when switching), so the layout would jump; this follows it with an animation,
+/// kept across rebuilds, so the art shrinks and the text slides over in step with the sidebar, like the Apple TV app
+final class SidebarInset: ObservableObject {
+    static let shared = SidebarInset()
+    /// Close to the sidebar's own slide
+    static let animation = Animation.spring(response: 0.45, dampingFraction: 1)
+    @Published private(set) var value: CGFloat = 0
+    private var target: CGFloat?
+
+    func follow(_ new: CGFloat) {
+        let new = max(0, new.rounded())
+        guard new != target else { return }
+        let first = target == nil
+        target = new
+        if first {
+            value = new
+        } else {
+            withAnimation(Self.animation) { value = new }
+        }
+    }
+}
+
+/// Feeds SidebarInset with the leading safe area (the sidebar's width on iPad; nothing on iPhone)
+struct FollowSidebarInset: ViewModifier {
+    let leading: CGFloat
+
+    func body(content: Content) -> some View {
+        content
+            .onAppear { follow() }
+            .onChange(of: leading) { _ in follow() }
+    }
+
+    private func follow() {
+        guard UIDevice.current.userInterfaceIdiom == .pad else { return }
+        SidebarInset.shared.follow(leading)
+    }
+}
+
 struct SidebarAware<Content: View>: View {
     @ViewBuilder let content: (Bool) -> Content
 

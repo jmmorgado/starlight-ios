@@ -15,25 +15,29 @@ struct HomeTab: View {
     @ObservedObject var model: HomeModel
     @ObservedObject private var steam = SteamManager.shared
     @ObservedObject private var focus = GameFocus.shared
+    @ObservedObject private var sidebar = SidebarInset.shared
     @Namespace private var zoom
     /// 0 at the top → 1 after scrolling a little: fades "Play Now" into the navigation bar
     @State private var titleProgress: Double = 0
 
     var body: some View {
-        // The art runs edge to edge, under the iPad sidebar too (the sidebar floats over it, nothing resizes);
-        // the logo, text, buttons and rows keep clear of it through the leading safe area
+        // The list runs edge to edge. iPad with the sidebar, like the Apple TV app: the carousel starts at the sidebar's
+        // edge and shrinks (16:9 of what's left), the text and rows slide over, all animated in step with the sidebar
+        // (SidebarInset), and a mirrored copy of the art and trailer sits under the glass to tint it
         GeometryReader { geo in
             let compact = geo.size.height < 440
             let isPad = UIDevice.current.userInterfaceIdiom == .pad
-            let leading = geo.safeAreaInsets.leading + 24
+            let side = isPad ? sidebar.value : 0
+            let leading = (isPad ? side : geo.safeAreaInsets.leading) + 24
             let trailing = geo.safeAreaInsets.trailing + 24
             let screenHeight = geo.size.height + geo.safeAreaInsets.top + geo.safeAreaInsets.bottom
             let screenWidth = geo.size.width + geo.safeAreaInsets.leading + geo.safeAreaInsets.trailing
-            // iPhone in landscape: the carousel fills the screen. iPhone in portrait and iPad: Apple TV app proportion
+            // iPhone in landscape: the carousel fills the screen. iPhone in portrait: Apple TV app proportion.
+            // iPad: 16:9 of the width beside the sidebar (upright: no taller than that width)
             let phoneLandscape = !isPad && geo.size.width > geo.size.height
-            // iPad upright: no taller than the screen is wide, so the rows below still show
             let carouselHeight = phoneLandscape ? screenHeight
-                : (isPad ? min(screenHeight * 0.78, screenWidth) : screenHeight * 0.78).rounded()
+                : (isPad ? HeroLayout.padHeight(width: screenWidth - side, screenHeight: screenHeight)
+                         : screenHeight * 0.78).rounded()
             let recent = Array(model.continueGames.prefix(5))
             Group {
                 if model.featured != nil {
@@ -45,7 +49,7 @@ struct HomeTab: View {
                                 } else {
                                     HomeCarousel(games: recent, model: model, height: carouselHeight,
                                                  bottomInset: phoneLandscape ? geo.safeAreaInsets.bottom : 0, compact: compact,
-                                                 leadingAligned: isPad, leadingInset: leading + 16)
+                                                 leadingAligned: isPad, leadingInset: 40, sidebarInset: side)
                                         .id("section-featured")
                                 }
 
@@ -70,6 +74,7 @@ struct HomeTab: View {
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
             .background(Color.black.ignoresSafeArea())
+            .modifier(FollowSidebarInset(leading: geo.safeAreaInsets.leading))
         }
         .modifier(HomeTitle(visible: model.featured != nil, progress: titleProgress))
         .modifier(GameDetailDestination(model: model, tab: .home, zoom: zoom))
