@@ -76,6 +76,13 @@ final class CarouselPlayback: ObservableObject {
     var playingGameId: String?
     /// Carousel views on screen (a rebuild briefly shows two, or none)
     var appearances = 0
+    /// The game whose logo, stats and buttons show: it follows `index` once the art has settled
+    @Published var infoIndex = 0
+    @Published var infoOpacity: Double = 1
+    /// +1: the next game comes in from the right; -1: from the left
+    @Published var direction: CGFloat = 1
+    /// Bumped by each change, so the steps of an overtaken one are dropped
+    var transitionToken = 0
 }
 
 /// Mute button for the carousel trailer (navigation bar, next to the PC button)
@@ -163,12 +170,27 @@ struct HomeCarousel: View {
                         .accessibilityHidden(true)
                 }
 
-                // The games side by side, moved by the slide width: unlike a paged TabView, this resizes
-                // smoothly when the sidebar comes or goes
+                // Changing game, like the Apple TV app: the text and buttons fade out, the art drifts a little
+                // sideways as the next one dissolves in (darkening on the way), then the next text fades in.
+                // The art is drawn a little wider than the slide, so the drift never shows an edge
                 ZStack(alignment: .bottom) {
-                    strip(width: width) { game, i in background(game, isCurrent: i == playback.index, width: width) }
-                        .allowsHitTesting(false)
-                    strip(width: width) { game, i in foreground(game, isCurrent: i == playback.index, width: width) }
+                    ZStack {
+                        Color.black
+                        if let game = current {
+                            background(game, isCurrent: true, width: width + Self.drift * 2)
+                                .id(game.id)
+                                .transition(artTransition)
+                        }
+                    }
+                    .offset(x: max(-Self.drift, min(Self.drift, drag * 0.15)))
+                    .frame(width: width, height: height)
+                    .clipped()
+                    .allowsHitTesting(false)
+
+                    if let game = infoGame {
+                        foreground(game, isCurrent: playback.infoIndex == playback.index, width: width)
+                            .opacity(playback.infoOpacity * (1 - min(1, Double(abs(drag)) / 120)))
+                    }
 
                     if games.count > 1 {
                         dots
@@ -199,10 +221,12 @@ struct HomeCarousel: View {
         }
         .onChange(of: games.map(\.id)) { ids in
             if playback.index >= ids.count { playback.index = 0 }
+            if playback.infoIndex >= ids.count { playback.infoIndex = playback.index }
         }
         .onAppear {
             playback.appearances += 1
             if games.indices.contains(playback.index) == false { playback.index = 0 }
+            if games.indices.contains(playback.infoIndex) == false { playback.infoIndex = playback.index }
             if let game = current { model.featuredId = game.id }
             if active { playback.player?.play() }
         }
@@ -222,34 +246,55 @@ struct HomeCarousel: View {
         }
     }
 
-    // MARK: Paging
+    // MARK: Changing game
 
-    private func strip<Page: View>(width: CGFloat, @ViewBuilder page: @escaping (GameItem, Int) -> Page) -> some View {
-        HStack(spacing: 0) {
-            ForEach(Array(games.enumerated()), id: \.element.id) { i, game in
-                page(game, i)
-                    .frame(width: width, height: height)
-            }
-        }
-        .frame(width: width, height: height, alignment: .leading)
-        .offset(x: -CGFloat(playback.index) * width + drag)
-        .clipped()
+    /// How far the art drifts sideways while changing game
+    private static let drift: CGFloat = 36
+
+    private var infoGame: GameItem? {
+        games.indices.contains(playback.infoIndex) ? games[playback.infoIndex] : current
     }
 
+    private var artTransition: AnyTransition {
+        .asymmetric(insertion: .opacity.combined(with: .offset(x: Self.drift * playback.direction)),
+                    removal: .opacity.combined(with: .offset(x: -Self.drift * playback.direction)))
+    }
+
+    /// The Apple TV app's change: text out, art dissolves with a slight drift, text in
+    private func change(to target: Int, direction: CGFloat) {
+        guard games.count > 1, games.indices.contains(target) else { return }
+        playback.transitionToken += 1
+        let token = playback.transitionToken
+        playback.direction = direction
+        withAnimation(.easeOut(duration: 0.15)) { playback.infoOpacity = 0 }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+            guard token == playback.transitionToken else { return }
+            withAnimation(.easeInOut(duration: 0.55)) {
+                playback.index = target
+                drag = 0
+            }
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
+            guard token == playback.transitionToken else { return }
+            playback.infoIndex = target
+            withAnimation(.easeOut(duration: 0.3)) { playback.infoOpacity = 1 }
+        }
+    }
+
+    /// The art follows the finger a little, and the text fades as it goes
     private func swipeChanged(_ dx: CGFloat) {
-        // Resistance past the first and last game
-        let atEdge = (playback.index == 0 && dx > 0) || (playback.index == games.count - 1 && dx < 0)
-        drag = atEdge ? dx / 3 : dx
+        guard games.count > 1 else { return }
+        drag = dx
     }
 
     private func swipeEnded(_ dx: CGFloat, velocity: CGFloat, width: CGFloat) {
         let projected = dx + velocity * 0.2
-        var target = playback.index
-        if projected < -width / 3 { target += 1 } else if projected > width / 3 { target -= 1 }
-        target = min(max(target, 0), games.count - 1)
-        withAnimation(.spring(response: 0.4, dampingFraction: 1)) {
-            playback.index = target
-            drag = 0
+        if projected < -60 {
+            go(1)
+        } else if projected > 60 {
+            go(-1)
+        } else {
+            withAnimation(.spring(response: 0.35, dampingFraction: 1)) { drag = 0 }
         }
     }
 
@@ -323,16 +368,13 @@ struct HomeCarousel: View {
             playback.elapsed = 0
             return
         }
-        withAnimation(.easeInOut(duration: 0.45)) {
-            playback.index = (playback.index + 1) % games.count
-        }
+        change(to: (playback.index + 1) % games.count, direction: 1)
     }
 
+    /// One game on or back (wrapping round, like the Apple TV app)
     private func go(_ delta: Int) {
         guard !games.isEmpty else { return }
-        withAnimation(.easeInOut(duration: 0.35)) {
-            playback.index = (playback.index + delta + games.count) % games.count
-        }
+        change(to: (playback.index + delta + games.count) % games.count, direction: delta > 0 ? 1 : -1)
     }
 
     // MARK: Views
@@ -491,7 +533,7 @@ struct HomeCarousel: View {
                         .fill(.white.opacity(0.5))
                         .frame(width: 8, height: 8)
                         .contentShape(Rectangle().inset(by: -6))
-                        .onTapGesture { withAnimation { playback.index = i } }
+                        .onTapGesture { change(to: i, direction: i > playback.index ? 1 : -1) }
                 }
             }
         }
