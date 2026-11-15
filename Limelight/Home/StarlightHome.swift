@@ -145,6 +145,8 @@ struct HostItem: Identifiable, Equatable {
     /// Settings → Refresh Games in progress, and whether the last one failed
     let refreshing: Bool
     let refreshFailed: Bool
+    /// Connecting: finding out whether the PC is there, waking it, or talking to it (background work)
+    let busy: Bool
 
     init?(_ dict: [String: Any]) {
         guard let uuid = dict["uuid"] as? String else { return nil }
@@ -157,6 +159,7 @@ struct HostItem: Identifiable, Equatable {
         address = dict["address"] as? String ?? ""
         refreshing = dict["refreshing"] as? Bool ?? false
         refreshFailed = dict["refreshFailed"] as? Bool ?? false
+        busy = dict["busy"] as? Bool ?? false
     }
 }
 

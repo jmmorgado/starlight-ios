@@ -60,6 +60,10 @@
     BOOL _pendingLaunchFallbackScheduled;
     // Auto Wake-on-LAN for pinned games / links / Shortcuts
     BOOL _pendingLaunchWaking;
+    // Starlight: work that used to show the blocking loading screen runs in the background;
+    // the PC button shows it as "connecting" instead
+    NSInteger _backgroundBusy;
+    NSMutableDictionary<NSString*, NSDate*>* _wakingUntil;
     // Connect Early: when each PC was last woken, so it isn't sent again and again
     NSMutableDictionary<NSString*, NSDate*>* _connectEarlyWoken;
     // Settings feedback: PCs whose games are being refreshed, and the last result
@@ -1077,13 +1081,68 @@ static NSMutableSet* hostList;
 }
 
 - (void) showLoadingFrame:(void (^)(void))completion {
+#if !TARGET_OS_TV
+    if (_home != nil) {
+        // Starlight: never block the app (e.g. opening it with the PC asleep). The PC button animates instead.
+        _backgroundBusy++;
+        [self pushHomeState];
+        if (completion != nil) {
+            completion();
+        }
+        return;
+    }
+#endif
     [_loadingFrame showLoadingFrame:completion];
 }
 
 - (void) hideLoadingFrame:(void (^)(void))completion {
     [self enableNavigation];
+#if !TARGET_OS_TV
+    if (_home != nil) {
+        if (_backgroundBusy > 0) {
+            _backgroundBusy--;
+        }
+        [self pushHomeState];
+        if (completion != nil) {
+            completion();
+        }
+        return;
+    }
+#endif
     [_loadingFrame dismissLoadingFrame:completion];
 }
+
+#if !TARGET_OS_TV
+// The PC button's animation: still finding out whether the PC is there, waking it, or talking to it
+- (BOOL)isHostBusy:(TemporaryHost*)host current:(BOOL)current {
+    if (host.state == StateOnline) {
+        return current && _backgroundBusy > 0;
+    }
+    if (host.state == StateUnknown) {
+        return YES;
+    }
+    NSDate* until = _wakingUntil[host.uuid];
+    if (until != nil && [until timeIntervalSinceNow] > 0) {
+        return YES;
+    }
+    return current && _backgroundBusy > 0;
+}
+
+// Waking takes a while: keep the animation for up to a minute, or until the PC answers
+- (void)markHostWaking:(TemporaryHost*)host {
+    if (host.uuid == nil) {
+        return;
+    }
+    if (_wakingUntil == nil) {
+        _wakingUntil = [NSMutableDictionary dictionary];
+    }
+    _wakingUntil[host.uuid] = [NSDate dateWithTimeIntervalSinceNow:60];
+    [self pushHomeState];
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(61 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        [self pushHomeState];
+    });
+}
+#endif
 
 - (void)adjustScrollViewForSafeArea:(UIScrollView*)view {
     if (@available(iOS 11.0, *)) {
@@ -1335,6 +1394,9 @@ static NSMutableSet* hostList;
     _connectEarlyWoken[host.uuid] = [NSDate date];
     Log(LOG_I, @"Connect Early: waking %@", host.name);
     [self sendWakeToHost:host];
+#if !TARGET_OS_TV
+    [self markHostWaking:host];
+#endif
 }
 
 // On opening / returning to the app: give discovery a few seconds to see whether the PC is up first
@@ -2133,6 +2195,7 @@ static const NSUInteger kMaxQuickActions = 4;
                             @"permissionDenied": @([_permissionDeniedHosts containsObject:host.uuid]),
                             @"refreshing": @([_refreshingHosts containsObject:host.uuid]),
                             @"refreshFailed": @([_refreshFailedHosts containsObject:host.uuid]),
+                            @"busy": @([self isHostBusy:host current:[host.uuid isEqualToString:currentUUID]]),
                             @"address": host.activeAddress ?: (host.localAddress ?: (host.address ?: @"")) }];
     }
     
@@ -2327,6 +2390,7 @@ static const NSUInteger kMaxQuickActions = 4;
         dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
             [WakeOnLanManager wakeHost:host];
         });
+        [self markHostWaking:host];
         wolAlert.message = @"Wake-up request sent. It may take a few moments for the PC to wake. If it never does, check that Wake-on-LAN is enabled on it.";
     }
     [[self activeViewController] presentViewController:wolAlert animated:YES completion:nil];

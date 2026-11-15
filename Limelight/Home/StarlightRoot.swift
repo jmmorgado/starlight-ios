@@ -359,6 +359,33 @@ private struct FocusedSearch: View {
     }
 }
 
+/// The PC, or (while connecting / waking it in the background) a native animated symbol in its place
+struct PCStatusSymbol: View {
+    let busy: Bool
+
+    var body: some View {
+        Group {
+            if busy {
+                if #available(iOS 18.0, *) {
+                    Image(systemName: "arrow.trianglehead.2.clockwise")
+                        .symbolEffect(.rotate, options: .repeating)
+                } else {
+                    ProgressView()
+                        .controlSize(.small)
+                        .tint(.white)
+                }
+            } else {
+                Image(systemName: "desktopcomputer")
+            }
+        }
+        .font(.system(size: 16, weight: .semibold))
+        .frame(width: 22, height: 20)
+        .contentTransition(.opacity)
+        .animation(.easeInOut(duration: 0.25), value: busy)
+        .accessibilityLabel(busy ? "Connecting to your PC" : "PC")
+    }
+}
+
 /// The PC button in the navigation bar: a native menu (opens with the system animation).
 /// With a controller connected it shows □, and □ opens the navigable PC panel (system menus can't be driven by a controller).
 struct PCToolbarButton: View {
@@ -420,13 +447,15 @@ struct PCToolbarButton: View {
     private var label: some View {
         HStack(spacing: 6) {
             ZStack(alignment: .bottomTrailing) {
-                Image(systemName: "desktopcomputer")
-                    .font(.system(size: 16, weight: .semibold))
-                Circle()
-                    .fill(statusColor)
-                    .frame(width: 8, height: 8)
-                    .overlay(Circle().stroke(.black.opacity(0.6), lineWidth: 1.5))
-                    .offset(x: 3, y: 2)
+                // While connecting / waking: the system's animated "in progress" symbol instead of the PC
+                PCStatusSymbol(busy: model.currentHost?.busy ?? false)
+                if !(model.currentHost?.busy ?? false) {
+                    Circle()
+                        .fill(statusColor)
+                        .frame(width: 8, height: 8)
+                        .overlay(Circle().stroke(.black.opacity(0.6), lineWidth: 1.5))
+                        .offset(x: 3, y: 2)
+                }
             }
             if device.controllerConnected {
                 Image(systemName: PadGlyph.pc)

@@ -28,3 +28,8 @@
 - The PC button and the status (time, controller, network, battery) are now one capsule; tapping it opens the PC menu. The trailer's sound button sits in the same capsule. Settings has it too.
 - iPhone: the screen's title (Play Now, Library, Settings, Search) sits on the left when upright and in the centre in landscape.
 - iPhone upright: the iOS status bar (time, signal, battery) is back at the top, and the capsule shows just the PC (and the sound button during a trailer).
+
+## Connecting in the background
+
+- Opening Starlight with the PC asleep or unreachable no longer freezes the app behind a spinner: finding the PC, waking it and loading its games happen in the background, so you can keep browsing.
+- Meanwhile the PC button shows an animated "in progress" symbol in place of the PC. It switches back to the PC (with its online dot) once the PC answers, or after a minute of waking without a reply.
