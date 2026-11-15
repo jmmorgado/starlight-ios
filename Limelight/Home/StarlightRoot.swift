@@ -84,7 +84,7 @@ struct HomeRootView: View {
                 Tab(StarlightTab.library.title, systemImage: StarlightTab.library.symbol, value: StarlightTab.library) {
                     StarlightStack {
                         LibraryTab(model: model)
-                            .navigationTitle("Library")
+                            .modifier(FadingTabTitle(title: "Library"))
                             .starlightToolbar(model)
                             .modifier(TabBarAutoHideVisibility())
                     }
@@ -143,13 +143,19 @@ struct TabBarMinimizeOnScroll: ViewModifier {
 final class TabBarAutoHide: ObservableObject {
     static let shared = TabBarAutoHide()
     @Published private(set) var hidden = false
+    /// 0 at the top → 1 after the first 60 pt: the tab's title fades in while the tab bar is still there
+    @Published private(set) var titleProgress: Double = 0
     private var lastOffset: CGFloat = 0
+    /// The tab bar only goes once the title is fully in
+    private static let hideAfter: CGFloat = 120
 
     func update(offset: CGFloat) {
         guard UIDevice.current.userInterfaceIdiom == .pad else { return }
+        let progress = (min(1, max(0, Double(offset - 8) / 60)) * 20).rounded() / 20
+        if progress != titleProgress { titleProgress = progress }
         let delta = offset - lastOffset
         lastOffset = offset
-        if offset < 40 {
+        if offset < Self.hideAfter {
             set(false)
         } else if delta > 6 {
             set(true)
@@ -160,6 +166,7 @@ final class TabBarAutoHide: ObservableObject {
 
     func reset() {
         lastOffset = 0
+        titleProgress = 0
         set(false)
     }
 
@@ -193,6 +200,30 @@ struct TabBarAutoHideVisibility: ViewModifier {
             content.toolbar(state.hidden ? .hidden : .visible, for: .tabBar)
         } else {
             content
+        }
+    }
+}
+
+/// iPad: the tab's title fades in as you scroll (like "Play Now" on Home), then rises with the glass bar
+/// when the tab bar goes. iPhone: the usual title.
+struct FadingTabTitle: ViewModifier {
+    let title: String
+    @ObservedObject private var state = TabBarAutoHide.shared
+
+    func body(content: Content) -> some View {
+        if UIDevice.current.userInterfaceIdiom == .pad {
+            content
+                .navigationTitle(title)
+                .toolbar {
+                    ToolbarItem(placement: .principal) {
+                        Text(title)
+                            .font(.headline)
+                            .opacity(state.titleProgress)
+                            .accessibilityHidden(state.titleProgress == 0)
+                    }
+                }
+        } else {
+            content.navigationTitle(title)
         }
     }
 }
@@ -260,7 +291,7 @@ private struct FocusedSearch: View {
 
     var body: some View {
         SearchTab(model: model)
-            .navigationTitle("Search")
+            .modifier(FadingTabTitle(title: "Search"))
             .starlightToolbar(model)
             // iPad: the field always open at the top (the tab bar's magnifier is the way in, so no second
             // magnifier in the toolbar). iPhone: the system's search tab field, as before

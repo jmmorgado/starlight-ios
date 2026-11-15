@@ -8,7 +8,7 @@
 
 - Fills the screen upright too (it used to stay landscape with black bars).
 - **Tab bar or sidebar**: the button at the left of the tab bar turns it into a sidebar, like the Apple TV app (iPadOS keeps your choice).
-- Scrolling down a tab hides the tab bar, leaving the tab's title (Play Now, Library, Settings) in the glass bar, as on iPhone. It comes back when you scroll up or reach the top.
+- Scrolling down a tab first fades in its title (Play Now, Library, Settings, Search) under the tab bar, as on iPhone; scrolling further hides the tab bar and the title rises into the glass bar. The tab bar comes back when you scroll up or reach the top.
 - Carousel: logo, text and buttons on the left (the dots stay centred), like the Apple TV app on iPad.
 
 ## Search
