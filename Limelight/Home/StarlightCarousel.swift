@@ -83,6 +83,9 @@ final class CarouselPlayback: ObservableObject {
     @Published var direction: CGFloat = 1
     /// Bumped by each change, so the steps of an overtaken one are dropped
     var transitionToken = 0
+    /// The game coming in while changing (under the finger, or animated), and how far it has come in (0…1)
+    @Published var neighbor: Int?
+    @Published var progress: CGFloat = 0
 }
 
 /// Mute button for the carousel trailer (navigation bar, next to the PC button)
@@ -129,8 +132,6 @@ struct HomeCarousel: View {
     /// Slide, timing and trailer live outside the view, so they survive the carousel being rebuilt
     /// (e.g. when the iPad switches between the tab bar and the sidebar)
     @ObservedObject private var playback = CarouselPlayback.shared
-    /// Finger offset while swiping between games
-    @State private var drag: CGFloat = 0
 
     private static let artDelay: Double = 5
     private static let artOnly: Double = 8
@@ -158,8 +159,9 @@ struct HomeCarousel: View {
         GeometryReader { geo in
             let width = max(1, geo.size.width - sidebarInset)
             ZStack(alignment: .topLeading) {
-                // Under the iPad sidebar: the current game's art and trailer, mirrored at the edge and blurred
-                if sidebarInset > 0.5, let game = current {
+                // Under the iPad sidebar: the current game's art and trailer (the incoming one past halfway),
+                // mirrored at the edge and blurred
+                if sidebarInset > 0.5, let game = playback.progress > 0.5 ? (neighborGame ?? current) : current {
                     background(game, isCurrent: true, width: width)
                         .scaleEffect(x: -1, y: 1)
                         .frame(width: sidebarInset, height: height, alignment: .trailing)
@@ -170,29 +172,26 @@ struct HomeCarousel: View {
                         .accessibilityHidden(true)
                 }
 
-                // Changing game, like the Apple TV app: the text and buttons fade out, the next art dissolves in
-                // over the old one (which stays, darkening, until it's covered), with a slight sideways drift;
-                // then the next text fades in. The art is drawn a little wider than the slide, so the drift
-                // never shows an edge
+                // Changing game, like the Apple TV app, following the finger (or animated): the current art slides
+                // away and fades while the next one, already partly there underneath, comes in from the side and
+                // fades in; the text and buttons fade out at the start and the next ones fade in at the end
                 ZStack(alignment: .bottom) {
                     ZStack {
                         Color.black
-                        if let game = current {
-                            background(game, isCurrent: true, width: width + Self.drift * 2)
-                                .id(game.id)
-                                .transition(artTransition)
-                                // The incoming art above the outgoing one
-                                .zIndex(Double(playback.transitionToken))
+                        ForEach(artLayers, id: \.game.id) { layer in
+                            background(layer.game, isCurrent: !layer.incoming, width: width)
+                                .offset(x: artOffset(incoming: layer.incoming, width: width))
+                                .opacity(artOpacity(incoming: layer.incoming))
+                                .zIndex(layer.incoming ? 1 : 0)
                         }
                     }
-                    .offset(x: max(-Self.drift, min(Self.drift, drag * 0.15)))
                     .frame(width: width, height: height)
                     .clipped()
                     .allowsHitTesting(false)
 
                     if let game = infoGame {
                         foreground(game, isCurrent: playback.infoIndex == playback.index, width: width)
-                            .opacity(playback.infoOpacity * (1 - min(1, Double(abs(drag)) / 120)))
+                            .opacity(playback.infoOpacity * (1 - min(1, Double(playback.progress) * 3)))
                     }
 
                     if games.count > 1 {
@@ -201,7 +200,7 @@ struct HomeCarousel: View {
                     }
                 }
                 .frame(width: width, height: height)
-                .modifier(CarouselSwipe(changed: { dx in swipeChanged(dx) },
+                .modifier(CarouselSwipe(changed: { dx in swipeChanged(dx, width: width) },
                                         ended: { dx, velocity in swipeEnded(dx, velocity: velocity, width: width) }))
                 .offset(x: sidebarInset)
             }
@@ -251,61 +250,114 @@ struct HomeCarousel: View {
 
     // MARK: Changing game
 
-    /// How far the art drifts sideways while changing game
-    private static let drift: CGFloat = 36
+    private struct ArtLayer {
+        let game: GameItem
+        let incoming: Bool
+    }
+
+    private var neighborGame: GameItem? {
+        guard let i = playback.neighbor, games.indices.contains(i) else { return nil }
+        return games[i]
+    }
+
+    /// The current art, and the incoming one while changing
+    private var artLayers: [ArtLayer] {
+        var layers: [ArtLayer] = []
+        if let game = current { layers.append(ArtLayer(game: game, incoming: false)) }
+        if let game = neighborGame, game.id != current?.id { layers.append(ArtLayer(game: game, incoming: true)) }
+        return layers
+    }
+
+    /// Outgoing: slides away with the finger (half its pace). Incoming: comes in from a third of the way over
+    private func artOffset(incoming: Bool, width: CGFloat) -> CGFloat {
+        guard neighborGame != nil else { return 0 }
+        let p = playback.progress
+        return incoming ? playback.direction * width * 0.3 * (1 - p) : -playback.direction * width * 0.5 * p
+    }
+
+    private func artOpacity(incoming: Bool) -> Double {
+        guard neighborGame != nil else { return 1 }
+        let p = Double(playback.progress)
+        return incoming ? p : 1 - p
+    }
 
     private var infoGame: GameItem? {
         games.indices.contains(playback.infoIndex) ? games[playback.infoIndex] : current
     }
 
-    /// In: fades in over the old art with a slight drift. Out: stays opaque and darkens until it's covered
-    private var artTransition: AnyTransition {
-        .asymmetric(insertion: .opacity.combined(with: .offset(x: Self.drift * playback.direction)),
-                    removal: .modifier(active: Darkened(amount: 0.5), identity: Darkened(amount: 0)))
-    }
-
-    /// The Apple TV app's change: text out, art dissolves with a slight drift, text in
+    /// Animated change (trailer end, dots, controller): the same as a full swipe
     private func change(to target: Int, direction: CGFloat) {
-        guard games.count > 1, games.indices.contains(target) else { return }
+        guard games.count > 1, games.indices.contains(target), target != playback.index else { return }
         playback.transitionToken += 1
         let token = playback.transitionToken
-        playback.direction = direction
-        withAnimation(.easeOut(duration: 0.25)) { playback.infoOpacity = 0 }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
-            guard token == playback.transitionToken else { return }
-            withAnimation(.easeInOut(duration: 0.9)) {
-                playback.index = target
-                drag = 0
-            }
+        var instant = Transaction()
+        instant.disablesAnimations = true
+        withTransaction(instant) {
+            playback.direction = direction
+            playback.neighbor = target
+            playback.progress = 0
         }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.1) {
+        DispatchQueue.main.async {
             guard token == playback.transitionToken else { return }
+            withAnimation(.easeInOut(duration: 0.9)) { playback.progress = 1 }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.9) { commit(token) }
+        }
+    }
+
+    /// The incoming game becomes the current one (they look the same at this point), then its text fades in
+    private func commit(_ token: Int) {
+        guard token == playback.transitionToken, let target = playback.neighbor else { return }
+        var instant = Transaction()
+        instant.disablesAnimations = true
+        withTransaction(instant) {
+            playback.index = target
+            playback.neighbor = nil
+            playback.progress = 0
             playback.infoIndex = target
-            withAnimation(.easeOut(duration: 0.35)) { playback.infoOpacity = 1 }
+            playback.infoOpacity = 0
+        }
+        withAnimation(.easeOut(duration: 0.35).delay(0.1)) { playback.infoOpacity = 1 }
+    }
+
+    /// The finger drives the change: left brings the next game, right the previous one (wrapping round)
+    private func swipeChanged(_ dx: CGFloat, width: CGFloat) {
+        guard games.count > 1, dx != 0 else { return }
+        let direction: CGFloat = dx < 0 ? 1 : -1
+        let target = (playback.index + (dx < 0 ? 1 : -1) + games.count) % games.count
+        var instant = Transaction()
+        instant.disablesAnimations = true
+        withTransaction(instant) {
+            // The finger takes over any change already under way
+            playback.transitionToken += 1
+            playback.neighbor = target
+            playback.direction = direction
+            // Across the whole slide, end to end
+            playback.progress = min(1, abs(dx) / (width * 0.9))
         }
     }
 
-    /// The art follows the finger a little, and the text fades as it goes
-    private func swipeChanged(_ dx: CGFloat) {
-        guard games.count > 1 else { return }
-        drag = dx
-    }
-
+    /// Past a quarter of the way (or flicked): it finishes; otherwise it goes back
     private func swipeEnded(_ dx: CGFloat, velocity: CGFloat, width: CGFloat) {
-        let projected = dx + velocity * 0.2
-        if projected < -60 {
-            go(1)
-        } else if projected > 60 {
-            go(-1)
+        guard playback.neighbor != nil else { return }
+        let token = playback.transitionToken
+        let along = playback.direction > 0 ? -(dx + velocity * 0.2) : (dx + velocity * 0.2)
+        if along / width > 0.25 {
+            let duration = max(0.2, 0.45 * Double(1 - playback.progress))
+            withAnimation(.easeOut(duration: duration)) { playback.progress = 1 }
+            DispatchQueue.main.asyncAfter(deadline: .now() + duration) { commit(token) }
         } else {
-            withAnimation(.spring(response: 0.35, dampingFraction: 1)) { drag = 0 }
+            withAnimation(.easeOut(duration: 0.3)) { playback.progress = 0 }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                guard token == playback.transitionToken, playback.progress == 0 else { return }
+                playback.neighbor = nil
+            }
         }
     }
 
     // MARK: Timing
 
     private func step() {
-        guard active, let game = current else { return }
+        guard active, playback.neighbor == nil, let game = current else { return }
         if let player = playback.player {
             // Trailer on screen: fade it in once frames are coming
             if !playback.videoVisible, player.timeControlStatus == .playing {
@@ -551,15 +603,6 @@ struct HomeCarousel: View {
             @unknown default: break
             }
         }
-    }
-}
-
-/// The outgoing carousel art: darkens while the next one covers it
-private struct Darkened: ViewModifier {
-    let amount: Double
-
-    func body(content: Content) -> some View {
-        content.overlay(Color.black.opacity(amount))
     }
 }
 
