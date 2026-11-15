@@ -407,6 +407,8 @@ private struct SidebarReader<Content: View>: View {
 
     var body: some View {
         content(placement == .sidebar)
+            .onAppear { SidebarLayoutSwitch.shared.observe(sidebar: placement == .sidebar) }
+            .onChange(of: placement == .sidebar) { SidebarLayoutSwitch.shared.observe(sidebar: $0) }
     }
 }
 

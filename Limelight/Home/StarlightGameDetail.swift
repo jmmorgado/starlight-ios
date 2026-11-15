@@ -40,6 +40,39 @@ struct ZoomDestination: ViewModifier {
 }
 
 /// Pushes the game page in this tab's navigation stack
+/// iPad: switching between the tab bar and the sidebar rebuilds each tab's navigation stack, which reports the
+/// open game page as dismissed. Dismissals within a moment of a switch (either order) are undone.
+final class SidebarLayoutSwitch {
+    static let shared = SidebarLayoutSwitch()
+    private static let window: TimeInterval = 0.8
+    private var sidebar: Bool?
+    private var lastChange = Date.distantPast
+    private var dismissed: (route: GameDetailRoute, model: HomeModel, at: Date)?
+
+    /// Called by every view that reads the tab bar placement
+    func observe(sidebar new: Bool) {
+        guard sidebar != new else { return }
+        let first = sidebar == nil
+        sidebar = new
+        guard !first else { return }
+        lastChange = Date()
+        // The dismissal came first: put the page back, without the push animation
+        if let d = dismissed, Date().timeIntervalSince(d.at) < Self.window, d.model.detail == nil {
+            var transaction = Transaction()
+            transaction.disablesAnimations = true
+            withTransaction(transaction) { d.model.detail = d.route }
+        }
+        dismissed = nil
+    }
+
+    /// Whether this dismissal is the layout switch's doing (then it's ignored)
+    func isLayoutDismissal(_ route: GameDetailRoute, model: HomeModel) -> Bool {
+        if Date().timeIntervalSince(lastChange) < Self.window { return true }
+        dismissed = (route, model, Date())
+        return false
+    }
+}
+
 struct GameDetailDestination: ViewModifier {
     @ObservedObject var model: HomeModel
     let tab: StarlightTab
@@ -50,7 +83,12 @@ struct GameDetailDestination: ViewModifier {
             content.navigationDestination(isPresented: Binding(
                 get: { model.detail?.tab == tab },
                 set: { presented in
-                    if !presented && model.detail?.tab == tab { model.detail = nil }
+                    // The iPad switching between the tab bar and the sidebar rebuilds the stack and reports
+                    // the page as dismissed: the page stays open then
+                    if !presented, let route = model.detail, route.tab == tab,
+                       !SidebarLayoutSwitch.shared.isLayoutDismissal(route, model: model) {
+                        model.detail = nil
+                    }
                 }
             )) {
                 if let route = model.detail, let game = model.games.first(where: { $0.id == route.gameId }) ?? Optional(route.game) {
