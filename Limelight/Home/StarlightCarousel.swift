@@ -292,7 +292,11 @@ struct HomeCarousel: View {
     }
 
     private func info(_ game: GameItem, isCurrent: Bool, width: CGFloat) -> some View {
-        VStack(spacing: compact ? 8 : 10) {
+        // While the trailer plays, the name, hours and achievements fade out (keeping their space,
+        // so the buttons stay put) and come back with the next game
+        let trailerOn = isCurrent && videoVisible
+        return VStack(spacing: compact ? 8 : 10) {
+            VStack(spacing: compact ? 8 : 10) {
             if game.running {
                 HStack(spacing: 6) {
                     Circle().fill(.green).frame(width: 8, height: 8)
@@ -328,6 +332,10 @@ struct HomeCarousel: View {
                     .font(.system(size: compact ? 13 : 14, weight: .medium))
                     .foregroundStyle(.white.opacity(0.6))
             }
+            }
+            .opacity(trailerOn ? 0 : 1)
+            .animation(.easeInOut(duration: 0.8), value: trailerOn)
+            .accessibilityHidden(trailerOn)
 
             HStack(spacing: 12) {
                 CarouselPlayButton(game: game, model: model, compact: compact)
