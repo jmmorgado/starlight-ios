@@ -397,8 +397,17 @@ final class SidebarInset: ObservableObject {
     static let animation = Animation.spring(response: 0.45, dampingFraction: 1)
     @Published private(set) var value: CGFloat = 0
     private var target: CGFloat?
+    /// The sidebar's width, learnt from views that see it showing
+    private var width: CGFloat = 0
 
-    func follow(_ new: CGFloat) {
+    /// Decided by whether the sidebar shows (the same for every view), not by the leading safe area alone: while the
+    /// tab is rebuilt the outgoing views still report the old safe area, and the last report would win
+    func update(sidebar: Bool, leading: CGFloat) {
+        if sidebar, leading > 50 { width = leading.rounded() }
+        follow(sidebar ? width : 0)
+    }
+
+    private func follow(_ new: CGFloat) {
         let new = max(0, new.rounded())
         guard new != target else { return }
         let first = target == nil
@@ -411,19 +420,22 @@ final class SidebarInset: ObservableObject {
     }
 }
 
-/// Feeds SidebarInset with the leading safe area (the sidebar's width on iPad; nothing on iPhone)
+/// Feeds SidebarInset with whether the sidebar shows and the leading safe area (its width on iPad; nothing on iPhone)
 struct FollowSidebarInset: ViewModifier {
     let leading: CGFloat
 
     func body(content: Content) -> some View {
-        content
-            .onAppear { follow() }
-            .onChange(of: leading) { _ in follow() }
+        SidebarAware { sidebar in
+            content
+                .onAppear { report(sidebar) }
+                .onChange(of: sidebar) { report($0) }
+                .onChange(of: leading) { _ in report(sidebar) }
+        }
     }
 
-    private func follow() {
+    private func report(_ sidebar: Bool) {
         guard UIDevice.current.userInterfaceIdiom == .pad else { return }
-        SidebarInset.shared.follow(leading)
+        SidebarInset.shared.update(sidebar: sidebar, leading: leading)
     }
 }
 
