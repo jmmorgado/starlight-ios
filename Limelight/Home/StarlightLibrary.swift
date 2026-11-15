@@ -134,6 +134,7 @@ struct GameGrid<Header: View>: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
                 }
                 .modifier(TabBarAutoHideScroll())
+                .modifier(TopEdgeEffect())
                 .onChange(of: focus.focusedID) { focused in
                     guard let focused = focused, focused.hasPrefix("\(prefix)-") else { return }
                     withAnimation(.easeInOut(duration: 0.2)) {
@@ -276,6 +277,7 @@ struct SearchSuggestions: View {
             }
             .ignoresSafeArea(.container, edges: .horizontal)
             .modifier(TabBarAutoHideScroll())
+            .modifier(TopEdgeEffect())
         }
         .onAppear { recents = RecentSearches.load() }
     }

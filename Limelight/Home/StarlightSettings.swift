@@ -205,6 +205,7 @@ struct SettingsTab: View {
                 }
                 .modifier(FocusScrollFollower(proxy: proxy))
                 .modifier(TabBarAutoHideScroll())
+                .modifier(TopEdgeEffect())
             }
             .modifier(FadingTabTitle(title: "Settings"))
             .starlightToolbar(model)

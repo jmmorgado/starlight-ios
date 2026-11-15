@@ -78,6 +78,11 @@ struct HomeRootView: View {
     private var tabs: some View {
         if #available(iOS 18.0, *) {
             TabView(selection: $model.tab) {
+                // First in the sidebar, like the Apple TV app (the tab bar keeps it at the end)
+                Tab(value: StarlightTab.search, role: .search) {
+                    StarlightStack { NativeSearchScreen(model: model).modifier(TabBarAutoHideVisibility()) }
+                        .environment(\.focusTabScope, "search")
+                }
                 Tab(StarlightTab.home.title, systemImage: StarlightTab.home.symbol, value: StarlightTab.home) {
                     StarlightStack { HomeTab(model: model).starlightToolbar(model).modifier(TabBarAutoHideVisibility()) }
                 }
@@ -93,14 +98,14 @@ struct HomeRootView: View {
                 Tab(StarlightTab.settings.title, systemImage: StarlightTab.settings.symbol, value: StarlightTab.settings) {
                     SettingsTab(model: model)
                 }
-                Tab(value: StarlightTab.search, role: .search) {
-                    StarlightStack { NativeSearchScreen(model: model).modifier(TabBarAutoHideVisibility()) }
-                        .environment(\.focusTabScope, "search")
-                }
             }
             // iPad: tab bar on top with the button that turns it into a sidebar (like the Apple TV app);
             // iPhone: the usual tab bar
             .tabViewStyle(.sidebarAdaptable)
+            // The sidebar's own section for the PCs (in the tab bar layout they're in the PC menu)
+            .tabViewSidebarFooter {
+                SidebarPCSection(model: model)
+            }
             .modifier(TabBarMinimizeOnScroll())
         } else {
             TabView(selection: $model.tab) {
@@ -196,10 +201,12 @@ struct TabBarAutoHideVisibility: ViewModifier {
     @ObservedObject private var state = TabBarAutoHide.shared
 
     func body(content: Content) -> some View {
-        if #available(iOS 16.0, *) {
-            content.toolbar(state.hidden ? .hidden : .visible, for: .tabBar)
-        } else {
-            content
+        SidebarAware { sidebar in
+            if #available(iOS 16.0, *), !sidebar {
+                content.toolbar(state.hidden ? .hidden : .visible, for: .tabBar)
+            } else {
+                content
+            }
         }
     }
 }
@@ -275,6 +282,13 @@ struct PadTabTitle: View {
     @ObservedObject private var state = TabBarAutoHide.shared
 
     var body: some View {
+        // With the sidebar showing, it already says where you are: no title on top
+        SidebarAware { sidebar in
+            titleText.opacity(sidebar ? 0 : 1)
+        }
+    }
+
+    private var titleText: some View {
         Text(title)
             .font(.headline)
             .opacity(state.hidden ? 1 : 0)
@@ -307,7 +321,7 @@ extension View {
                 // Same side, same group: iOS 26 draws the PC button and the status in one Liquid Glass capsule
                 // One capsule: the PC menu with the status inside it, and the trailer's sound button
                 ToolbarItemGroup(placement: .navigationBarTrailing) {
-                    PCToolbarButton(model: model)
+                    TopBarStatus(model: model)
                     TrailerMuteButton()
                 }
             }
@@ -370,6 +384,126 @@ private struct FocusedSearch: View {
             .onChange(of: focused) { _, value in
                 if model.searchFieldFocused != value { model.searchFieldFocused = value }
             }
+    }
+}
+
+/// iPad: whether the tab view currently shows the sidebar (iOS 18+)
+struct SidebarAware<Content: View>: View {
+    @ViewBuilder let content: (Bool) -> Content
+
+    var body: some View {
+        if #available(iOS 18.0, *) {
+            SidebarReader(content: content)
+        } else {
+            content(false)
+        }
+    }
+}
+
+@available(iOS 18.0, *)
+private struct SidebarReader<Content: View>: View {
+    @Environment(\.tabBarPlacement) private var placement
+    let content: (Bool) -> Content
+
+    var body: some View {
+        content(placement == .sidebar)
+    }
+}
+
+/// Top-right capsule: the PC menu with the status, or, with the sidebar showing (the PCs are in it),
+/// just the time, controller, network and battery
+struct TopBarStatus: View {
+    @ObservedObject var model: HomeModel
+
+    var body: some View {
+        SidebarAware { sidebar in
+            if sidebar {
+                StatusIcons()
+                    .padding(.horizontal, 6)
+            } else {
+                PCToolbarButton(model: model)
+            }
+        }
+    }
+}
+
+/// The sidebar's PCs section: each paired PC with its state (tap to switch), Wake / Refresh in its
+/// context menu, and Add PC by Address
+struct SidebarPCSection: View {
+    @ObservedObject var model: HomeModel
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text("PCs")
+                .font(.system(size: 17, weight: .semibold))
+                .foregroundStyle(.secondary)
+                .padding(.horizontal, 12)
+                .padding(.top, 18)
+                .padding(.bottom, 6)
+            ForEach(model.pairedHosts) { host in
+                Button {
+                    model.onSelectHost?(host.id)
+                } label: {
+                    HStack(spacing: 12) {
+                        ZStack(alignment: .bottomTrailing) {
+                            PCStatusSymbol(busy: host.busy)
+                                .foregroundStyle(starlightGold)
+                            if !host.busy {
+                                Circle()
+                                    .fill(host.online ? Color.green : Color.gray)
+                                    .frame(width: 8, height: 8)
+                                    .overlay(Circle().stroke(.black.opacity(0.6), lineWidth: 1.5))
+                                    .offset(x: 3, y: 2)
+                            }
+                        }
+                        VStack(alignment: .leading, spacing: 1) {
+                            Text(host.name)
+                                .font(.system(size: 17))
+                                .foregroundStyle(.primary)
+                                .lineLimit(1)
+                            Text(host.busy ? "Connecting…" : (host.online ? "Online" : "Offline"))
+                                .font(.system(size: 12))
+                                .foregroundStyle(.secondary)
+                        }
+                        Spacer(minLength: 4)
+                        if host.id == model.selectedHost {
+                            Image(systemName: "checkmark")
+                                .font(.system(size: 13, weight: .bold))
+                                .foregroundStyle(starlightGold)
+                        }
+                    }
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 8)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .contextMenu {
+                    if !host.online {
+                        Button { model.hostAction("wake", host) } label: {
+                            Label("Wake \(host.name)", systemImage: "power")
+                        }
+                    } else {
+                        Button { model.hostAction("refresh", host) } label: {
+                            Label("Refresh Games", systemImage: "arrow.clockwise")
+                        }
+                    }
+                }
+                .accessibilityLabel("\(host.name), \(host.busy ? "connecting" : (host.online ? "online" : "offline"))")
+            }
+            Button {
+                model.command("addHost")
+            } label: {
+                Label("Add PC by Address…", systemImage: "plus")
+                    .font(.system(size: 17))
+                    .foregroundStyle(starlightGold)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 8)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 

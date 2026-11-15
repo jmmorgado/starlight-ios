@@ -111,13 +111,16 @@ struct HomeTitle: ViewModifier {
 
 /// The navigation bar's blur over the carousel only once the list scrolls (iOS 26)
 struct TopEdgeEffect: ViewModifier {
-    let hidden: Bool
+    var hidden: Bool = false
 
     func body(content: Content) -> some View {
-        if #available(iOS 26.0, *) {
-            content.scrollEdgeEffectHidden(hidden, for: .top)
-        } else {
-            content
+        // iPad with the sidebar: no glass bar on top at all
+        SidebarAware { sidebar in
+            if #available(iOS 26.0, *) {
+                content.scrollEdgeEffectHidden(hidden || sidebar, for: .top)
+            } else {
+                content
+            }
         }
     }
 }

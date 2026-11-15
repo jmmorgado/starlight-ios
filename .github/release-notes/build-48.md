@@ -33,3 +33,8 @@
 
 - Opening Starlight with the PC asleep or unreachable no longer freezes the app behind a spinner: finding the PC, waking it and loading its games happen in the background, so you can keep browsing.
 - Meanwhile the PC button shows an animated "in progress" symbol in place of the PC. It switches back to the PC (with its online dot) once the PC answers, or after a minute of waking without a reply.
+
+## iPad sidebar
+
+- With the sidebar showing (like the Apple TV app): Search comes first, and a **PCs** section lists your PCs with their state (Online, Offline, or Connecting… with the animated symbol). Tap one to switch; touch and hold to wake it or refresh its games; **Add PC by Address…** sits at the end.
+- The top bar then has no glass or title (the sidebar shows where you are), and the top-right capsule keeps only the time, controller, network, battery and the trailer's sound button.
