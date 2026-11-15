@@ -284,13 +284,15 @@ struct HomeCarousel: View {
         let enteringSide: UnitPoint = playback.direction > 0 ? .leading : .trailing
         let farSide: UnitPoint = playback.direction > 0 ? .trailing : .leading
         if incoming {
-            return LinearGradient(stops: [.init(color: .black.opacity(p), location: 0),
-                                          .init(color: .black, location: 0.4)],
+            // The edge stays all but invisible until the art is almost fully over the old one
+            return LinearGradient(stops: [.init(color: .black.opacity(pow(p, 6)), location: 0),
+                                          .init(color: .black, location: 0.45)],
                                   startPoint: enteringSide, endPoint: farSide)
         }
+        // The uncovered edge softens as soon as the finger starts
         return LinearGradient(stops: [.init(color: .black, location: 0),
-                                      .init(color: .black, location: 0.6),
-                                      .init(color: .black.opacity(1 - p), location: 1)],
+                                      .init(color: .black, location: 0.55),
+                                      .init(color: .black.opacity(pow(1 - p, 4)), location: 1)],
                               startPoint: enteringSide, endPoint: farSide)
     }
 
