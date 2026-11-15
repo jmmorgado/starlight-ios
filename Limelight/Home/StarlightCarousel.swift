@@ -180,6 +180,7 @@ struct HomeCarousel: View {
                         Color.black
                         ForEach(artLayers, id: \.game.id) { layer in
                             background(layer.game, isCurrent: !layer.incoming, width: width)
+                                .mask(edgeFade(incoming: layer.incoming))
                                 .offset(x: artOffset(incoming: layer.incoming, width: width))
                                 .opacity(artOpacity(incoming: layer.incoming))
                                 .zIndex(layer.incoming ? 1 : 0)
@@ -268,11 +269,29 @@ struct HomeCarousel: View {
         return layers
     }
 
-    /// Outgoing: slides away with the finger (half its pace). Incoming: comes in from a third of the way over
+    /// Both drift only a little, like the Apple TV app: outgoing away by up to 12%, incoming from 15% over
     private func artOffset(incoming: Bool, width: CGFloat) -> CGFloat {
         guard neighborGame != nil else { return 0 }
         let p = playback.progress
-        return incoming ? playback.direction * width * 0.3 * (1 - p) : -playback.direction * width * 0.5 * p
+        return incoming ? playback.direction * width * 0.15 * (1 - p) : -playback.direction * width * 0.12 * p
+    }
+
+    /// No hard edges: the incoming art's leading side ramps in from transparent (fully opaque by the end), and the
+    /// outgoing art's uncovered side fades away as it goes
+    private func edgeFade(incoming: Bool) -> LinearGradient {
+        let p = Double(neighborGame == nil ? (incoming ? 1 : 0) : playback.progress)
+        // From the side the incoming art enters on (its leading edge) across the slide
+        let enteringSide: UnitPoint = playback.direction > 0 ? .leading : .trailing
+        let farSide: UnitPoint = playback.direction > 0 ? .trailing : .leading
+        if incoming {
+            return LinearGradient(stops: [.init(color: .black.opacity(p), location: 0),
+                                          .init(color: .black, location: 0.4)],
+                                  startPoint: enteringSide, endPoint: farSide)
+        }
+        return LinearGradient(stops: [.init(color: .black, location: 0),
+                                      .init(color: .black, location: 0.6),
+                                      .init(color: .black.opacity(1 - p), location: 1)],
+                              startPoint: enteringSide, endPoint: farSide)
     }
 
     private func artOpacity(incoming: Bool) -> Double {
