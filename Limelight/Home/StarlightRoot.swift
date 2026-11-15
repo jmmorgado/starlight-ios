@@ -380,7 +380,7 @@ struct PCStatusSymbol: View {
         }
         .font(.system(size: 16, weight: .semibold))
         .frame(width: 22, height: 20)
-        .contentTransition(.opacity)
+        .transition(.opacity)
         .animation(.easeInOut(duration: 0.25), value: busy)
         .accessibilityLabel(busy ? "Connecting to your PC" : "PC")
     }
