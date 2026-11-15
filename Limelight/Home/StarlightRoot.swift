@@ -227,29 +227,43 @@ struct FadingTabTitle: ViewModifier {
     }
 }
 
-/// iPhone: the screen's title on the left when upright, centred in landscape
+/// iPhone: the screen's title on the left when upright (plain text, no glass bubble), centred in landscape
 struct PhoneTitle: ViewModifier {
     let title: String
     var opacity: Double = 1
     @Environment(\.verticalSizeClass) private var verticalSizeClass
 
+    private var upright: Bool { verticalSizeClass == .regular }
+
+    private var leadingTitle: some View {
+        Text(upright ? title : "")
+            .font(.system(size: 28, weight: .bold))
+            .lineLimit(1)
+            .fixedSize()
+            .opacity(opacity)
+            .accessibilityHidden(!upright || opacity == 0)
+    }
+
+    // Takes the centre slot, so the system doesn't draw the title a second time
+    private var centreTitle: some View {
+        Text(title)
+            .font(.headline)
+            .opacity(upright ? 0 : opacity)
+            .accessibilityHidden(upright || opacity == 0)
+    }
+
     func body(content: Content) -> some View {
-        let upright = verticalSizeClass == .regular
-        content.toolbar {
-            ToolbarItem(placement: .navigationBarLeading) {
-                if upright {
-                    Text(title)
-                        .font(.system(size: 17, weight: .bold))
-                        .opacity(opacity)
-                        .accessibilityHidden(opacity == 0)
-                }
+        if #available(iOS 26.0, *) {
+            content.toolbar {
+                // iOS 26 puts every bar item in a glass bubble: not the title
+                ToolbarItem(placement: .navigationBarLeading) { leadingTitle }
+                    .sharedBackgroundVisibility(.hidden)
+                ToolbarItem(placement: .principal) { centreTitle }
             }
-            // Takes the centre slot, so the system doesn't draw the title a second time
-            ToolbarItem(placement: .principal) {
-                Text(title)
-                    .font(.headline)
-                    .opacity(upright ? 0 : opacity)
-                    .accessibilityHidden(upright || opacity == 0)
+        } else {
+            content.toolbar {
+                ToolbarItem(placement: .navigationBarLeading) { leadingTitle }
+                ToolbarItem(placement: .principal) { centreTitle }
             }
         }
     }
