@@ -89,10 +89,12 @@ struct GameDetailView: View {
     }
 
     var body: some View {
-        // iPad sidebar: the page starts at the sidebar's edge (the art continues under the glass by itself)
-        SidebarAware { sidebar in
+        // iPad: the page lives in the content area, so it shrinks and slides with the sidebar (the art continues
+        // under the glass by itself); the hero is 16:9 of that width, so the picture scales instead of being cropped
         GeometryReader { geo in
-            let heroHeight = max(220, geo.size.height * 0.62)
+            let screenHeight = geo.size.height + geo.safeAreaInsets.top + geo.safeAreaInsets.bottom
+            let heroHeight = isPhone ? max(220, geo.size.height * 0.62)
+                : HeroLayout.padHeight(width: geo.size.width, screenHeight: screenHeight).rounded()
             ScrollViewReader { proxy in
             ScrollView(.vertical, showsIndicators: false) {
                 VStack(alignment: .leading, spacing: 18) {
@@ -156,11 +158,13 @@ struct GameDetailView: View {
                             steamSections(appid: appid, mediaHeight: min(170, max(110, geo.size.height * 0.26)))
                         }
                     }
-                    .padding(.horizontal, (sidebar ? 0 : geo.safeAreaInsets.leading) + 24)
+                    .padding(.leading, (isPhone ? geo.safeAreaInsets.leading : 0) + 24)
+                    .padding(.trailing, geo.safeAreaInsets.trailing + 24)
                     .padding(.bottom, 40)
                 }
             }
-            .ignoresSafeArea(.container, edges: sidebar ? [.top, .trailing] : [.top, .horizontal])
+            .ignoresSafeArea(.container, edges: isPhone ? [.top, .horizontal] : [.top, .trailing])
+            .modifier(UnclippedOnPad())
             .onChange(of: focus.focusedID) { focused in
                 guard let focused = focused else { return }
                 withAnimation(.easeInOut(duration: 0.2)) {
@@ -172,7 +176,6 @@ struct GameDetailView: View {
                 }
             }
             }
-        }
         }
         .overlay {
             if let media = media {
@@ -262,14 +265,17 @@ struct GameDetailView: View {
     private func hero(height: CGFloat) -> some View {
         // iPhone: centred, in line with the Home carousel and the buttons below
         ZStack(alignment: isPhone ? .bottom : .bottomLeading) {
-            Color.clear
-                .overlay(
-                    ArtworkImage(path: game.artPath("hero") ?? game.artPath("grid"), fallbackText: "",
-                                 remoteURL: game.isInstalled ? nil : game.steamAppId.flatMap { SteamManager.heroURL($0) })
-                )
-                .clipped()
-                .modifier(ExtendsUnderSidebar())
-            LinearGradient(colors: [.clear, .black.opacity(0.35), .black], startPoint: .center, endPoint: .bottom)
+            // Art and its fade together, so what continues under the sidebar fades the same way
+            ZStack {
+                Color.clear
+                    .overlay(
+                        ArtworkImage(path: game.artPath("hero") ?? game.artPath("grid"), fallbackText: "",
+                                     remoteURL: game.isInstalled ? nil : game.steamAppId.flatMap { SteamManager.heroURL($0) })
+                    )
+                    .clipped()
+                LinearGradient(colors: [.clear, .black.opacity(0.35), .black], startPoint: .center, endPoint: .bottom)
+            }
+            .modifier(ExtendsUnderSidebar())
             VStack(alignment: isPhone ? .center : .leading, spacing: 8) {
                 if let logo = ArtworkCache.shared.image(game.artPath("logo")) {
                     Image(uiImage: logo)
@@ -315,7 +321,7 @@ struct GameDetailView: View {
         }
         .frame(maxWidth: .infinity)
         .frame(height: height)
-        .clipped()
+        // No clipping here: it would cut off the art's continuation under the sidebar
     }
 }
 

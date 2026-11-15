@@ -20,19 +20,20 @@ struct HomeTab: View {
     @State private var titleProgress: Double = 0
 
     var body: some View {
-        // iPad sidebar: the list starts at the sidebar's edge (the art continues under the glass by itself)
-        SidebarAware { sidebar in
+        // iPad: the content lives in the area the system gives it, so when the sidebar comes in it shrinks
+        // and slides with the system's own animation (the art continues under the glass by itself)
         GeometryReader { geo in
             let compact = geo.size.height < 440
-            let leading = (sidebar ? 0 : geo.safeAreaInsets.leading) + 24
+            let isPad = UIDevice.current.userInterfaceIdiom == .pad
+            let leading = (isPad ? 0 : geo.safeAreaInsets.leading) + 24
             let trailing = geo.safeAreaInsets.trailing + 24
             let screenHeight = geo.size.height + geo.safeAreaInsets.top + geo.safeAreaInsets.bottom
-            // iPhone in landscape: the carousel fills the screen. iPhone in portrait and iPad: Apple TV app proportion
-            let isPad = UIDevice.current.userInterfaceIdiom == .pad
+            // iPhone in landscape: the carousel fills the screen. iPhone in portrait: Apple TV app proportion.
+            // iPad: 16:9 of the content width, so with the sidebar the whole picture shrinks instead of being cropped
             let phoneLandscape = !isPad && geo.size.width > geo.size.height
-            // iPad upright: no taller than the screen is wide, so the rows below still show
             let carouselHeight = phoneLandscape ? screenHeight
-                : (isPad ? min(screenHeight * 0.78, geo.size.width) : screenHeight * 0.78).rounded()
+                : (isPad ? HeroLayout.padHeight(width: geo.size.width, screenHeight: screenHeight)
+                         : screenHeight * 0.78).rounded()
             let recent = Array(model.continueGames.prefix(5))
             Group {
                 if model.featured != nil {
@@ -54,9 +55,10 @@ struct HomeTab: View {
                             }
                             .padding(.bottom, 40)
                         }
-                        // Under the navigation bar (the carousel starts at the top of the screen) and edge to edge
-                        // (with the sidebar: from its edge)
-                        .ignoresSafeArea(.container, edges: sidebar ? [.trailing, .top] : [.horizontal, .top])
+                        // Under the navigation bar (the carousel starts at the top of the screen). iPhone: edge to edge.
+                        // iPad: from the content area's leading edge (0 without the sidebar, its edge with it)
+                        .ignoresSafeArea(.container, edges: isPad ? [.trailing, .top] : [.horizontal, .top])
+                        .modifier(UnclippedOnPad())
                         .modifier(HomeScrollState(progress: $titleProgress))
                         .modifier(TabBarAutoHideScroll())
                         .modifier(TopEdgeEffect(hidden: titleProgress < 0.5))
@@ -70,7 +72,6 @@ struct HomeTab: View {
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
             .background(Color.black.ignoresSafeArea())
-        }
         }
         .modifier(HomeTitle(visible: model.featured != nil, progress: titleProgress))
         .modifier(GameDetailDestination(model: model, tab: .home, zoom: zoom))

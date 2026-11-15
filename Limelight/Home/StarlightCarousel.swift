@@ -132,6 +132,15 @@ struct HomeCarousel: View {
     var body: some View {
         GeometryReader { geo in
             ZStack(alignment: .bottom) {
+                // iPad sidebar: the current slide's art continues under the glass (the pages themselves are clipped)
+                if let game = current {
+                    slideArt(game, width: geo.size.width)
+                        .id(game.id)
+                        .transition(.opacity)
+                        .modifier(ExtendsUnderSidebar())
+                        .allowsHitTesting(false)
+                }
+
                 TabView(selection: $index) {
                     ForEach(Array(games.enumerated()), id: \.element.id) { i, game in
                         slide(game, isCurrent: i == index, width: geo.size.width)
@@ -258,6 +267,31 @@ struct HomeCarousel: View {
 
     // MARK: Views
 
+    /// Top: keeps the title and the toolbar readable. Bottom: a gentle fade into the rows below
+    private var shade: some View {
+        VStack(spacing: 0) {
+            LinearGradient(colors: [.black.opacity(0.45), .clear], startPoint: .top, endPoint: .bottom)
+                .frame(height: 140)
+            Spacer(minLength: 0)
+            LinearGradient(colors: [.clear, .black.opacity(0.55), .black.opacity(0.92)],
+                           startPoint: .top, endPoint: .bottom)
+                .frame(height: height * 0.45)
+        }
+    }
+
+    /// The slide's art with its shade, without the text: what the sidebar's glass picks up
+    private func slideArt(_ game: GameItem, width: CGFloat) -> some View {
+        ZStack {
+            Color.black
+            ArtworkImage(path: game.artPath("hero") ?? game.artPath("grid"), fallbackText: "",
+                         remoteURL: game.steamAppId.flatMap { SteamManager.heroURL($0) })
+                .frame(width: width, height: height)
+                .clipped()
+            shade
+        }
+        .frame(width: width, height: height)
+    }
+
     private func slide(_ game: GameItem, isCurrent: Bool, width: CGFloat) -> some View {
         ZStack(alignment: .bottom) {
             // The game's background art, zoomed to fill
@@ -266,7 +300,6 @@ struct HomeCarousel: View {
                          remoteURL: game.steamAppId.flatMap { SteamManager.heroURL($0) })
                 .frame(width: width, height: height)
                 .clipped()
-                .modifier(ExtendsUnderSidebar())
 
             if isCurrent, let player = player {
                 TrailerLayerView(player: player)
@@ -276,16 +309,7 @@ struct HomeCarousel: View {
                     .allowsHitTesting(false)
             }
 
-            // Top: keeps the title and the toolbar readable. Bottom: a gentle fade into the rows below
-            VStack(spacing: 0) {
-                LinearGradient(colors: [.black.opacity(0.45), .clear], startPoint: .top, endPoint: .bottom)
-                    .frame(height: 140)
-                Spacer(minLength: 0)
-                LinearGradient(colors: [.clear, .black.opacity(0.55), .black.opacity(0.92)],
-                               startPoint: .top, endPoint: .bottom)
-                    .frame(height: height * 0.45)
-            }
-            .allowsHitTesting(false)
+            shade.allowsHitTesting(false)
 
             info(game, isCurrent: isCurrent, width: width)
                 .frame(maxWidth: leadingAligned ? min(max(width * 0.55, 380), 560) : .infinity, alignment: leadingAligned ? .leading : .center)
@@ -469,11 +493,32 @@ private struct CarouselFocus: ViewModifier {
     }
 }
 
+/// iPad hero height (Home carousel, game page): 16:9 of the content width, like the Apple TV app, so the whole
+/// picture scales when the sidebar narrows the content. Upright: no taller than the width, nor 78% of the screen
+enum HeroLayout {
+    static func padHeight(width: CGFloat, screenHeight: CGFloat) -> CGFloat {
+        let landscape = width * 9 / 16
+        if landscape >= screenHeight * 0.5 { return min(landscape, screenHeight * 0.8) }
+        return min(screenHeight * 0.78, width)
+    }
+}
+
 /// iPad (iOS 26): the art continues under the glass sidebar instead of stopping at its edge
 struct ExtendsUnderSidebar: ViewModifier {
     func body(content: Content) -> some View {
         if #available(iOS 26.0, *), UIDevice.current.userInterfaceIdiom == .pad {
             content.backgroundExtensionEffect()
+        } else {
+            content
+        }
+    }
+}
+
+/// iPad: the list doesn't clip its content, so the hero art can continue under the sidebar, outside its bounds
+struct UnclippedOnPad: ViewModifier {
+    func body(content: Content) -> some View {
+        if #available(iOS 17.0, *), UIDevice.current.userInterfaceIdiom == .pad {
+            content.scrollClipDisabled()
         } else {
             content
         }
