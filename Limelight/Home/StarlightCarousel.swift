@@ -63,6 +63,21 @@ final class HomeTrailerState: ObservableObject {
     }
 }
 
+/// The carousel's slide, clock and trailer (one carousel: Home)
+final class CarouselPlayback: ObservableObject {
+    static let shared = CarouselPlayback()
+    @Published var index = 0
+    /// Seconds on the current game (art, then trailer)
+    @Published var elapsed: Double = 0
+    @Published var player: AVPlayer?
+    @Published var videoVisible = false
+    var endObserver: NSObjectProtocol?
+    /// The game whose trailer is loaded
+    var playingGameId: String?
+    /// Carousel views on screen (a rebuild briefly shows two, or none)
+    var appearances = 0
+}
+
 /// Mute button for the carousel trailer (navigation bar, next to the PC button)
 struct TrailerMuteButton: View {
     @ObservedObject private var trailer = HomeTrailerState.shared
@@ -100,17 +115,14 @@ struct HomeCarousel: View {
     @ObservedObject private var store = SteamStore.shared
     @ObservedObject private var steam = SteamManager.shared
 
-    @State private var index = 0
-    /// Seconds on the current game (art, then trailer)
-    @State private var elapsed: Double = 0
-    @State private var player: AVPlayer?
-    @State private var videoVisible = false
-    @State private var endObserver: NSObjectProtocol?
+    /// Slide, timing and trailer live outside the view, so they survive the carousel being rebuilt
+    /// (e.g. when the iPad switches between the tab bar and the sidebar)
+    @ObservedObject private var playback = CarouselPlayback.shared
 
     private static let artDelay: Double = 5
     private static let artOnly: Double = 8
 
-    private var current: GameItem? { games.indices.contains(index) ? games[index] : nil }
+    private var current: GameItem? { games.indices.contains(playback.index) ? games[playback.index] : nil }
 
     private var active: Bool {
         trailer.screenActive && trailer.appActive && model.tab == .home && model.detail == nil
@@ -132,18 +144,9 @@ struct HomeCarousel: View {
     var body: some View {
         GeometryReader { geo in
             ZStack(alignment: .bottom) {
-                // iPad sidebar: the current slide's art continues under the glass (the pages themselves are clipped)
-                if let game = current {
-                    slideArt(game, width: geo.size.width)
-                        .id(game.id)
-                        .transition(.opacity)
-                        .modifier(ExtendsUnderSidebar())
-                        .allowsHitTesting(false)
-                }
-
-                TabView(selection: $index) {
+                TabView(selection: $playback.index) {
                     ForEach(Array(games.enumerated()), id: \.element.id) { i, game in
-                        slide(game, isCurrent: i == index, width: geo.size.width)
+                        slide(game, isCurrent: i == playback.index, width: geo.size.width)
                             .tag(i)
                     }
                 }
@@ -157,25 +160,36 @@ struct HomeCarousel: View {
         }
         .frame(height: height)
         .onReceive(HomeTrailerState.ticker) { _ in step() }
-        .onChange(of: index) { _ in
+        .onChange(of: playback.index) { _ in
+            // The pager re-reporting the same page (it does on resize) isn't a new slide
+            if let id = current?.id, id == playback.playingGameId { return }
             stopVideo()
-            elapsed = 0
+            playback.elapsed = 0
             if let game = current { model.featuredId = game.id }
         }
         .onChange(of: active) { isActive in
-            if isActive { player?.play() } else { player?.pause() }
+            if isActive { playback.player?.play() } else { playback.player?.pause() }
         }
         .onChange(of: trailer.muted) { muted in
             trailer.applyAudioSession()
-            player?.isMuted = muted
+            playback.player?.isMuted = muted
         }
         .onChange(of: games.map(\.id)) { ids in
-            if index >= ids.count { index = 0 }
+            if playback.index >= ids.count { playback.index = 0 }
         }
         .onAppear {
+            playback.appearances += 1
+            if games.indices.contains(playback.index) == false { playback.index = 0 }
             if let game = current { model.featuredId = game.id }
+            if active { playback.player?.play() }
         }
-        .onDisappear { stopVideo() }
+        .onDisappear {
+            // Rebuilt views disappear and reappear at once: only stop if the carousel is really gone
+            playback.appearances -= 1
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
+                if playback.appearances <= 0 { stopVideo() }
+            }
+        }
         .task(id: current?.id) {
             guard let game = current else { return }
             if let appid = game.steamAppId {
@@ -189,19 +203,19 @@ struct HomeCarousel: View {
 
     private func step() {
         guard active, let game = current else { return }
-        if let player = player {
+        if let player = playback.player {
             // Trailer on screen: fade it in once frames are coming
-            if !videoVisible, player.timeControlStatus == .playing {
-                withAnimation(.easeInOut(duration: 0.6)) { videoVisible = true }
+            if !playback.videoVisible, player.timeControlStatus == .playing {
+                withAnimation(.easeInOut(duration: 0.6)) { playback.videoVisible = true }
             }
             return
         }
-        elapsed += 0.1
-        if elapsed >= Self.artDelay, trailer.autoplayAllowed, let url = trailerURL(game) {
+        playback.elapsed += 0.1
+        if playback.elapsed >= Self.artDelay, trailer.autoplayAllowed, let url = trailerURL(game) {
             startVideo(url)
-        } else if !expectsTrailer(game), elapsed >= Self.artOnly {
+        } else if !expectsTrailer(game), playback.elapsed >= Self.artOnly {
             advance()
-        } else if elapsed >= Self.artDelay + 6 {
+        } else if playback.elapsed >= Self.artDelay + 6 {
             // Store details never arrived (offline): move on
             advance()
         }
@@ -209,15 +223,15 @@ struct HomeCarousel: View {
 
     private var progress: Double {
         guard let game = current else { return 0 }
-        if let player = player, let item = player.currentItem {
+        if let player = playback.player, let item = player.currentItem {
             let duration = item.duration.seconds
             guard duration.isFinite, duration > 0 else { return Self.artDelay / (Self.artDelay + 60) }
             return min(1, (Self.artDelay + player.currentTime().seconds) / (Self.artDelay + duration))
         }
         if expectsTrailer(game) {
-            return min(1, elapsed / (Self.artDelay + 60))
+            return min(1, playback.elapsed / (Self.artDelay + 60))
         }
-        return min(1, elapsed / Self.artOnly)
+        return min(1, playback.elapsed / Self.artOnly)
     }
 
     private func startVideo(_ url: URL) {
@@ -227,21 +241,23 @@ struct HomeCarousel: View {
         let newPlayer = AVPlayer(playerItem: item)
         newPlayer.isMuted = trailer.muted
         newPlayer.actionAtItemEnd = .pause
-        endObserver = NotificationCenter.default.addObserver(forName: .AVPlayerItemDidPlayToEndTime, object: item, queue: .main) { _ in
+        playback.endObserver = NotificationCenter.default.addObserver(forName: .AVPlayerItemDidPlayToEndTime, object: item, queue: .main) { _ in
             advance()
         }
-        player = newPlayer
+        playback.player = newPlayer
+        playback.playingGameId = current?.id
         trailer.playing = true
         if active { newPlayer.play() }
     }
 
     private func stopVideo() {
-        player?.pause()
-        player = nil
-        videoVisible = false
-        if let observer = endObserver {
+        playback.player?.pause()
+        playback.player = nil
+        playback.playingGameId = nil
+        playback.videoVisible = false
+        if let observer = playback.endObserver {
             NotificationCenter.default.removeObserver(observer)
-            endObserver = nil
+            playback.endObserver = nil
         }
         trailer.playing = false
     }
@@ -250,18 +266,18 @@ struct HomeCarousel: View {
         guard games.count > 1 else {
             // A single game: back to its art, and the trailer again later
             stopVideo()
-            elapsed = 0
+            playback.elapsed = 0
             return
         }
         withAnimation(.easeInOut(duration: 0.45)) {
-            index = (index + 1) % games.count
+            playback.index = (playback.index + 1) % games.count
         }
     }
 
     private func go(_ delta: Int) {
         guard !games.isEmpty else { return }
         withAnimation(.easeInOut(duration: 0.35)) {
-            index = (index + delta + games.count) % games.count
+            playback.index = (playback.index + delta + games.count) % games.count
         }
     }
 
@@ -279,19 +295,6 @@ struct HomeCarousel: View {
         }
     }
 
-    /// The slide's art with its shade, without the text: what the sidebar's glass picks up
-    private func slideArt(_ game: GameItem, width: CGFloat) -> some View {
-        ZStack {
-            Color.black
-            ArtworkImage(path: game.artPath("hero") ?? game.artPath("grid"), fallbackText: "",
-                         remoteURL: game.steamAppId.flatMap { SteamManager.heroURL($0) })
-                .frame(width: width, height: height)
-                .clipped()
-            shade
-        }
-        .frame(width: width, height: height)
-    }
-
     private func slide(_ game: GameItem, isCurrent: Bool, width: CGFloat) -> some View {
         ZStack(alignment: .bottom) {
             // The game's background art, zoomed to fill
@@ -305,7 +308,7 @@ struct HomeCarousel: View {
                 TrailerLayerView(player: player)
                     .frame(width: width, height: height)
                     .clipped()
-                    .opacity(videoVisible ? 1 : 0)
+                    .opacity(playback.videoVisible ? 1 : 0)
                     .allowsHitTesting(false)
             }
 
@@ -327,7 +330,7 @@ struct HomeCarousel: View {
     private func info(_ game: GameItem, isCurrent: Bool, width: CGFloat) -> some View {
         // While the trailer plays, the name, hours and achievements fade out (keeping their space,
         // so the buttons stay put) and come back with the next game
-        let trailerOn = isCurrent && videoVisible
+        let trailerOn = isCurrent && playback.videoVisible
         let alignment: HorizontalAlignment = leadingAligned ? .leading : .center
         return VStack(alignment: alignment, spacing: compact ? 8 : 10) {
             VStack(alignment: alignment, spacing: compact ? 8 : 10) {
@@ -416,7 +419,7 @@ struct HomeCarousel: View {
     private var dots: some View {
         HStack(spacing: 8) {
             ForEach(games.indices, id: \.self) { i in
-                if i == index {
+                if i == playback.index {
                     Capsule()
                         .fill(.white.opacity(0.35))
                         .frame(width: 28, height: 8)
@@ -430,13 +433,13 @@ struct HomeCarousel: View {
                         .fill(.white.opacity(0.5))
                         .frame(width: 8, height: 8)
                         .contentShape(Rectangle().inset(by: -6))
-                        .onTapGesture { withAnimation { index = i } }
+                        .onTapGesture { withAnimation { playback.index = i } }
                 }
             }
         }
-        .animation(.easeInOut(duration: 0.25), value: index)
+        .animation(.easeInOut(duration: 0.25), value: playback.index)
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel("Game \(index + 1) of \(games.count)")
+        .accessibilityLabel("Game \(playback.index + 1) of \(games.count)")
         .accessibilityAdjustableAction { direction in
             switch direction {
             case .increment: go(1)
@@ -493,32 +496,11 @@ private struct CarouselFocus: ViewModifier {
     }
 }
 
-/// iPad hero height (Home carousel, game page): 16:9 of the content width, like the Apple TV app, so the whole
-/// picture scales when the sidebar narrows the content. Upright: no taller than the width, nor 78% of the screen
-enum HeroLayout {
-    static func padHeight(width: CGFloat, screenHeight: CGFloat) -> CGFloat {
-        let landscape = width * 9 / 16
-        if landscape >= screenHeight * 0.5 { return min(landscape, screenHeight * 0.8) }
-        return min(screenHeight * 0.78, width)
-    }
-}
-
 /// iPad (iOS 26): the art continues under the glass sidebar instead of stopping at its edge
 struct ExtendsUnderSidebar: ViewModifier {
     func body(content: Content) -> some View {
         if #available(iOS 26.0, *), UIDevice.current.userInterfaceIdiom == .pad {
             content.backgroundExtensionEffect()
-        } else {
-            content
-        }
-    }
-}
-
-/// iPad: the list doesn't clip its content, so the hero art can continue under the sidebar, outside its bounds
-struct UnclippedOnPad: ViewModifier {
-    func body(content: Content) -> some View {
-        if #available(iOS 17.0, *), UIDevice.current.userInterfaceIdiom == .pad {
-            content.scrollClipDisabled()
         } else {
             content
         }

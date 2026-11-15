@@ -89,16 +89,14 @@ struct GameDetailView: View {
     }
 
     var body: some View {
-        // iPad: the page lives in the content area, so it shrinks and slides with the sidebar (the art continues
-        // under the glass by itself); the hero is 16:9 of that width, so the picture scales instead of being cropped
+        // The art runs edge to edge, under the iPad sidebar too (nothing resizes); the logo, text and the rest
+        // keep clear of the sidebar through the leading safe area
         GeometryReader { geo in
-            let screenHeight = geo.size.height + geo.safeAreaInsets.top + geo.safeAreaInsets.bottom
-            let heroHeight = isPhone ? max(220, geo.size.height * 0.62)
-                : HeroLayout.padHeight(width: geo.size.width, screenHeight: screenHeight).rounded()
+            let heroHeight = max(220, geo.size.height * 0.62)
             ScrollViewReader { proxy in
             ScrollView(.vertical, showsIndicators: false) {
                 VStack(alignment: .leading, spacing: 18) {
-                    hero(height: heroHeight)
+                    hero(height: heroHeight, leading: geo.safeAreaInsets.leading)
                         .id("detail-top")
 
                     VStack(alignment: .leading, spacing: 18) {
@@ -158,13 +156,12 @@ struct GameDetailView: View {
                             steamSections(appid: appid, mediaHeight: min(170, max(110, geo.size.height * 0.26)))
                         }
                     }
-                    .padding(.leading, (isPhone ? geo.safeAreaInsets.leading : 0) + 24)
+                    .padding(.leading, geo.safeAreaInsets.leading + 24)
                     .padding(.trailing, geo.safeAreaInsets.trailing + 24)
                     .padding(.bottom, 40)
                 }
             }
-            .ignoresSafeArea(.container, edges: isPhone ? [.top, .horizontal] : [.top, .trailing])
-            .modifier(UnclippedOnPad())
+            .ignoresSafeArea(.container, edges: [.top, .horizontal])
             .onChange(of: focus.focusedID) { focused in
                 guard let focused = focused else { return }
                 withAnimation(.easeInOut(duration: 0.2)) {
@@ -262,7 +259,7 @@ struct GameDetailView: View {
         .accessibilityLabel("Game options")
     }
 
-    private func hero(height: CGFloat) -> some View {
+    private func hero(height: CGFloat, leading: CGFloat) -> some View {
         // iPhone: centred, in line with the Home carousel and the buttons below
         ZStack(alignment: isPhone ? .bottom : .bottomLeading) {
             // Art and its fade together, so what continues under the sidebar fades the same way
@@ -317,11 +314,13 @@ struct GameDetailView: View {
                 }
             }
             .padding(.horizontal, isPhone ? 24 : 48)
+            // Clear of the iPad sidebar (and the iPhone's notch side)
+            .padding(.leading, isPhone ? 0 : leading)
             .padding(.bottom, 16)
         }
         .frame(maxWidth: .infinity)
         .frame(height: height)
-        // No clipping here: it would cut off the art's continuation under the sidebar
+        .clipped()
     }
 }
 

@@ -21,7 +21,7 @@
 - The game page's ••• is now the same round glass button as the carousel's.
 - The trailer's sound button is white, like the other icons at the top right.
 - iPad Search: the search field is always open at the top and gets the keyboard as soon as you open the tab (no second magnifier).
-- iPad with the sidebar: like the Apple TV app, the carousel and game page shrink and slide over with the sidebar as it opens or closes, and the picture scales down whole (16:9) instead of being cropped. The logo and text stay clear of the sidebar, and the art continues, blurred, under its glass.
+- iPad with the sidebar: the sidebar floats over the carousel and game page art, which stays edge to edge, while the logo, text, buttons and rows move clear of it. The carousel trailer keeps playing when you show or hide the sidebar.
 
 ## Top bar
 
