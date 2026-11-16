@@ -81,8 +81,50 @@
     UIViewController *_companionVC;
     // Choice made in the stream menu for this stream: 0 = follow Settings, 1 = TV only, 2 = mirror
     NSInteger _externalOverride;
+    
+    // Starlight: reconnecting at another resolution when the stream changes screens
+    BOOL _connectionReady;
+    BOOL _reconnecting;
 #endif
 }
+
+#if !TARGET_OS_TV
++ (void)applyResolutionToConfig:(StreamConfiguration*)config settings:(TemporarySettings*)settings tvScreen:(UIScreen*)tvScreen {
+    config.frameRate = [settings.framerate intValue];
+    // Don't stream more FPS than the display can show
+    if (config.frameRate > [UIScreen mainScreen].maximumFramesPerSecond) {
+        config.frameRate = (int)[UIScreen mainScreen].maximumFramesPerSecond;
+    }
+    config.width = [settings.width intValue];
+    config.height = [settings.height intValue];
+    
+    if (tvScreen == nil) {
+        return;
+    }
+    id match = [[NSUserDefaults standardUserDefaults] objectForKey:@"StarlightExternalMatchResolution"];
+    if (match != nil && ![match boolValue]) {
+        return;
+    }
+    CGSize size = tvScreen.currentMode != nil ? tvScreen.currentMode.size : tvScreen.nativeBounds.size;
+    int width = (int)MAX(size.width, size.height);
+    int height = (int)MIN(size.width, size.height);
+    if (width <= 0 || height <= 0) {
+        return;
+    }
+    if (width > 3840 || height > 2160) {
+        // Keep the TV's shape, capped at 4K
+        double scale = MIN(3840.0 / width, 2160.0 / height);
+        width = (int)(width * scale);
+        height = (int)(height * scale);
+    }
+    config.width = width & ~1;
+    config.height = height & ~1;
+    if (tvScreen.maximumFramesPerSecond > 0 && config.frameRate > tvScreen.maximumFramesPerSecond) {
+        config.frameRate = (int)tvScreen.maximumFramesPerSecond;
+    }
+    Log(LOG_I, @"External display: streaming at %dx%d %d FPS", config.width, config.height, config.frameRate);
+}
+#endif
 
 - (void)viewDidAppear:(BOOL)animated
 {
@@ -252,27 +294,7 @@
     
 #if !TARGET_OS_TV
     // Starlight: show the game's art behind the loading status (same look as the launch screen)
-    SteamGridDBManager* sgdb = [SteamGridDBManager sharedManager];
-    NSString* backgroundPath = [sgdb cachedPathForAppName:self.streamConfig.appName kind:SteamGridDBKindHero]
-        ?: [sgdb cachedPathForAppName:self.streamConfig.appName kind:SteamGridDBKindGrid];
-    UIImage* background = backgroundPath != nil ? [UIImage imageWithContentsOfFile:backgroundPath] : nil;
-    _loadingBackground = [[UIView alloc] initWithFrame:self.view.bounds];
-    _loadingBackground.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
-    _loadingBackground.userInteractionEnabled = NO;
-    _loadingBackground.backgroundColor = [UIColor blackColor];
-    if (background != nil) {
-        UIImageView* backgroundView = [[UIImageView alloc] initWithFrame:_loadingBackground.bounds];
-        backgroundView.image = background;
-        backgroundView.contentMode = UIViewContentModeScaleAspectFill;
-        backgroundView.clipsToBounds = YES;
-        backgroundView.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
-        [_loadingBackground addSubview:backgroundView];
-        
-        UIView* dim = [[UIView alloc] initWithFrame:_loadingBackground.bounds];
-        dim.backgroundColor = [UIColor colorWithWhite:0 alpha:0.55];
-        dim.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
-        [_loadingBackground addSubview:dim];
-    }
+    _loadingBackground = [self makeLoadingBackgroundWithFrame:self.view.bounds];
     [self.view addSubview:_loadingBackground];
     
     [_spinner setActivityIndicatorViewStyle:UIActivityIndicatorViewStyleMedium];
@@ -292,6 +314,133 @@
 }
 
 #if !TARGET_OS_TV
+// The game's art, dimmed, behind the connection progress
+- (UIView*)makeLoadingBackgroundWithFrame:(CGRect)frame {
+    SteamGridDBManager* sgdb = [SteamGridDBManager sharedManager];
+    NSString* backgroundPath = [sgdb cachedPathForAppName:self.streamConfig.appName kind:SteamGridDBKindHero]
+        ?: [sgdb cachedPathForAppName:self.streamConfig.appName kind:SteamGridDBKindGrid];
+    UIImage* background = backgroundPath != nil ? [UIImage imageWithContentsOfFile:backgroundPath] : nil;
+    UIView* view = [[UIView alloc] initWithFrame:frame];
+    view.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
+    view.userInteractionEnabled = NO;
+    view.backgroundColor = [UIColor blackColor];
+    if (background != nil) {
+        UIImageView* backgroundView = [[UIImageView alloc] initWithFrame:view.bounds];
+        backgroundView.image = background;
+        backgroundView.contentMode = UIViewContentModeScaleAspectFill;
+        backgroundView.clipsToBounds = YES;
+        backgroundView.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
+        [view addSubview:backgroundView];
+        
+        UIView* dim = [[UIView alloc] initWithFrame:view.bounds];
+        dim.backgroundColor = [UIColor colorWithWhite:0 alpha:0.55];
+        dim.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
+        [view addSubview:dim];
+    }
+    return view;
+}
+
+#pragma mark - Reconnecting at another resolution (Starlight)
+
+// When the stream changes screens (stream menu, TV plugged in or out): if the resolution or frame rate it
+// would start with now differs, reconnect the stream (the game keeps running on the PC)
+- (void)checkStreamResolution {
+    if (!_connectionReady || _reconnecting || _leavingStream || _pipActive) {
+        return;
+    }
+    StreamConfiguration* wanted = [[StreamConfiguration alloc] init];
+    UIScreen* tvScreen = _externalWindow != nil ? _externalWindow.windowScene.screen : nil;
+    [StreamFrameViewController applyResolutionToConfig:wanted settings:_settings tvScreen:tvScreen];
+    if (wanted.width == self.streamConfig.width && wanted.height == self.streamConfig.height
+        && wanted.frameRate == self.streamConfig.frameRate) {
+        return;
+    }
+    [self reconnectWithWidth:wanted.width height:wanted.height frameRate:wanted.frameRate];
+}
+
+- (void)reconnectWithWidth:(int)width height:(int)height frameRate:(int)frameRate {
+    Log(LOG_I, @"Reconnecting the stream at %dx%d %d FPS (was %dx%d %d FPS)", width, height, frameRate,
+        self.streamConfig.width, self.streamConfig.height, self.streamConfig.frameRate);
+    _reconnecting = YES;
+    _connectionReady = NO;
+    [self hideStreamMenu];
+    [self tearDownPictureInPicture];
+    if (_statsUpdateTimer != nil) {
+        [_statsUpdateTimer invalidate];
+        _statsUpdateTimer = nil;
+    }
+    [self updateOverlayText:nil];
+    [self showReconnectOverlay];
+    
+    StreamManager* oldStream = _streamMan;
+    _streamMan = nil;
+    [oldStream stopStreamWithCompletion:^{
+        // A moment for the PC to close the old session before resuming
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.5 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+            if (self->_leavingStream) {
+                return;
+            }
+            // The old video layer goes; the new connection brings its own
+            for (CALayer* layer in [self->_streamView.layer.sublayers copy]) {
+                if ([layer isKindOfClass:[AVSampleBufferDisplayLayer class]]) {
+                    [layer removeFromSuperlayer];
+                }
+            }
+            self.streamConfig.width = width;
+            self.streamConfig.height = height;
+            self.streamConfig.frameRate = frameRate;
+            [self->_streamView updateStreamAspectRatio:(float)width / (float)height];
+            
+            // From here, a failure is the new connection's: shown as usual
+            self->_reconnecting = NO;
+            UIApplication.sharedApplication.idleTimerDisabled = YES;
+            self->_streamMan = [[StreamManager alloc] initWithConfig:self.streamConfig
+                                                          renderView:self->_streamView
+                                                 connectionCallbacks:self];
+            NSOperationQueue* opQueue = [[NSOperationQueue alloc] init];
+            [opQueue addOperation:self->_streamMan];
+        });
+    }];
+}
+
+// The game's art and the connection progress, where the stream will show (the TV, or the device)
+- (void)showReconnectOverlay {
+    UIView* parent = _externalWindow != nil ? _externalWindow.rootViewController.view : self.view;
+    UIView* overlay = [self makeLoadingBackgroundWithFrame:parent.bounds];
+    
+    UIActivityIndicatorView* spinner = [[UIActivityIndicatorView alloc] initWithActivityIndicatorStyle:UIActivityIndicatorViewStyleMedium];
+    spinner.color = [UIColor whiteColor];
+    [spinner startAnimating];
+    UILabel* label = [[UILabel alloc] init];
+    label.textColor = [UIColor whiteColor];
+    label.textAlignment = NSTextAlignmentCenter;
+    label.text = [NSString stringWithFormat:@"Reconnecting %@...", self.streamConfig.appName ?: @""];
+    [label sizeToFit];
+    CGPoint middle = CGPointMake(CGRectGetMidX(overlay.bounds), CGRectGetMidY(overlay.bounds));
+    label.center = middle;
+    spinner.center = CGPointMake(middle.x, middle.y - label.frame.size.height - spinner.frame.size.height);
+    UIViewAutoresizing centred = UIViewAutoresizingFlexibleLeftMargin | UIViewAutoresizingFlexibleRightMargin
+        | UIViewAutoresizingFlexibleTopMargin | UIViewAutoresizingFlexibleBottomMargin;
+    label.autoresizingMask = centred;
+    spinner.autoresizingMask = centred;
+    [overlay addSubview:spinner];
+    [overlay addSubview:label];
+    
+    overlay.alpha = 0;
+    [parent addSubview:overlay];
+    [UIView animateWithDuration:0.25 animations:^{
+        overlay.alpha = 1;
+    }];
+    
+    // The connection callbacks update and remove these, as on the first connection
+    [_loadingBackground removeFromSuperview];
+    _loadingBackground = overlay;
+    [_stageLabel removeFromSuperview];
+    _stageLabel = label;
+    [_spinner removeFromSuperview];
+    _spinner = spinner;
+}
+
 // Starlight: the screen may still be turning to landscape when the stream screen loads.
 // Keep the video sized to the screen (on the device; the TV has its own window).
 - (void)viewDidLayoutSubviews {
@@ -666,6 +815,12 @@
         
         [self->_controllerSupport connectionEstablished];
         
+#if !TARGET_OS_TV
+        // The stream may have changed screens while connecting
+        self->_connectionReady = YES;
+        [self checkStreamResolution];
+#endif
+        
         if (self->_settings.statsOverlay) {
             self->_statsUpdateTimer = [NSTimer scheduledTimerWithTimeInterval:1.0f
                                                                        target:self
@@ -678,6 +833,12 @@
 
 - (void)connectionTerminated:(int)errorCode {
     Log(LOG_I, @"Connection terminated: %d", errorCode);
+#if !TARGET_OS_TV
+    if (_reconnecting) {
+        // The old connection, stopped to reconnect
+        return;
+    }
+#endif
     
     unsigned int portFlags = LiGetPortFlagsFromTerminationErrorCode(errorCode);
     unsigned int portTestResults = LiTestClientConnectivity(CONN_TEST_SERVER, 443, portFlags);
@@ -764,7 +925,8 @@
         NSString* titleCase = [[[lowerCase substringToIndex:1] uppercaseString] stringByAppendingString:[lowerCase substringFromIndex:1]];
         [self->_stageLabel setText:titleCase];
         [self->_stageLabel sizeToFit];
-        self->_stageLabel.center = CGPointMake(self.view.frame.size.width / 2, self->_stageLabel.center.y);
+        UIView* parent = self->_stageLabel.superview ?: self.view;
+        self->_stageLabel.center = CGPointMake(parent.bounds.size.width / 2, self->_stageLabel.center.y);
     });
 }
 
@@ -773,6 +935,11 @@
 
 - (void) stageFailed:(const char*)stageName withError:(int)errorCode portTestFlags:(int)portTestFlags {
     Log(LOG_I, @"Stage %s failed: %d", stageName, errorCode);
+#if !TARGET_OS_TV
+    if (_reconnecting) {
+        return;
+    }
+#endif
     
     unsigned int portTestResults = LiTestClientConnectivity(CONN_TEST_SERVER, 443, portTestFlags);
 
@@ -805,6 +972,11 @@
 
 - (void) launchFailed:(NSString*)message {
     Log(LOG_I, @"Launch failed: %@", message);
+#if !TARGET_OS_TV
+    if (_reconnecting) {
+        return;
+    }
+#endif
     
     dispatch_async(dispatch_get_main_queue(), ^{
         // Allow the display to go to sleep now
@@ -1228,6 +1400,7 @@
     else if (scene == nil && _externalWindow != nil) {
         [self detachFromExternalScreen];
     }
+    [self checkStreamResolution];
 }
 
 // The view that holds the video: the zoomable scroll view in touchscreen mode, else the stream view

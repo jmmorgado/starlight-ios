@@ -14,6 +14,8 @@
 - (id) initWithConfig:(StreamConfiguration*)config renderView:(UIView*)view connectionCallbacks:(id<ConnectionCallbacks>)callback;
 
 - (void) stopStream;
+// Starlight: stop for a reconnection; completion runs on the main queue once the old connection is gone
+- (void) stopStreamWithCompletion:(void (^)(void))completion;
 
 - (NSString*) getStatsOverlayText;
 

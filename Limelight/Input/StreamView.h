@@ -28,6 +28,8 @@
      interactionDelegate:(id<UserInteractionDelegate>)interactionDelegate
                   config:(StreamConfiguration*)streamConfig;
 - (void) showOnScreenControls;
+// Starlight: the stream was reconnected at another resolution
+- (void) updateStreamAspectRatio:(float)aspectRatio;
 - (OnScreenControlsLevel) getCurrentOscState;
 - (void) toggleKeyboard;
 

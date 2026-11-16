@@ -99,6 +99,10 @@
     
     // Initializing the renderer must be done on the main thread
     dispatch_async(dispatch_get_main_queue(), ^{
+        // Stopped (for a reconnection) while launching: don't start this connection
+        if (self.isCancelled) {
+            return;
+        }
         VideoDecoderRenderer* renderer = [[VideoDecoderRenderer alloc] initWithView:self->_renderView callbacks:self->_callbacks streamAspectRatio:(float)self->_config.width / (float)self->_config.height useFramePacing:self->_config.useFramePacing];
         self->_connection = [[Connection alloc] initWithConfig:self->_config renderer:renderer connectionCallbacks:self->_callbacks];
         NSOperationQueue* opQueue = [[NSOperationQueue alloc] init];
@@ -108,7 +112,18 @@
 
 - (void) stopStream
 {
+    [self cancel];
     [_connection terminate];
+}
+
+- (void) stopStreamWithCompletion:(void (^)(void))completion
+{
+    [self cancel];
+    if (_connection == nil) {
+        dispatch_async(dispatch_get_main_queue(), completion);
+        return;
+    }
+    [_connection terminateWithCompletion:completion];
 }
 
 - (BOOL) launchApp:(HttpManager*)hMan receiveSessionUrl:(NSString**)sessionUrl {

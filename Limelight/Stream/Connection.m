@@ -371,6 +371,17 @@ void ClSetControllerLED(uint16_t controllerNumber, uint8_t r, uint8_t g, uint8_t
     [_callbacks setControllerLed:controllerNumber r:r g:g b:b];
 }
 
+-(void) terminateWithCompletion:(void (^)(void))completion
+{
+    LiInterruptConnection();
+    dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_HIGH, 0), ^{
+        [initLock lock];
+        LiStopConnection();
+        [initLock unlock];
+        dispatch_async(dispatch_get_main_queue(), completion);
+    });
+}
+
 -(void) terminate
 {
     // Interrupt any action blocking LiStartConnection(). This is

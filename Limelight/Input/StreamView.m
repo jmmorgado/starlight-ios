@@ -959,4 +959,10 @@ static const double X1_MOUSE_SPEED_DIVISOR = 2.5;
 }
 #endif
 
+- (void) updateStreamAspectRatio:(float)aspectRatio {
+    if (aspectRatio > 0) {
+        self->streamAspectRatio = aspectRatio;
+    }
+}
+
 @end
