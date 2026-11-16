@@ -194,9 +194,12 @@
     }
     
     float interval = stats.endTime - stats.startTime;
-    return [NSString stringWithFormat:@"Video stream: %dx%d %.2f FPS (Codec: %@)\nFrames dropped by your network connection: %.2f%%\nAverage network latency: %@%@",
+    CGSize decoded = [VideoDecoderRenderer decodedVideoSize];
+    return [NSString stringWithFormat:@"Video stream: %dx%d requested, %.0fx%.0f received %.2f FPS (Codec: %@)\nFrames dropped by your network connection: %.2f%%\nAverage network latency: %@%@",
             _config.width,
             _config.height,
+            decoded.width,
+            decoded.height,
             stats.totalFrames / interval,
             [_connection getActiveCodecName],
             stats.networkDroppedFrames / interval,

@@ -370,7 +370,7 @@
         _statsUpdateTimer = nil;
     }
     [self updateOverlayText:nil];
-    [self showReconnectOverlay];
+    [self showReconnectOverlayForWidth:width height:height];
     
     StreamManager* oldStream = _streamMan;
     _streamMan = nil;
@@ -404,7 +404,7 @@
 }
 
 // The game's art and the connection progress, where the stream will show (the TV, or the device)
-- (void)showReconnectOverlay {
+- (void)showReconnectOverlayForWidth:(int)width height:(int)height {
     UIView* parent = _externalWindow != nil ? _externalWindow.rootViewController.view : self.view;
     UIView* overlay = [self makeLoadingBackgroundWithFrame:parent.bounds];
     
@@ -414,7 +414,7 @@
     UILabel* label = [[UILabel alloc] init];
     label.textColor = [UIColor whiteColor];
     label.textAlignment = NSTextAlignmentCenter;
-    label.text = [NSString stringWithFormat:@"Reconnecting %@...", self.streamConfig.appName ?: @""];
+    label.text = [NSString stringWithFormat:@"Reconnecting %@ at %dx%d...", self.streamConfig.appName ?: @"", width, height];
     [label sizeToFit];
     CGPoint middle = CGPointMake(CGRectGetMidX(overlay.bounds), CGRectGetMidY(overlay.bounds));
     label.center = middle;

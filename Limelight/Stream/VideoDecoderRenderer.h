@@ -17,6 +17,9 @@
 - (id)initWithView:(UIView*)view callbacks:(id<ConnectionCallbacks>)callbacks streamAspectRatio:(float)aspectRatio useFramePacing:(BOOL)useFramePacing;
 
 - (void)setupWithVideoFormat:(int)videoFormat width:(int)videoWidth height:(int)videoHeight frameRate:(int)frameRate;
+// Starlight: the size of the video the PC is actually sending (for the stats overlay)
++ (CGSize)decodedVideoSize;
+
 - (void)start;
 - (void)stop;
 - (void)setHdrMode:(BOOL)enabled;
