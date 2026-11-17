@@ -4,4 +4,4 @@
 
 ## Carousel
 
-- Changing game now adds a strip of glass on the side the picture comes in and goes out, its blur building up towards the edge and strongest halfway through, as in the Apple TV app.
+- Changing game now gives both pictures glass and a fade on their moving edges (the incoming one on the side it comes in by, the outgoing one on the side it uncovers), strongest halfway through, as in the Apple TV app.

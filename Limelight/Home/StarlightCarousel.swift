@@ -183,15 +183,16 @@ struct HomeCarousel: View {
                         Color.black
                         ForEach(artLayers, id: \.game.id) { layer in
                             background(layer.game, isCurrent: !layer.incoming, width: width)
+                                // Glass on the card's moving edge (incoming: the side it enters by; outgoing: the
+                                // side it uncovers), faded together with the art by the same mask
+                                .overlay(TransitionGlass(progress: neighborGame == nil ? 0 : Double(playback.progress),
+                                                         onLeading: layer.incoming == (playback.direction > 0),
+                                                         width: width))
                                 .mask(edgeFade(incoming: layer.incoming))
                                 .offset(x: artOffset(incoming: layer.incoming, width: width))
                                 .opacity(artOpacity(incoming: layer.incoming))
                                 .zIndex(layer.incoming ? 1 : 0)
                         }
-                        // A strip of glass, blurring progressively, on the side the art comes in and goes out
-                        TransitionGlass(progress: neighborGame == nil ? 0 : Double(playback.progress),
-                                        fromTrailing: playback.direction > 0, width: width)
-                            .zIndex(2)
                     }
                     .frame(width: width, height: height)
                     .clipped()
@@ -689,11 +690,12 @@ private struct CarouselFocus: ViewModifier {
     }
 }
 
-/// Changing game: a strip of glass on the side the art comes in from, its blur fading in towards the middle and
-/// strongest halfway through the change, like the Apple TV app. Animatable, so it also follows animated changes
+/// Changing game: a strip of glass on a card's moving edge, its blur building up towards the edge and strongest
+/// halfway through the change, like the Apple TV app. Animatable, so it also follows animated changes
 private struct TransitionGlass: View, Animatable {
     var progress: Double
-    let fromTrailing: Bool
+    /// The card's leading edge (else its trailing one)
+    let onLeading: Bool
     let width: CGFloat
 
     var animatableData: Double {
@@ -703,8 +705,8 @@ private struct TransitionGlass: View, Animatable {
 
     var body: some View {
         let strength = sin(Double.pi * min(1, max(0, progress)))
-        let edge: UnitPoint = fromTrailing ? .trailing : .leading
-        let middle: UnitPoint = fromTrailing ? .leading : .trailing
+        let edge: UnitPoint = onLeading ? .leading : .trailing
+        let middle: UnitPoint = onLeading ? .trailing : .leading
         ZStack {
             // Two layers of glass, the stronger one narrower: the blur builds up towards the edge
             Rectangle().fill(.ultraThinMaterial)
@@ -714,7 +716,7 @@ private struct TransitionGlass: View, Animatable {
                 .mask(LinearGradient(colors: [.black, .clear], startPoint: edge, endPoint: middle))
                 .frame(width: width * 0.2)
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: fromTrailing ? .trailing : .leading)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: onLeading ? .leading : .trailing)
         .environment(\.colorScheme, .dark)
         .opacity(strength)
         .allowsHitTesting(false)
