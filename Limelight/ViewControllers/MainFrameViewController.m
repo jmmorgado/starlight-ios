@@ -1337,6 +1337,47 @@ static NSMutableSet* hostList;
 }
 
 #if !TARGET_OS_TV
+// Handoff: asks the PC which game is running (a fresh serverinfo, not the last one discovery saw),
+// then resumes the game if it's that one, or opens its page if it isn't
+- (void)handoffResumeApp:(TemporaryApp*)app onHost:(TemporaryHost*)host attempt:(int)attempt {
+    dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
+        HttpManager* hMan = [[HttpManager alloc] initWithHost:host];
+        ServerInfoResponse* serverInfoResp = [[ServerInfoResponse alloc] init];
+        [hMan executeRequestSynchronously:[HttpRequest requestForResponse:serverInfoResp withUrlRequest:[hMan newServerInfoRequest:false]
+                                                            fallbackError:401 fallbackRequest:[hMan newHttpServerInfoRequest]]];
+        BOOL ok = [serverInfoResp isStatusOk];
+        if (ok) {
+            // Also what Home shows (Resume rather than Play)
+            [serverInfoResp populateHost:host];
+        }
+        NSString* running = host.currentGame;
+        dispatch_async(dispatch_get_main_queue(), ^{
+            if (!ok && attempt < 4) {
+                // The PC didn't answer: try again shortly
+                dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.5 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+                    [self handoffResumeApp:app onHost:host attempt:attempt + 1];
+                });
+                return;
+            }
+            [self pushHomeState];
+            if (ok && [running isEqualToString:app.id]) {
+                // Resume it here, with this device's settings; the other device may take a few seconds to let go
+                Log(LOG_I, @"Handoff: resuming %@ on %@", app.name, host.name);
+                [self->_appManager stopRetrieving];
+                [self prepareToStreamApp:app];
+                self->_streamConfig.handoffRetryUntil = [NSDate dateWithTimeIntervalSinceNow:10];
+                [self performStreamSegue];
+            }
+            else {
+                // The PC isn't running that game any more (or can't be reached): just its page
+                Log(LOG_I, @"Handoff: %@ isn't running on %@ (running: %@), opening its page", app.name, host.name, running);
+                [self hideLaunchOverlay];
+                [[StarlightHandoff shared] openGamePageWithHostUUID:host.uuid appID:app.id appUUID:app.uuid];
+            }
+        });
+    });
+}
+
 // A stream continued from your other iPhone or iPad: resume that game here, with this device's own
 // settings, through the same path as links and pinned games (find the PC, wait for it, then stream)
 - (void)handoffStream:(NSDictionary*)info {
@@ -1561,19 +1602,9 @@ static NSMutableSet* hostList;
     TemporaryApp* runningApp = [self findRunningApp:host];
 #if !TARGET_OS_TV
     if (handoff != nil) {
-        if ([runningApp.id isEqualToString:app.id]) {
-            // Resume it here; the other device may take a few seconds to let go of the stream
-            [_appManager stopRetrieving];
-            [self prepareToStreamApp:app];
-            _streamConfig.handoffRetryUntil = [NSDate dateWithTimeIntervalSinceNow:10];
-            [self performStreamSegue];
-        }
-        else {
-            // The PC isn't running that game any more: just its page
-            Log(LOG_I, @"Handoff: %@ isn't running on %@, opening its page", app.name, host.name);
-            [self hideLaunchOverlay];
-            [[StarlightHandoff shared] openGamePageWithHostUUID:host.uuid appID:app.id appUUID:app.uuid];
-        }
+        // What this device last saw of the PC may be old (it was in the background): ask the PC itself
+        (void)runningApp;
+        [self handoffResumeApp:app onHost:host attempt:0];
         return;
     }
 #endif
