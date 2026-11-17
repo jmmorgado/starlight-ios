@@ -14,6 +14,7 @@
 @implementation AppListResponse {
     NSMutableSet* _appList;
     NSString* _runningGameName;
+    NSString* _runningGameTileId;
 }
 @synthesize data, statusCode, statusMessage;
 
@@ -116,6 +117,7 @@ static const char* TAG_APP_UUID = "UUID";
                 NSString* control = [appUuid substringFromIndex:kVibepolloControlPrefix.length];
                 if ([control isEqualToString:@"7"]) {
                     _runningGameName = [appName stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
+                    _runningGameTileId = appId;
                     hostControl = YES;
                 }
                 else if ([control isEqualToString:@"1"] || [control isEqualToString:@"4"]) {
@@ -176,6 +178,10 @@ static const char* TAG_APP_UUID = "UUID";
 
 - (NSString*) runningGameName {
     return _runningGameName.length > 0 ? _runningGameName : nil;
+}
+
+- (NSString*) runningGameTileId {
+    return _runningGameTileId;
 }
 
 - (NSSet*) getAppList {

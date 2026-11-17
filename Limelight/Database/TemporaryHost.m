@@ -33,20 +33,37 @@
     return @"0";
 }
 
-- (BOOL) setRemoteRunningGameName:(NSString*)name {
+- (BOOL) setRemoteRunningGameName:(NSString*)name tileId:(NSString*)tileId {
     NSString* found = nil;
-    if (name.length > 0) {
-        for (TemporaryApp* app in self.appList) {
-            NSString* appName = [app.name stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
-            if ([appName isEqualToString:name]) {
-                found = app.id;
-                break;
+    NSString* (^trimmed)(NSString*) = ^NSString*(NSString* text) {
+        return [text stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]] ?: @"";
+    };
+    if (name.length > 0 || tileId.length > 0) {
+        // 1. By id: Vibepollo makes the copy's id from the game's id (id XOR 0x40000000,
+        //    moved on only if that clashes with another game), so undo it and check the name agrees
+        long long tile = [tileId longLongValue];
+        if (tile > 0) {
+            NSString* source = [NSString stringWithFormat:@"%lld", (tile ^ 0x40000000LL) & 0x7fffffffLL];
+            for (TemporaryApp* app in self.appList) {
+                if ([app.id isEqualToString:source] &&
+                    (name.length == 0 || [trimmed(app.name) caseInsensitiveCompare:name] == NSOrderedSame)) {
+                    found = app.id;
+                    break;
+                }
             }
         }
-        if (found == nil) {
+        // 2. By name (the copy carries the game's name)
+        if (found == nil && name.length > 0) {
             for (TemporaryApp* app in self.appList) {
-                NSString* appName = [app.name stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
-                if ([appName caseInsensitiveCompare:name] == NSOrderedSame) {
+                if ([trimmed(app.name) isEqualToString:name]) {
+                    found = app.id;
+                    break;
+                }
+            }
+        }
+        if (found == nil && name.length > 0) {
+            for (TemporaryApp* app in self.appList) {
+                if ([trimmed(app.name) caseInsensitiveCompare:name] == NSOrderedSame) {
                     found = app.id;
                     break;
                 }

@@ -228,7 +228,7 @@ static NSMutableSet* hostList;
         } else {
             dispatch_async(dispatch_get_main_queue(), ^{
                 [self updateApplist:[appListResp getAppList] forHost:host];
-                [host setRemoteRunningGameName:[appListResp runningGameName]];
+                [host setRemoteRunningGameName:[appListResp runningGameName] tileId:[appListResp runningGameTileId]];
                 [self finishRefreshForHostUUID:host.uuid failed:NO];
 
                 if (host != self->_selectedHost) {
@@ -2316,9 +2316,10 @@ static const NSUInteger kMaxQuickActions = 4;
         [hMan executeRequestSynchronously:[HttpRequest requestForResponse:appListResp withUrlRequest:[hMan newAppListRequest]]];
         BOOL ok = [appListResp isStatusOk] && [appListResp getAppList] != nil;
         NSString* name = ok ? [appListResp runningGameName] : nil;
+        NSString* tileId = ok ? [appListResp runningGameTileId] : nil;
         dispatch_async(dispatch_get_main_queue(), ^{
             [self->_runningCheckHosts removeObject:host.uuid];
-            if (ok && [host setRemoteRunningGameName:name]) {
+            if (ok && [host setRemoteRunningGameName:name tileId:tileId]) {
                 Log(LOG_I, @"%@ running on %@ from another device: %@", host.name, host.uuid, host.remoteRunningGame ?: @"none");
                 [self pushHomeState];
             }

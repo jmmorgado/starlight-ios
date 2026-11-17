@@ -17,5 +17,7 @@
 // Vibepollo tells a client that didn't start the running game the host is free,
 // and lists a resume-only copy of that game instead: its name, or nil.
 - (NSString*) runningGameName;
+// The resume-only copy's own id (Vibepollo derives it from the game's id), or nil
+- (NSString*) runningGameTileId;
 
 @end

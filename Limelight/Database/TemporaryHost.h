@@ -40,7 +40,7 @@ NS_ASSUME_NONNULL_BEGIN
 // The running game whichever device started it: currentGame, else remoteRunningGame, else "0"
 - (NSString*) runningGame;
 // Finds our copy of the game Vibepollo lists as running elsewhere (nil clears it); YES if that changed
-- (BOOL) setRemoteRunningGameName:(nullable NSString*)name;
+- (BOOL) setRemoteRunningGameName:(nullable NSString*)name tileId:(nullable NSString*)tileId;
 
 - (NSComparisonResult)compareName:(TemporaryHost *)other;
 
