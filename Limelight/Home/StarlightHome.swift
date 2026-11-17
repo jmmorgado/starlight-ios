@@ -114,6 +114,7 @@ final class StarlightHomeController: NSObject {
                 ArtworkCache.shared.remove([game.gridPath, game.heroPath, game.logoPath])
             }
             model.games = gameItems
+            GameFirstSeen.record(gameItems)
         }
         let configured = artwork["configured"] as? Bool ?? false
         let suffix = artwork["keySuffix"] as? String ?? ""
@@ -179,6 +180,11 @@ struct GameItem: Identifiable, Equatable {
     let artStamp: Double
     /// Steam appid, from the Vibepollo UUID (nil for non-Steam apps)
     let steamAppId: Int?
+    /// The app's UUID on the PC (Vibepollo), when it sends one
+    let uuid: String?
+
+    /// Identifies the game on its PC across app-list refreshes: the UUID, else the app id
+    var stableKey: String { uuid ?? app }
 
     var pinned: Bool { pinIndex != nil }
 
@@ -210,6 +216,7 @@ struct GameItem: Identifiable, Equatable {
         heroPath = GameItem.nonEmpty(dict["heroPath"])
         logoPath = GameItem.nonEmpty(dict["logoPath"])
         artStamp = (dict["artStamp"] as? NSNumber)?.doubleValue ?? 0
+        uuid = GameItem.nonEmpty(dict["uuid"])
         let steamId = (dict["steamAppId"] as? NSNumber)?.intValue ?? 0
         steamAppId = steamId > 0 ? steamId : nil
         if let seconds = dict["lastPlayed"] as? Double, seconds > 0 {
@@ -222,6 +229,51 @@ struct GameItem: Identifiable, Equatable {
     private static func nonEmpty(_ value: Any?) -> String? {
         guard let string = value as? String, !string.isEmpty else { return nil }
         return string
+    }
+}
+
+/// When Starlight first saw each game on each PC (by PC and app UUID): Vibepollo doesn't say when an app was added.
+/// The first time a PC's list is seen (including the first run of this version) its games count as already known,
+/// so New on Your PC doesn't start out full.
+enum GameFirstSeen {
+    private static let key = "StarlightFirstSeen"
+    private static var cache: [String: [String: Double]]?
+
+    private static func load() -> [String: [String: Double]] {
+        if let cache = cache { return cache }
+        let stored = UserDefaults.standard.dictionary(forKey: key) as? [String: [String: Double]] ?? [:]
+        cache = stored
+        return stored
+    }
+
+    static func record(_ games: [GameItem]) {
+        let installed = games.filter(\.isInstalled)
+        guard !installed.isEmpty else { return }
+        var all = load()
+        var changed = false
+        let now = Date().timeIntervalSince1970
+        for (host, list) in Dictionary(grouping: installed, by: \.host) {
+            if var seen = all[host] {
+                for game in list where seen[game.stableKey] == nil {
+                    seen[game.stableKey] = now
+                    changed = true
+                }
+                all[host] = seen
+            } else {
+                // 0: known from before, never "new"
+                all[host] = Dictionary(list.map { ($0.stableKey, 0.0) }, uniquingKeysWith: { first, _ in first })
+                changed = true
+            }
+        }
+        if changed {
+            cache = all
+            UserDefaults.standard.set(all, forKey: key)
+        }
+    }
+
+    static func date(_ game: GameItem) -> Date? {
+        guard let seconds = load()[game.host]?[game.stableKey], seconds > 0 else { return nil }
+        return Date(timeIntervalSince1970: seconds)
     }
 }
 
@@ -472,6 +524,44 @@ final class HomeModel: ObservableObject {
     static let continueWindow: TimeInterval = 30 * 24 * 3600
 
     /// Only games started recently (through Starlight or on the PC per Steam) or running now, newest first
+    /// New on Your PC: games that turned up in the PC's list in the last 14 days, newest first
+    static let newOnPCWindow: TimeInterval = 14 * 24 * 60 * 60
+
+    var newOnPCGames: [GameItem] {
+        let cutoff = Date().addingTimeInterval(-Self.newOnPCWindow)
+        return games
+            .compactMap { game -> (GameItem, Date)? in
+                guard !game.hidden, game.isInstalled, let seen = GameFirstSeen.date(game), seen >= cutoff else { return nil }
+                return (game, seen)
+            }
+            .sorted { $0.1 > $1.1 }
+            .map(\.0)
+    }
+
+    /// Almost 100%: 75% or more of the achievements unlocked, but not all, closest to 100% first
+    /// (from the achievements already cached; games without achievements are left out)
+    var almostCompleteGames: [GameItem] {
+        games
+            .compactMap { game -> (GameItem, Double)? in
+                guard !game.hidden, game.isInstalled, let appid = game.steamAppId,
+                      let stats = SteamManager.shared.cachedStats(appid), !stats.achievements.isEmpty else { return nil }
+                let ratio = Double(stats.unlockedCount) / Double(stats.achievements.count)
+                guard ratio >= 0.75, ratio < 1 else { return nil }
+                return (game, ratio)
+            }
+            .sorted { $0.1 != $1.1 ? $0.1 > $1.1 : $0.0.name.localizedCaseInsensitiveCompare($1.0.name) == .orderedAscending }
+            .map(\.0)
+    }
+
+    /// Ready to Play Steam games whose achievements haven't been fetched yet
+    var gamesMissingAchievements: [Int] {
+        games.compactMap { game in
+            guard !game.hidden, game.isInstalled, let appid = game.steamAppId,
+                  SteamManager.shared.cachedStats(appid) == nil else { return nil }
+            return appid
+        }
+    }
+
     var continueGames: [GameItem] {
         let cutoff = Date().addingTimeInterval(-Self.continueWindow)
         return games

@@ -2201,6 +2201,7 @@ static const NSUInteger kMaxQuickActions = 4;
             [apps addObject:@{ @"host": current.uuid,
                                @"hostName": current.name ?: @"",
                                @"app": app.id,
+                               @"uuid": app.uuid ?: @"",
                                @"name": app.name,
                                @"running": @([app.id isEqualToString:current.currentGame]),
                                @"pinIndex": @(pinIndex),

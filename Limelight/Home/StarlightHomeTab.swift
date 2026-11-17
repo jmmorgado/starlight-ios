@@ -16,6 +16,8 @@ struct HomeTab: View {
     @ObservedObject private var steam = SteamManager.shared
     @ObservedObject private var focus = GameFocus.shared
     @State private var pull: CGFloat = 0
+    /// The Almost 100% row follows the achievements as they load
+    @ObservedObject private var steam = SteamManager.shared
     @ObservedObject private var sidebar = SidebarInset.shared
     @Namespace private var zoom
     /// 0 at the top → 1 after scrolling a little: fades "Play Now" into the navigation bar
@@ -55,6 +57,20 @@ struct HomeTab: View {
                                         .id("section-featured")
                                 }
 
+                                let newGames = model.newOnPCGames
+                                if !newGames.isEmpty {
+                                    GameRow(id: "new", title: "New on Your PC", games: newGames, model: model,
+                                            compact: compact, leadingInset: leading, trailingInset: trailing, zoom: zoom)
+                                        .id("section-new")
+                                }
+
+                                let almost = model.almostCompleteGames
+                                if !almost.isEmpty {
+                                    GameRow(id: "almost", title: "Almost 100%", games: almost, model: model,
+                                            compact: compact, leadingInset: leading, trailingInset: trailing, zoom: zoom)
+                                        .id("section-almost")
+                                }
+
                                 GameRow(id: "all", title: "Ready to Play", games: model.libraryGames, model: model,
                                         compact: compact, leadingInset: leading, trailingInset: trailing, zoom: zoom)
                                     .id("section-all")
@@ -78,6 +94,11 @@ struct HomeTab: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
             .background(Color.black.ignoresSafeArea())
             .modifier(FollowSidebarInset(leading: geo.safeAreaInsets.leading))
+            // Achievements for the Almost 100% row: games without any yet, one at a time, in the background
+            // (keyed by the game list, so it isn't restarted each time one game's achievements arrive)
+            .task(id: model.games.map(\.id)) {
+                await SteamManager.shared.prefetchAchievements(model.gamesMissingAchievements)
+            }
         }
         .modifier(HomeTitle(visible: model.featured != nil, progress: titleProgress))
         .modifier(GameDetailDestination(model: model, tab: .home, zoom: zoom))
@@ -86,8 +107,9 @@ struct HomeTab: View {
     private func scroll(to id: String?, proxy: ScrollViewProxy) {
         guard let id = id else { return }
         let section: String?
-        if id.hasPrefix("card-all-") {
-            section = "section-all"
+        if id.hasPrefix("card-"), let row = id.dropFirst("card-".count).split(separator: "-").first {
+            // A card in a row: the row's section
+            section = "section-\(row)"
         } else if id.hasPrefix("featured-") || id == "pc-button" || id == "search-button" {
             section = "section-featured"
         } else {
