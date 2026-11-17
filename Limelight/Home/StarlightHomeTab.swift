@@ -16,8 +16,6 @@ struct HomeTab: View {
     @ObservedObject private var steam = SteamManager.shared
     @ObservedObject private var focus = GameFocus.shared
     @State private var pull: CGFloat = 0
-    /// The Almost 100% row follows the achievements as they load
-    @ObservedObject private var steam = SteamManager.shared
     @ObservedObject private var sidebar = SidebarInset.shared
     @Namespace private var zoom
     /// 0 at the top → 1 after scrolling a little: fades "Play Now" into the navigation bar
