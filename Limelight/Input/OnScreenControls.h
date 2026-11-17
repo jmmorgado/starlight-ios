@@ -30,6 +30,8 @@ typedef NS_ENUM(NSInteger, OnScreenControlsLevel) {
 - (BOOL) handleTouchUpEvent:(NSSet*)touches;
 - (BOOL) handleTouchMovedEvent:(NSSet*)touches;
 - (void) setLevel:(OnScreenControlsLevel)level;
+// Starlight: drawn as Off (and touches ignored) while suppressed; the level is kept for when it ends
+- (void) setSuppressed:(BOOL)suppressed;
 - (OnScreenControlsLevel) getLevel;
 - (void) show;
 

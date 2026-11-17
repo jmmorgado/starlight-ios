@@ -14,6 +14,7 @@
 #import "UIAppView.h"
 #import "AppAssetManager.h"
 #import "SWRevealViewController.h"
+#import "TemporarySettings.h"
 
 @interface MainFrameViewController : UICollectionViewController <DiscoveryCallback, PairCallback, HostCallback, AppCallback, AppAssetCallback, NSURLConnectionDelegate, SWRevealViewControllerDelegate>
 
@@ -23,6 +24,13 @@
 
 // Starlight: quit the game on this PC once the stream screen has closed
 - (void)quitAppAfterStreamOnHostAddress:(NSString*)address;
+
+// Starlight: Stream Settings as a dictionary (the keys StreamSettingsView uses), and saving them back
++ (NSDictionary<NSString*, id>*)streamSettingsDictionaryForWindow:(UIWindow*)window;
++ (void)saveStreamSettingsDictionary:(NSDictionary<NSString*, id>*)values;
 #endif
+
+// Starlight: bitrate, frame pacing and video formats (codec, HDR) from Stream Settings; after the resolution is set
++ (void)applyVideoSettings:(TemporarySettings*)settings toConfig:(StreamConfiguration*)config;
 
 @end

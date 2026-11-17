@@ -355,12 +355,63 @@
         && wanted.frameRate == self.streamConfig.frameRate) {
         return;
     }
-    [self reconnectWithWidth:wanted.width height:wanted.height frameRate:wanted.frameRate];
+    // Only the resolution and frame rate change
+    StreamConfiguration* target = [self copyOfStreamConfig];
+    target.width = wanted.width;
+    target.height = wanted.height;
+    target.frameRate = wanted.frameRate;
+    [self reconnectWithConfig:target];
 }
 
-- (void)reconnectWithWidth:(int)width height:(int)height frameRate:(int)frameRate {
-    Log(LOG_I, @"Reconnecting the stream at %dx%d %d FPS (was %dx%d %d FPS)", width, height, frameRate,
-        self.streamConfig.width, self.streamConfig.height, self.streamConfig.frameRate);
+// The fields a reconnection can change
+- (StreamConfiguration*)copyOfStreamConfig {
+    StreamConfiguration* copy = [[StreamConfiguration alloc] init];
+    copy.width = self.streamConfig.width;
+    copy.height = self.streamConfig.height;
+    copy.frameRate = self.streamConfig.frameRate;
+    copy.bitRate = self.streamConfig.bitRate;
+    copy.useFramePacing = self.streamConfig.useFramePacing;
+    copy.supportedVideoFormats = self.streamConfig.supportedVideoFormats;
+    copy.multiController = self.streamConfig.multiController;
+    copy.gamepadMask = self.streamConfig.gamepadMask;
+    return copy;
+}
+
+// Everything from Stream Settings as if the stream started now (resolution by the TV rule)
+- (StreamConfiguration*)streamConfigFromSettings {
+    StreamConfiguration* target = [self copyOfStreamConfig];
+    UIScreen* tvScreen = _externalWindow != nil ? _externalWindow.windowScene.screen : nil;
+    [StreamFrameViewController applyResolutionToConfig:target settings:_settings tvScreen:tvScreen];
+    [MainFrameViewController applyVideoSettings:_settings toConfig:target];
+    target.multiController = _settings.multiController;
+    target.gamepadMask = [ControllerSupport getConnectedGamepadMask:target];
+    return target;
+}
+
+// Stream Settings changed from the stream menu: Controls apply now; Video ones reconnect when asked
+- (void)streamMenuSettingsChanged:(NSDictionary<NSString*, id>*)values reconnect:(BOOL)reconnect {
+    [MainFrameViewController saveStreamSettingsDictionary:values];
+    _settings = [[[DataManager alloc] init] getSettings];
+    
+    self.streamConfig.swapABXYButtons = _settings.swapABXYButtons;
+    [_controllerSupport setSwapABXYButtons:_settings.swapABXYButtons];
+    [_streamView applyOnScreenControlsLevel:(OnScreenControlsLevel)[_settings.onscreenControls integerValue]
+                              absoluteTouch:_settings.absoluteTouchMode];
+    
+    if (reconnect) {
+        if (!_connectionReady || _reconnecting) {
+            return;
+        }
+        [self reconnectWithConfig:[self streamConfigFromSettings]];
+    }
+}
+
+- (void)reconnectWithConfig:(StreamConfiguration*)target {
+    int width = target.width;
+    int height = target.height;
+    Log(LOG_I, @"Reconnecting the stream at %dx%d %d FPS, %d kbps (was %dx%d %d FPS, %d kbps)", width, height,
+        target.frameRate, target.bitRate, self.streamConfig.width, self.streamConfig.height,
+        self.streamConfig.frameRate, self.streamConfig.bitRate);
     _reconnecting = YES;
     _connectionReady = NO;
     [self hideStreamMenu];
@@ -388,7 +439,13 @@
             }
             self.streamConfig.width = width;
             self.streamConfig.height = height;
-            self.streamConfig.frameRate = frameRate;
+            self.streamConfig.frameRate = target.frameRate;
+            self.streamConfig.bitRate = target.bitRate;
+            self.streamConfig.useFramePacing = target.useFramePacing;
+            self.streamConfig.supportedVideoFormats = target.supportedVideoFormats;
+            self.streamConfig.multiController = target.multiController;
+            self.streamConfig.gamepadMask = target.gamepadMask;
+            [self->_controllerSupport setMultiController:target.multiController];
             [self->_streamView updateStreamAspectRatio:(float)width / (float)height];
             
             // From here, a failure is the new connection's: shown as usual
@@ -536,20 +593,32 @@
         [_overlayView setFont:[UIFont systemFontOfSize:12]];
 #endif
         [_overlayView setAlpha:0.5];
-        [self.view addSubview:_overlayView];
     }
+    
+    // Starlight: the overlay goes with the stream (the TV's window in Second Screen)
+    UIView* parent = self.view;
+#if !TARGET_OS_TV
+    if (_externalWindow != nil) {
+        parent = _externalWindow.rootViewController.view;
+    }
+#endif
+    if (_overlayView.superview != parent) {
+        [_overlayView removeFromSuperview];
+        [parent addSubview:_overlayView];
+    }
+    [parent bringSubviewToFront:_overlayView];
     
     if (text != nil) {
         // We set our bounds to the maximum width in order to work around a bug where
         // sizeToFit interacts badly with the UITextView's line breaks, causing the
         // width to get smaller and smaller each time as more line breaks are inserted.
-        [_overlayView setBounds:CGRectMake(self.view.frame.origin.x,
+        [_overlayView setBounds:CGRectMake(0,
                                            _overlayView.frame.origin.y,
-                                           self.view.frame.size.width,
+                                           parent.bounds.size.width,
                                            _overlayView.frame.size.height)];
         [_overlayView setText:text];
         [_overlayView sizeToFit];
-        [_overlayView setCenter:CGPointMake(self.view.frame.size.width / 2, _overlayView.frame.size.height / 2)];
+        [_overlayView setCenter:CGPointMake(parent.bounds.size.width / 2, _overlayView.frame.size.height / 2)];
         [_overlayView setHidden:NO];
     }
     else {
@@ -704,6 +773,12 @@
     _streamMenu.onAction = ^(NSString* action) {
         [weakSelf streamMenuAction:action];
     };
+#if !TARGET_OS_TV
+    [_streamMenu setStreamSettings:[MainFrameViewController streamSettingsDictionaryForWindow:self.view.window]];
+    _streamMenu.onSettings = ^(NSDictionary<NSString*, id>* values, BOOL reconnect) {
+        [weakSelf streamMenuSettingsChanged:values reconnect:reconnect];
+    };
+#endif
     
     // With the stream on a TV the menu opens there, where you're looking (and you drive it with the controller);
     // a tap on the device's artwork opens it on the device instead
@@ -1462,13 +1537,18 @@
     screen.overscanCompensation = UIScreenOverscanCompensationNone;
     UIWindow* window = [[UIWindow alloc] initWithWindowScene:scene];
     window.frame = scene.coordinateSpace.bounds;
-    UIViewController* root = [[UIViewController alloc] init];
+    // A GCEventViewController (UIKit interaction off), like this screen: with GCSupportsControllerUserInteraction
+    // on, a plain view controller would let UIKit take the controller and the game would stop getting it
+    GCEventViewController* root = [[GCEventViewController alloc] init];
+    root.controllerUserInteractionEnabled = NO;
     root.view.backgroundColor = [UIColor blackColor];
     window.rootViewController = root;
     window.hidden = NO;
     _externalWindow = window;
     
     [self moveStreamContainerTo:root.view frame:window.bounds atBottom:NO];
+    // Second Screen: no touch controls drawn over the game on the TV
+    [_streamView setOnScreenControlsSuppressed:YES];
     [self showCompanionPanel];
     
     [self setNeedsUpdateOfScreenEdgesDeferringSystemGestures];
@@ -1482,6 +1562,8 @@
     [self moveStreamContainerTo:self.view frame:self.view.bounds atBottom:YES];
     _externalWindow.hidden = YES;
     _externalWindow = nil;
+    // Back on the device (or mirroring): touch controls as set in Settings
+    [_streamView setOnScreenControlsSuppressed:NO];
     
     [self setNeedsUpdateOfScreenEdgesDeferringSystemGestures];
     [self setNeedsUpdateOfHomeIndicatorAutoHidden];
@@ -1506,7 +1588,9 @@
     if (_companionVC != nil || self.view.window == nil) {
         return;
     }
-    UIViewController* page = [[UIViewController alloc] init];
+    // Same as the TV window: the controller must keep going to the game, not to UIKit
+    GCEventViewController* page = [[GCEventViewController alloc] init];
+    page.controllerUserInteractionEnabled = NO;
     page.view.backgroundColor = [UIColor blackColor];
     
     SteamGridDBManager* sgdb = [SteamGridDBManager sharedManager];

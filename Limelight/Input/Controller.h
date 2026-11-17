@@ -38,6 +38,7 @@ typedef struct {
 @property (nonatomic)                   BOOL menuWasVisible;
 @property (nonatomic)                   int menuPrevFlags;
 @property (nonatomic)                   int menuStickDirection;
+@property (nonatomic)                   int menuStickXDirection;
 
 @property (nonatomic)                   controller_touch_context_t primaryTouch;
 @property (nonatomic)                   controller_touch_context_t secondaryTouch;

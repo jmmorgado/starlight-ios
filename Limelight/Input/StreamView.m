@@ -38,6 +38,7 @@ static const double X1_MOUSE_SPEED_DIVISOR = 2.5;
     double accumulatedMouseDeltaY;
     
     UIResponder* touchHandler;
+    ControllerSupport* controllerSupportRef;
     
     id<UserInteractionDelegate> interactionDelegate;
     NSTimer* interactionTimer;
@@ -74,6 +75,7 @@ static const double X1_MOUSE_SPEED_DIVISOR = 2.5;
         self->touchHandler = [[RelativeTouchHandler alloc] initWithView:self];
     }
     
+    controllerSupportRef = controllerSupport;
     onScreenControls = [[OnScreenControls alloc] initWithView:self controllerSup:controllerSupport streamConfig:streamConfig];
     OnScreenControlsLevel level = (OnScreenControlsLevel)[settings.onscreenControls integerValue];
     if (settings.absoluteTouchMode) {
@@ -164,6 +166,30 @@ static const double X1_MOUSE_SPEED_DIVISOR = 2.5;
 - (void) showOnScreenControls {
 #if !TARGET_OS_TV
     [onScreenControls show];
+#endif
+}
+
+- (void) applyOnScreenControlsLevel:(OnScreenControlsLevel)level absoluteTouch:(BOOL)absoluteTouch {
+#if !TARGET_OS_TV
+    // Same rules as when the stream starts
+    if (absoluteTouch != [touchHandler isKindOfClass:[AbsoluteTouchHandler class]]) {
+        touchHandler = absoluteTouch ? [[AbsoluteTouchHandler alloc] initWithView:self]
+                                     : [[RelativeTouchHandler alloc] initWithView:self];
+    }
+    if (!absoluteTouch && level == OnScreenControlsLevelAuto) {
+        [controllerSupportRef initAutoOnScreenControlMode:onScreenControls];
+    }
+    else {
+        // Stop the automatic mode from changing a level chosen by hand
+        [controllerSupportRef initAutoOnScreenControlMode:nil];
+        [onScreenControls setLevel:absoluteTouch ? OnScreenControlsLevelOff : level];
+    }
+#endif
+}
+
+- (void) setOnScreenControlsSuppressed:(BOOL)suppressed {
+#if !TARGET_OS_TV
+    [onScreenControls setSuppressed:suppressed];
 #endif
 }
 

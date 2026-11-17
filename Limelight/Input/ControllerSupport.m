@@ -377,7 +377,7 @@ static const double MOUSE_SPEED_DIVISOR = 1.25;
 
 // While the stream menu is open the controller drives it and nothing reaches the PC.
 // Returns YES if the input was consumed by the menu.
--(BOOL) handleMenuNavigation:(Controller*)controller flags:(int)flags stickY:(short)stickY
+-(BOOL) handleMenuNavigation:(Controller*)controller flags:(int)flags stickX:(short)stickX stickY:(short)stickY
 {
     BOOL visible = [_delegate respondsToSelector:@selector(streamMenuVisible)] && [_delegate streamMenuVisible];
     if (!visible) {
@@ -392,6 +392,7 @@ static const double MOUSE_SPEED_DIVISOR = 1.25;
         controller.menuWasVisible = YES;
         controller.menuPrevFlags = flags;
         controller.menuStickDirection = 0;
+        controller.menuStickXDirection = 0;
         return YES;
     }
     
@@ -409,6 +410,12 @@ static const double MOUSE_SPEED_DIVISOR = 1.25;
     else if (pressed & DOWN_FLAG) {
         action = @"down";
     }
+    else if (pressed & LEFT_FLAG) {
+        action = @"left";
+    }
+    else if (pressed & RIGHT_FLAG) {
+        action = @"right";
+    }
     else if (pressed & confirmFlag) {
         action = @"select";
     }
@@ -425,6 +432,16 @@ static const double MOUSE_SPEED_DIVISOR = 1.25;
         }
         else if (direction == -1 && action == nil) {
             action = @"down";
+        }
+    }
+    int directionX = stickX > 16000 ? 1 : (stickX < -16000 ? -1 : 0);
+    if (directionX != controller.menuStickXDirection) {
+        controller.menuStickXDirection = directionX;
+        if (directionX == 1 && action == nil) {
+            action = @"right";
+        }
+        else if (directionX == -1 && action == nil) {
+            action = @"left";
         }
     }
     
@@ -474,7 +491,7 @@ static const double MOUSE_SPEED_DIVISOR = 1.25;
             if (controller.guideTapInProgress) {
                 buttonFlags |= SPECIAL_FLAG;
             }
-            if ([self handleMenuNavigation:controller flags:buttonFlags stickY:leftStickY]) {
+            if ([self handleMenuNavigation:controller flags:buttonFlags stickX:leftStickX stickY:leftStickY]) {
                 buttonFlags = 0;
                 leftTrigger = rightTrigger = 0;
                 leftStickX = leftStickY = rightStickX = rightStickY = 0;
@@ -1351,6 +1368,18 @@ static const double MOUSE_SPEED_DIVISOR = 1.25;
     }
     
     return self;
+}
+
+// Starlight: changed from the stream menu's Stream Settings
+-(void) setSwapABXYButtons:(BOOL)swap
+{
+    _swapABXYButtons = swap;
+}
+
+// Starlight: the stream reconnected with Multi-Controller Mode changed
+-(void) setMultiController:(BOOL)multiController
+{
+    _multiController = multiController;
 }
 
 -(void) connectionEstablished

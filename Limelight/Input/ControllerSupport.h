@@ -57,4 +57,8 @@
 
 -(NSUInteger) getConnectedGamepadCount;
 
+// Starlight: changed from the stream menu's Stream Settings
+-(void) setSwapABXYButtons:(BOOL)swap;
+-(void) setMultiController:(BOOL)multiController;
+
 @end

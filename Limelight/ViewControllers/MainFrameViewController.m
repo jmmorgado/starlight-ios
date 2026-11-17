@@ -740,10 +740,8 @@ static NSMutableSet* hostList;
     }
 #endif
     
-    _streamConfig.bitRate = [streamSettings.bitrate intValue];
     _streamConfig.optimizeGameSettings = streamSettings.optimizeGames;
     _streamConfig.playAudioOnPC = streamSettings.playAudioOnPC;
-    _streamConfig.useFramePacing = streamSettings.useFramePacing;
     _streamConfig.swapABXYButtons = streamSettings.swapABXYButtons;
     
     // multiController must be set before calling getConnectedGamepadMask
@@ -768,11 +766,19 @@ static NSMutableSet* hostList;
     
     _streamConfig.serverCodecModeSupport = app.host.serverCodecModeSupport;
     
+    [MainFrameViewController applyVideoSettings:streamSettings toConfig:_streamConfig];
+}
+
++ (void)applyVideoSettings:(TemporarySettings*)streamSettings toConfig:(StreamConfiguration*)config {
+    config.bitRate = [streamSettings.bitrate intValue];
+    config.useFramePacing = streamSettings.useFramePacing;
+    config.supportedVideoFormats = 0;
+    
     switch (streamSettings.preferredCodec) {
         case CODEC_PREF_AV1:
 #if defined(__IPHONE_16_0) || defined(__TVOS_16_0)
             if (VTIsHardwareDecodeSupported(kCMVideoCodecType_AV1)) {
-                _streamConfig.supportedVideoFormats |= VIDEO_FORMAT_AV1_MAIN8;
+                config.supportedVideoFormats |= VIDEO_FORMAT_AV1_MAIN8;
             }
 #endif
             // Fall-through
@@ -780,30 +786,30 @@ static NSMutableSet* hostList;
         case CODEC_PREF_AUTO:
         case CODEC_PREF_HEVC:
             if (VTIsHardwareDecodeSupported(kCMVideoCodecType_HEVC)) {
-                _streamConfig.supportedVideoFormats |= VIDEO_FORMAT_H265;
+                config.supportedVideoFormats |= VIDEO_FORMAT_H265;
             }
             // Fall-through
             
         case CODEC_PREF_H264:
-            _streamConfig.supportedVideoFormats |= VIDEO_FORMAT_H264;
+            config.supportedVideoFormats |= VIDEO_FORMAT_H264;
             break;
     }
     
     // HEVC is supported if the user wants it (or it's required by the chosen resolution) and the SoC supports it
-    if ((_streamConfig.width > 4096 || _streamConfig.height > 4096 || streamSettings.enableHdr) && VTIsHardwareDecodeSupported(kCMVideoCodecType_HEVC)) {
-        _streamConfig.supportedVideoFormats |= VIDEO_FORMAT_H265;
+    if ((config.width > 4096 || config.height > 4096 || streamSettings.enableHdr) && VTIsHardwareDecodeSupported(kCMVideoCodecType_HEVC)) {
+        config.supportedVideoFormats |= VIDEO_FORMAT_H265;
         
         // HEVC Main10 is supported if the user wants it and the display supports it
         if (streamSettings.enableHdr && (AVPlayer.availableHDRModes & AVPlayerHDRModeHDR10) != 0) {
-            _streamConfig.supportedVideoFormats |= VIDEO_FORMAT_H265_MAIN10;
+            config.supportedVideoFormats |= VIDEO_FORMAT_H265_MAIN10;
         }
     }
     
 #if defined(__IPHONE_16_0) || defined(__TVOS_16_0)
     // Add the AV1 Main10 format if AV1 and HDR are both enabled and supported
-    if ((_streamConfig.supportedVideoFormats & VIDEO_FORMAT_MASK_AV1) && streamSettings.enableHdr &&
+    if ((config.supportedVideoFormats & VIDEO_FORMAT_MASK_AV1) && streamSettings.enableHdr &&
         VTIsHardwareDecodeSupported(kCMVideoCodecType_AV1) && (AVPlayer.availableHDRModes & AVPlayerHDRModeHDR10) != 0) {
-        _streamConfig.supportedVideoFormats |= VIDEO_FORMAT_AV1_MAIN10;
+        config.supportedVideoFormats |= VIDEO_FORMAT_AV1_MAIN10;
     }
 #endif
 }
@@ -2602,11 +2608,15 @@ static const NSUInteger kMaxQuickActions = 4;
 }
 
 - (NSDictionary<NSString*, id>*)homeStreamSettings {
+    return [MainFrameViewController streamSettingsDictionaryForWindow:self.view.window];
+}
+
++ (NSDictionary<NSString*, id>*)streamSettingsDictionaryForWindow:(UIWindow*)deviceWindow {
     DataManager* dataMan = [[DataManager alloc] init];
     TemporarySettings* settings = [dataMan getSettings];
     
     // Same presets as Moonlight's settings screen, plus this device's own screen sizes
-    UIWindow* window = self.view.window ?: UIApplication.sharedApplication.windows.firstObject;
+    UIWindow* window = deviceWindow ?: UIApplication.sharedApplication.windows.firstObject;
     CGFloat scale = window.screen.scale > 0 ? window.screen.scale : UIScreen.mainScreen.scale;
     CGSize frame = window.frame.size;
     int fullWidth = (int)(MAX(frame.width, frame.height) * scale);
@@ -2650,6 +2660,10 @@ static const NSUInteger kMaxQuickActions = 4;
 }
 
 - (void)homeSaveStreamSettings:(NSDictionary<NSString*, id>*)values {
+    [MainFrameViewController saveStreamSettingsDictionary:values];
+}
+
++ (void)saveStreamSettingsDictionary:(NSDictionary<NSString*, id>*)values {
     DataManager* dataMan = [[DataManager alloc] init];
     TemporarySettings* current = [dataMan getSettings];
     

@@ -63,6 +63,7 @@
     CGRect _controlArea;
     UIView* _view;
     OnScreenControlsLevel _level;
+    BOOL _suppressed;
     BOOL _visible;
     
     ControllerSupport *_controllerSupport;
@@ -178,8 +179,18 @@ static float L3_Y;
     return _level;
 }
 
+- (void) setSuppressed:(BOOL)suppressed {
+    if (_suppressed == suppressed) {
+        return;
+    }
+    _suppressed = suppressed;
+    if (_visible) {
+        [self updateControls];
+    }
+}
+
 - (void) updateControls {
-    switch (_level) {
+    switch (_suppressed ? OnScreenControlsLevelOff : _level) {
         case OnScreenControlsLevelOff:
             [self hideButtons];
             [self hideBumpers];
@@ -553,6 +564,9 @@ static float L3_Y;
 }
 
 - (BOOL) handleTouchMovedEvent:touches {
+    if (_suppressed) {
+        return NO;
+    }
     BOOL updated = false;
     BOOL buttonTouch = false;
     float rsMaxX = RS_CENTER_X + STICK_OUTER_SIZE / 2;
@@ -658,6 +672,9 @@ static float L3_Y;
 }
 
 - (BOOL)handleTouchDownEvent:touches {
+    if (_suppressed) {
+        return NO;
+    }
     BOOL updated = false;
     BOOL stickTouch = false;
     for (UITouch* touch in touches) {
@@ -778,6 +795,9 @@ static float L3_Y;
 }
 
 - (BOOL)handleTouchUpEvent:touches {
+    if (_suppressed) {
+        return NO;
+    }
     BOOL updated = false;
     BOOL touched = false;
     for (UITouch* touch in touches) {
