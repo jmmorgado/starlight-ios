@@ -92,9 +92,6 @@ final class SteamManager: ObservableObject {
     @Published private(set) var hasKey = SteamKeychain.load() != nil
     @Published private(set) var achievements: [Int: SteamAppStats] = [:]
     private var loadingAchievements: Set<Int> = []
-    /// Achievements read from disk for the Home rows, whatever their age (nil: nothing stored)
-    private var storedStats: [Int: SteamAppStats?] = [:]
-    private var prefetching = false
 
     private static let steamIDKey = "StarlightSteamID"
     private static let staleAfter: TimeInterval = 3 * 60 * 60
@@ -320,27 +317,6 @@ final class SteamManager: ObservableObject {
         let stats = SteamAppStats(appid: appid, achievements: list, updated: Date())
         achievements[appid] = stats
         Self.saveStats(stats)
-    }
-
-    /// The achievements already known for a game, fetched or stored, however old (no request)
-    func cachedStats(_ appid: Int) -> SteamAppStats? {
-        if let stats = achievements[appid] { return stats }
-        if let stored = storedStats[appid] { return stored }
-        let stored = Self.loadStats(appid)
-        storedStats[appid] = stored
-        return stored
-    }
-
-    /// Fetches, one game after another, the achievements of games that have none yet (Home's Almost 100% row)
-    @MainActor
-    func prefetchAchievements(_ appids: [Int]) async {
-        guard isConfigured, !prefetching else { return }
-        prefetching = true
-        defer { prefetching = false }
-        for appid in appids where cachedStats(appid) == nil {
-            if Task.isCancelled { return }
-            await loadAchievements(appid)
-        }
     }
 
     private static func statsURL(_ appid: Int) -> URL {

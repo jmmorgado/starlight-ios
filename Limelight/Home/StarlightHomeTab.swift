@@ -55,18 +55,18 @@ struct HomeTab: View {
                                         .id("section-featured")
                                 }
 
+                                let pinned = model.pinnedGames
+                                if !pinned.isEmpty {
+                                    GameRow(id: "pinned", title: "Pinned", games: pinned, model: model,
+                                            compact: compact, leadingInset: leading, trailingInset: trailing, zoom: zoom)
+                                        .id("section-pinned")
+                                }
+
                                 let newGames = model.newOnPCGames
                                 if !newGames.isEmpty {
                                     GameRow(id: "new", title: "New on Your PC", games: newGames, model: model,
                                             compact: compact, leadingInset: leading, trailingInset: trailing, zoom: zoom)
                                         .id("section-new")
-                                }
-
-                                let almost = model.almostCompleteGames
-                                if !almost.isEmpty {
-                                    GameRow(id: "almost", title: "Almost 100%", games: almost, model: model,
-                                            compact: compact, leadingInset: leading, trailingInset: trailing, zoom: zoom)
-                                        .id("section-almost")
                                 }
 
                                 GameRow(id: "all", title: "Ready to Play", games: model.libraryGames, model: model,
@@ -92,11 +92,6 @@ struct HomeTab: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
             .background(Color.black.ignoresSafeArea())
             .modifier(FollowSidebarInset(leading: geo.safeAreaInsets.leading))
-            // Achievements for the Almost 100% row: games without any yet, one at a time, in the background
-            // (keyed by the game list, so it isn't restarted each time one game's achievements arrive)
-            .task(id: model.games.map(\.id)) {
-                await SteamManager.shared.prefetchAchievements(model.gamesMissingAchievements)
-            }
         }
         .modifier(HomeTitle(visible: model.featured != nil, progress: titleProgress))
         .modifier(GameDetailDestination(model: model, tab: .home, zoom: zoom))

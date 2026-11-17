@@ -538,28 +538,11 @@ final class HomeModel: ObservableObject {
             .map(\.0)
     }
 
-    /// Almost 100%: 75% or more of the achievements unlocked, but not all, closest to 100% first
-    /// (from the achievements already cached; games without achievements are left out)
-    var almostCompleteGames: [GameItem] {
+    /// Pinned: the pinned games, in their pinned order
+    var pinnedGames: [GameItem] {
         games
-            .compactMap { game -> (GameItem, Double)? in
-                guard !game.hidden, game.isInstalled, let appid = game.steamAppId,
-                      let stats = SteamManager.shared.cachedStats(appid), !stats.achievements.isEmpty else { return nil }
-                let ratio = Double(stats.unlockedCount) / Double(stats.achievements.count)
-                guard ratio >= 0.75, ratio < 1 else { return nil }
-                return (game, ratio)
-            }
-            .sorted { $0.1 != $1.1 ? $0.1 > $1.1 : $0.0.name.localizedCaseInsensitiveCompare($1.0.name) == .orderedAscending }
-            .map(\.0)
-    }
-
-    /// Ready to Play Steam games whose achievements haven't been fetched yet
-    var gamesMissingAchievements: [Int] {
-        games.compactMap { game in
-            guard !game.hidden, game.isInstalled, let appid = game.steamAppId,
-                  SteamManager.shared.cachedStats(appid) == nil else { return nil }
-            return appid
-        }
+            .filter { !$0.hidden && $0.pinned }
+            .sorted { ($0.pinIndex ?? 0) < ($1.pinIndex ?? 0) }
     }
 
     var continueGames: [GameItem] {
