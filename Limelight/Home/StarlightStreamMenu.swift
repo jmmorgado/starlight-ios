@@ -154,6 +154,19 @@ final class StreamMenuState: ObservableObject {
         return list
     }
 
+    /// Controls live on the main page, once the stream's settings are known
+    var showsControls: Bool { !confirmQuit && settingsLoaded }
+    private var settingsLoaded = false
+
+    /// Focus order on the main page: the buttons, with the Controls rows before Stop Streaming
+    var mainFocusIDs: [String] {
+        let ids = items.map(\.id)
+        guard showsControls, let stop = ids.firstIndex(of: "disconnect") else { return ids }
+        return Array(ids[..<stop]) + controlRows.map(\.id) + Array(ids[stop...])
+    }
+
+    private var controlIDs: Set<String> { Set(controlRows.map(\.id)) }
+
     func activate(_ id: String) {
         switch id {
         case "settings":
@@ -165,7 +178,7 @@ final class StreamMenuState: ObservableObject {
             focus = 1   // Cancel first, so a stray press doesn't quit
         case "cancelQuit":
             confirmQuit = false
-            focus = items.firstIndex { $0.id == "askQuit" } ?? 0
+            focus = mainFocusIDs.firstIndex(of: "askQuit") ?? 0
         default:
             onAction?(id)
         }
@@ -176,12 +189,18 @@ final class StreamMenuState: ObservableObject {
             navigateSettings(action)
             return
         }
-        let count = items.count
+        let ids = mainFocusIDs
+        let count = ids.count
+        guard count > 0 else { return }
+        focus = min(focus, count - 1)
+        let id = ids[focus]
         switch action {
         case "up": focus = (focus - 1 + count) % count
         case "down": focus = (focus + 1) % count
+        case "left": if controlIDs.contains(id) { adjust(id, by: -1) }
+        case "right": if controlIDs.contains(id) { adjust(id, by: 1) }
         case "select":
-            if items.indices.contains(focus) { activate(items[focus].id) }
+            if controlIDs.contains(id) { select(id) } else { activate(id) }
         case "back":
             if confirmQuit { activate("cancelQuit") } else { onAction?("resume") }
         default: break
@@ -235,7 +254,7 @@ final class StreamMenuState: ObservableObject {
 
     /// Focus order on the page: the rows, then Apply & Reconnect (when there's something to apply)
     var settingsFocusIDs: [String] {
-        videoRows.map(\.id) + controlRows.map(\.id) + (videoChanged ? ["apply"] : [])
+        videoRows.map(\.id) + (videoChanged ? ["apply"] : [])
     }
 
     func loadSettings(_ settings: [String: Any]) {
@@ -257,6 +276,7 @@ final class StreamMenuState: ObservableObject {
         controls = ControlValues(onscreenControls: int("onscreenControls", 1),
                                  absoluteTouch: bool("absoluteTouch", false),
                                  swapABXY: bool("swapABXY", false))
+        settingsLoaded = true
         others = ["optimizeGames": bool("optimizeGames", true), "audioOnPC": bool("audioOnPC", false),
                   "btMouse": bool("btMouse", false), "statsOverlay": bool("statsOverlay", false)]
     }
@@ -291,7 +311,7 @@ final class StreamMenuState: ObservableObject {
     func leaveSettings() {
         video = savedVideo
         page = .main
-        focus = items.firstIndex { $0.id == "settings" } ?? 0
+        focus = mainFocusIDs.firstIndex(of: "settings") ?? 0
     }
 
     private func cycle<T: Equatable>(_ value: T, in options: [T], by delta: Int) -> T {
@@ -405,12 +425,6 @@ struct StreamMenuView: View {
                             .foregroundStyle(.secondary)
                             .padding(.horizontal, 4)
                             .padding(.bottom, 6)
-                        sectionTitle("Controls")
-                        ForEach(state.controlRows) { settingRow($0, focused: focusedID == $0.id) }
-                        Text("These apply right away.")
-                            .font(.footnote)
-                            .foregroundStyle(.secondary)
-                            .padding(.horizontal, 4)
                     }
                     .padding(.vertical, 2)
                 }
@@ -496,7 +510,9 @@ struct StreamMenuView: View {
     }
 
     private var mainPanel: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        let ids = state.mainFocusIDs
+        let focusedID: String? = device.controllerConnected && ids.indices.contains(state.focus) ? ids[state.focus] : nil
+        return VStack(alignment: .leading, spacing: 10) {
             Text(state.confirmQuit ? "Quit \(state.gameName)?" : state.gameName)
                 .font(.system(size: 20, weight: .bold))
                 .lineLimit(2)
@@ -506,26 +522,40 @@ struct StreamMenuView: View {
                     .foregroundStyle(.secondary)
             }
 
-            Spacer().frame(height: 4)
-
-            ForEach(Array(state.items.enumerated()), id: \.element.id) { index, item in
-                if item.id == "disconnect" {
-                    Spacer(minLength: 8)
+            // Scrolls with a finger when the menu doesn't fit (iPhone in landscape)
+            ScrollViewReader { proxy in
+                ScrollView(showsIndicators: false) {
+                    VStack(alignment: .leading, spacing: 10) {
+                        ForEach(state.items) { item in
+                            if item.id == "disconnect" {
+                                if state.showsControls {
+                                    sectionTitle("Controls")
+                                        .padding(.top, 6)
+                                    ForEach(state.controlRows) { settingRow($0, focused: focusedID == $0.id) }
+                                }
+                                Spacer(minLength: 8)
+                            }
+                            menuButton(item, focused: focusedID == item.id)
+                                .id(item.id)
+                            if item.id == "disconnect" {
+                                Text("The game keeps running on your PC.")
+                                    .font(.footnote)
+                                    .foregroundStyle(.secondary)
+                                    .padding(.leading, 4)
+                            }
+                        }
+                    }
+                    .padding(.vertical, 4)
+                    .padding(.horizontal, 2)
                 }
-                menuButton(item, focused: device.controllerConnected && index == state.focus)
-                if item.id == "disconnect" {
-                    Text("The game keeps running on your PC.")
-                        .font(.footnote)
-                        .foregroundStyle(.secondary)
-                        .padding(.leading, 4)
+                .onChange(of: focusedID) { id in
+                    guard let id else { return }
+                    withAnimation(.easeInOut(duration: 0.15)) { proxy.scrollTo(id, anchor: .center) }
                 }
-            }
-            if state.confirmQuit {
-                Spacer(minLength: 0)
             }
         }
         .padding(20)
-        .frame(width: 300)
+        .frame(width: 330)
         .frame(maxHeight: .infinity, alignment: .top)
         .modifier(StreamMenuGlass())
         .padding(.vertical, 12)

@@ -55,6 +55,13 @@ struct HomeTab: View {
                                         .id("section-featured")
                                 }
 
+                                let playing = model.playingGames
+                                if !playing.isEmpty {
+                                    GameRow(id: "playing", title: "Playing Now", games: playing, model: model,
+                                            compact: compact, leadingInset: leading, trailingInset: trailing, zoom: zoom)
+                                        .id("section-playing")
+                                }
+
                                 let pinned = model.pinnedGames
                                 if !pinned.isEmpty {
                                     GameRow(id: "pinned", title: "Pinned", games: pinned, model: model,

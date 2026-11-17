@@ -588,6 +588,11 @@ final class HomeModel: ObservableObject {
             .map(\.0)
     }
 
+    /// Playing Now: games running on the PC, started from this device or another one
+    var playingGames: [GameItem] {
+        games.filter { !$0.hidden && $0.running }
+    }
+
     /// Pinned: the pinned games, in their pinned order
     var pinnedGames: [GameItem] {
         games
