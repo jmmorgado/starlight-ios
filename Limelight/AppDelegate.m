@@ -7,6 +7,7 @@
 //
 
 #import "AppDelegate.h"
+#import "Moonlight-Swift.h"
 
 @implementation AppDelegate
 
@@ -112,6 +113,10 @@ static NSString* DB_NAME = @"Limelight_iOS.sqlite";
 }
 
 - (BOOL)handleUserActivity:(NSUserActivity*)userActivity {
+    // Handoff from the user's other iPhone or iPad
+    if ([[StarlightHandoff shared] handle:userActivity]) {
+        return YES;
+    }
     // CSSearchableItemActionType / CSSearchableItemActivityIdentifier
     if ([userActivity.activityType isEqualToString:@"com.apple.corespotlightitem"]) {
         NSString* identifier = userActivity.userInfo[@"kCSSearchableItemActivityIdentifier"];

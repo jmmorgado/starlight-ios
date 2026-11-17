@@ -18,6 +18,7 @@
 		5A7A1C00000000000000D7A2 /* StarlightArtworkEditor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5A7A1C00000000000000D7A1 /* StarlightArtworkEditor.swift */; };
 		5A7A1C00000000000000D8A2 /* StarlightStreamMenu.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5A7A1C00000000000000D8A1 /* StarlightStreamMenu.swift */; };
 		5A7A1C00000000000000D8C2 /* StarlightCarousel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5A7A1C00000000000000D8C1 /* StarlightCarousel.swift */; };
+		5A7A1C00000000000000D9C2 /* StarlightHandoff.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5A7A1C00000000000000D9C1 /* StarlightHandoff.swift */; };
 		5A7A1C00000000000000D9A2 /* StarlightSteam.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5A7A1C00000000000000D9A1 /* StarlightSteam.swift */; };
 		5A7A1C0000000000000000B3 /* SteamGridDBManager.m in Sources */ = {isa = PBXBuildFile; fileRef = 5A7A1C0000000000000000B2 /* SteamGridDBManager.m */; };
 		5A7A1C0000000000000000A2 /* StarlightAppIntents.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5A7A1C0000000000000000A1 /* StarlightAppIntents.swift */; };
@@ -195,6 +196,7 @@
 		5A7A1C00000000000000D7A1 /* StarlightArtworkEditor.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = StarlightArtworkEditor.swift; sourceTree = "<group>"; };
 		5A7A1C00000000000000D8A1 /* StarlightStreamMenu.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = StarlightStreamMenu.swift; sourceTree = "<group>"; };
 		5A7A1C00000000000000D8C1 /* StarlightCarousel.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = StarlightCarousel.swift; sourceTree = "<group>"; };
+		5A7A1C00000000000000D9C1 /* StarlightHandoff.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = StarlightHandoff.swift; sourceTree = "<group>"; };
 		5A7A1C00000000000000D9A1 /* StarlightSteam.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = StarlightSteam.swift; sourceTree = "<group>"; };
 		5A7A1C0000000000000000B1 /* SteamGridDBManager.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = SteamGridDBManager.h; sourceTree = "<group>"; };
 		5A7A1C0000000000000000B2 /* SteamGridDBManager.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; path = SteamGridDBManager.m; sourceTree = "<group>"; };
@@ -408,6 +410,7 @@
 				5A7A1C00000000000000D7A1 /* StarlightArtworkEditor.swift */,
 				5A7A1C00000000000000D8A1 /* StarlightStreamMenu.swift */,
 				5A7A1C00000000000000D8C1 /* StarlightCarousel.swift */,
+				5A7A1C00000000000000D9C1 /* StarlightHandoff.swift */,
 				5A7A1C00000000000000D9A1 /* StarlightSteam.swift */,
 			);
 			path = Home;
@@ -956,6 +959,7 @@
 				5A7A1C00000000000000D7A2 /* StarlightArtworkEditor.swift in Sources */,
 				5A7A1C00000000000000D8A2 /* StarlightStreamMenu.swift in Sources */,
 				5A7A1C00000000000000D8C2 /* StarlightCarousel.swift in Sources */,
+				5A7A1C00000000000000D9C2 /* StarlightHandoff.swift in Sources */,
 				5A7A1C00000000000000D9A2 /* StarlightSteam.swift in Sources */,
 				5A7A1C0000000000000000B3 /* SteamGridDBManager.m in Sources */,
 				5A7A1C0000000000000000A2 /* StarlightAppIntents.swift in Sources */,

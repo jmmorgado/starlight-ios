@@ -48,6 +48,10 @@
 			<string>ExtendedGamepad</string>
 		</dict>
 	</array>
+	<key>NSUserActivityTypes</key>
+	<array>
+		<string>com.jmmorgado.starlight.browse</string>
+	</array>
 	<key>GCSupportsControllerUserInteraction</key>
 	<true/>
 	<key>LSSupportsGameMode</key>

@@ -56,6 +56,21 @@ final class StarlightHomeController: NSObject {
         }
         // Steam data: refresh when it's more than a few hours old
         Task { @MainActor in SteamManager.shared.refreshIfStale() }
+        // Handoff (test): open the tab the other device was on, and say it arrived
+        StarlightHandoff.shared.onBrowse = { [weak homeModel] info in
+            guard let homeModel = homeModel else { return }
+            if let raw = info["tab"] as? String, let tab = StarlightTab(rawValue: raw) {
+                homeModel.tab = tab
+            }
+            let alert = UIAlertController(title: "Handoff received",
+                                          message: "Continued from your other device (tab: \(info["tab"] as? String ?? "?")).",
+                                          preferredStyle: .alert)
+            alert.addAction(UIAlertAction(title: "OK", style: .default))
+            var top = UIApplication.shared.connectedScenes.compactMap { ($0 as? UIWindowScene)?.keyWindow }.first?.rootViewController
+            while let presented = top?.presentedViewController { top = presented }
+            top?.present(alert, animated: true)
+        }
+        homeModel.advertiseHandoff()
     }
 
     /// On while the Starlight screens are visible, off during a stream
@@ -316,6 +331,7 @@ final class HomeModel: ObservableObject {
             TabBarAutoHide.shared.reset()
             detail = nil
             closePC()
+            advertiseHandoff()
             closeGameMenu()
             GameFocus.shared.focusedID = nil
             // Settings has its own focus scope: the Home/Library cards stay loaded in the
@@ -508,6 +524,11 @@ final class HomeModel: ObservableObject {
 
 
     var currentHost: HostItem? { hosts.first { $0.id == selectedHost } }
+
+    /// Handoff (test): the tab you're on
+    func advertiseHandoff() {
+        StarlightHandoff.shared.advertiseBrowse(["tab": tab.rawValue], title: "Starlight \(tab.title)")
+    }
     var pairedHosts: [HostItem] { hosts.filter { $0.paired } }
     var networkHosts: [HostItem] { hosts.filter { !$0.paired } }
 
