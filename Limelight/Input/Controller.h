@@ -30,11 +30,14 @@ typedef struct {
 @property (nonatomic)                   short lastRightStickX;
 @property (nonatomic)                   short lastRightStickY;
 
-// Starlight: Start+Select tap = Guide on the PC, hold = stream menu; menu navigation state
-@property (nonatomic)                   BOOL comboActive;
-@property (nonatomic)                   BOOL comboFired;
+// Starlight: hold Start = stream menu (a tap still reaches the PC), Start+Select tap = Guide; menu navigation state
+@property (nonatomic)                   BOOL comboActive;       // Start held alone, waiting to see if it's a hold
+@property (nonatomic)                   BOOL comboFired;        // the hold opened/closed the menu
 @property (nonatomic)                   NSTimer* _Nullable comboTimer;
+@property (nonatomic)                   BOOL guideComboActive;  // Start+Select down together
+@property (nonatomic)                   BOOL startPassThrough;  // Start pressed with other buttons: goes to the PC as is
 @property (nonatomic)                   BOOL guideTapInProgress;
+@property (nonatomic)                   BOOL startTapInProgress;
 @property (nonatomic)                   BOOL menuWasVisible;
 @property (nonatomic)                   int menuPrevFlags;
 @property (nonatomic)                   int menuStickDirection;

@@ -18,7 +18,7 @@
 - (void) streamExitRequested;
 
 @optional
-// Starlight: Start+Select held toggles the stream menu; while it's open the controller navigates it
+// Starlight: holding Start toggles the stream menu; while it's open the controller navigates it
 - (void) streamMenuRequested;
 - (BOOL) streamMenuVisible;
 // "up", "down", "select", "back"

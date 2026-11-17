@@ -321,16 +321,81 @@ static const double MOUSE_SPEED_DIVISOR = 1.25;
     return (_multiController ? _controllerNumbers : 1) | (_oscEnabled ? 1 : 0);
 }
 
-// Starlight: Start+Select tapped together sends Guide to the PC; held for a second it toggles the stream menu.
-// Returns the button flags to send to the PC (Start/Select are held back while the combo is down).
+// Starlight: holding Start alone for a second toggles the stream menu; a shorter press is sent to the PC
+// as a Start tap when it's released. Start pressed together with other buttons goes to the PC straight away.
+// Start+Select tapped together sends Guide to the PC.
+// Returns the button flags to send to the PC (Start, and Select in the Guide combo, are held back meanwhile).
 -(int) handleMenuCombo:(Controller*)controller flags:(int)flags
 {
     if (![_delegate respondsToSelector:@selector(streamMenuRequested)]) {
         return flags;
     }
     
-    BOOL bothDown = (flags & PLAY_FLAG) && (flags & BACK_FLAG);
-    if (bothDown && !controller.comboActive) {
+    BOOL startDown = (flags & PLAY_FLAG) != 0;
+    int others = flags & ~PLAY_FLAG;
+    
+    // Start+Select: Guide when both are released (cancels a Start hold in progress)
+    if (startDown && (flags & BACK_FLAG) && !controller.guideComboActive && !controller.startPassThrough && !controller.comboFired) {
+        controller.guideComboActive = YES;
+        if (controller.comboActive) {
+            controller.comboActive = NO;
+            dispatch_async(dispatch_get_main_queue(), ^{
+                [controller.comboTimer invalidate];
+                controller.comboTimer = nil;
+            });
+        }
+    }
+    if (controller.guideComboActive) {
+        if (!(flags & PLAY_FLAG) && !(flags & BACK_FLAG)) {
+            controller.guideComboActive = NO;
+            dispatch_async(dispatch_get_main_queue(), ^{
+                [self sendGuideTap:controller];
+            });
+        }
+        return flags & ~(PLAY_FLAG | BACK_FLAG);
+    }
+    
+    // Start already on its way to the PC (pressed with other buttons): until it's released
+    if (controller.startPassThrough) {
+        if (!startDown) {
+            controller.startPassThrough = NO;
+        }
+        return flags;
+    }
+    
+    // Start held alone
+    if (controller.comboActive) {
+        if (!startDown) {
+            controller.comboActive = NO;
+            BOOL fired = controller.comboFired;
+            controller.comboFired = NO;
+            dispatch_async(dispatch_get_main_queue(), ^{
+                [controller.comboTimer invalidate];
+                controller.comboTimer = nil;
+                if (!fired) {
+                    [self sendStartTap:controller];
+                }
+            });
+            return flags;
+        }
+        if (others != 0 && !controller.comboFired) {
+            // Another button joined in: it's a normal Start press for the game
+            controller.comboActive = NO;
+            controller.startPassThrough = YES;
+            dispatch_async(dispatch_get_main_queue(), ^{
+                [controller.comboTimer invalidate];
+                controller.comboTimer = nil;
+            });
+            return flags;
+        }
+        return flags & ~PLAY_FLAG;
+    }
+    
+    if (startDown) {
+        if (others != 0) {
+            controller.startPassThrough = YES;
+            return flags;
+        }
         controller.comboActive = YES;
         controller.comboFired = NO;
         dispatch_async(dispatch_get_main_queue(), ^{
@@ -342,23 +407,23 @@ static const double MOUSE_SPEED_DIVISOR = 1.25;
                 }
             }];
         });
-    }
-    
-    if (controller.comboActive) {
-        if (!(flags & PLAY_FLAG) && !(flags & BACK_FLAG)) {
-            controller.comboActive = NO;
-            BOOL fired = controller.comboFired;
-            dispatch_async(dispatch_get_main_queue(), ^{
-                [controller.comboTimer invalidate];
-                controller.comboTimer = nil;
-                if (!fired && !controller.comboFired) {
-                    [self sendGuideTap:controller];
-                }
-            });
-        }
-        flags &= ~(PLAY_FLAG | BACK_FLAG);
+        return flags & ~PLAY_FLAG;
     }
     return flags;
+}
+
+// Called on the main queue: a short Start press, sent to the PC once it's clear it wasn't a hold
+-(void) sendStartTap:(Controller*)controller
+{
+    if ([_delegate respondsToSelector:@selector(streamMenuVisible)] && [_delegate streamMenuVisible]) {
+        return;
+    }
+    controller.startTapInProgress = YES;
+    [self updateFinished:controller];
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.1 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        controller.startTapInProgress = NO;
+        [self updateFinished:controller];
+    });
 }
 
 // Called on the main queue
@@ -490,6 +555,9 @@ static const double MOUSE_SPEED_DIVISOR = 1.25;
             buttonFlags = [self handleMenuCombo:controller flags:buttonFlags];
             if (controller.guideTapInProgress) {
                 buttonFlags |= SPECIAL_FLAG;
+            }
+            if (controller.startTapInProgress) {
+                buttonFlags |= PLAY_FLAG;
             }
             if ([self handleMenuNavigation:controller flags:buttonFlags stickX:leftStickX stickY:leftStickY]) {
                 buttonFlags = 0;
@@ -1124,7 +1192,7 @@ static const double MOUSE_SPEED_DIVISOR = 1.25;
             limeController.playerIndex = i;
             limeController.supportedEmulationFlags = EMULATING_SPECIAL | EMULATING_SELECT;
             if ([_delegate respondsToSelector:@selector(streamMenuRequested)]) {
-                // Starlight handles Start+Select itself (tap = Guide, hold = stream menu)
+                // Starlight handles Start itself (hold = stream menu) and Start+Select (tap = Guide)
                 limeController.supportedEmulationFlags &= ~EMULATING_SPECIAL;
             }
             limeController.gamepad = controller;

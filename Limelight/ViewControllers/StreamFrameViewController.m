@@ -221,7 +221,7 @@
 #if TARGET_OS_TV
     [_tipLabel setText:@"Tip: Tap the Play/Pause button on the Apple TV Remote to disconnect from your PC"];
 #else
-    [_tipLabel setText:@"Tip: Swipe from the left edge or hold Start + Select for the stream menu"];
+    [_tipLabel setText:@"Tip: Swipe from the left edge or hold Start for the stream menu"];
 #endif
     
     [_tipLabel sizeToFit];

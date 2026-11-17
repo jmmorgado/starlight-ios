@@ -11,7 +11,7 @@ import Security
 
 // MARK: - Stream menu (shown over a running stream)
 
-/// Liquid Glass panel opened by swiping from the left edge or holding Start+Select on the controller.
+/// Liquid Glass panel opened by swiping from the left edge or holding Start on the controller.
 /// Works by touch and, when a controller is connected, with the D-pad / left stick and the face buttons.
 @objc(StarlightStreamMenu)
 final class StarlightStreamMenu: NSObject {
