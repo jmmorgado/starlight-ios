@@ -149,7 +149,7 @@ static UIImage* noImage;
         noAppImage = true;
     }
     
-    if ([_app.id isEqualToString:_app.host.currentGame]) {
+    if ([_app.id isEqualToString:[_app.host runningGame]]) {
         // Only create the app overlay if needed
         _appOverlay = [[UIImageView alloc] initWithImage:[UIImage imageNamed:@"Play"]];
         _appOverlay.layer.shadowColor = [UIColor blackColor].CGColor;
@@ -217,8 +217,8 @@ static UIImage* noImage;
     }
     
     // Update the app image if neccessary
-    if ((_appOverlay != nil && ![_app.id isEqualToString:_app.host.currentGame]) ||
-        (_appOverlay == nil && [_app.id isEqualToString:_app.host.currentGame])) {
+    if ((_appOverlay != nil && ![_app.id isEqualToString:[_app.host runningGame]]) ||
+        (_appOverlay == nil && [_app.id isEqualToString:[_app.host runningGame]])) {
         [self updateAppImage];
     }
     

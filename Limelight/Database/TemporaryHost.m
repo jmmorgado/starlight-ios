@@ -21,6 +21,43 @@
     return self;
 }
 
+- (NSString*) runningGame {
+    NSString* current = self.currentGame;
+    if (current != nil && current.length > 0 && ![current isEqualToString:@"0"]) {
+        return current;
+    }
+    NSString* remote = self.remoteRunningGame;
+    if (remote != nil && self.state != StateOffline) {
+        return remote;
+    }
+    return @"0";
+}
+
+- (BOOL) setRemoteRunningGameName:(NSString*)name {
+    NSString* found = nil;
+    if (name.length > 0) {
+        for (TemporaryApp* app in self.appList) {
+            NSString* appName = [app.name stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
+            if ([appName isEqualToString:name]) {
+                found = app.id;
+                break;
+            }
+        }
+        if (found == nil) {
+            for (TemporaryApp* app in self.appList) {
+                NSString* appName = [app.name stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
+                if ([appName caseInsensitiveCompare:name] == NSOrderedSame) {
+                    found = app.id;
+                    break;
+                }
+            }
+        }
+    }
+    NSString* old = self.remoteRunningGame;
+    self.remoteRunningGame = found;
+    return !((old == nil && found == nil) || [old isEqualToString:found]);
+}
+
 - (id) initFromHost:(Host*)host {
     self = [self init];
     

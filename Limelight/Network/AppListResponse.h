@@ -14,4 +14,8 @@
 - (NSSet*) getAppList;
 - (BOOL) isStatusOk;
 
+// Vibepollo tells a client that didn't start the running game the host is free,
+// and lists a resume-only copy of that game instead: its name, or nil.
+- (NSString*) runningGameName;
+
 @end

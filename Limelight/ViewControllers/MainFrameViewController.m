@@ -80,6 +80,8 @@
 #else
     StarlightHomeController* _home;
     NSTimer* _homeRefreshTimer;
+    NSUInteger _homeRefreshTicks;
+    NSMutableSet<NSString*>* _runningCheckHosts;
     NSString* _homeHostUUID;
     NSString* _pendingQuitHostAddress;
     NSMutableSet<NSString*>* _permissionDeniedHosts;
@@ -226,6 +228,7 @@ static NSMutableSet* hostList;
         } else {
             dispatch_async(dispatch_get_main_queue(), ^{
                 [self updateApplist:[appListResp getAppList] forHost:host];
+                [host setRemoteRunningGameName:[appListResp runningGameName]];
                 [self finishRefreshForHostUUID:host.uuid failed:NO];
 
                 if (host != self->_selectedHost) {
@@ -913,6 +916,7 @@ static NSMutableSet* hostList;
                                                 }
                                                 else {
                                                     app.host.currentGame = @"0";
+                                                    app.host.remoteRunningGame = nil;
                                                     dispatch_async(dispatch_get_main_queue(), ^{
                                                         // If it succeeds and we're to start streaming, segue to the stream
                                                         if (![app.id isEqualToString:currentApp.id]) {
@@ -1003,7 +1007,7 @@ static NSMutableSet* hostList;
 
 - (TemporaryApp*) findRunningApp:(TemporaryHost*)host {
     for (TemporaryApp* app in host.appList) {
-        if ([app.id isEqualToString:host.currentGame]) {
+        if ([app.id isEqualToString:[host runningGame]]) {
             return app;
         }
     }
@@ -1350,7 +1354,6 @@ static NSMutableSet* hostList;
             // Also what Home shows (Resume rather than Play)
             [serverInfoResp populateHost:host];
         }
-        NSString* running = host.currentGame;
         dispatch_async(dispatch_get_main_queue(), ^{
             if (!ok && attempt < 4) {
                 // The PC didn't answer: try again shortly
@@ -1359,23 +1362,40 @@ static NSMutableSet* hostList;
                 });
                 return;
             }
-            [self pushHomeState];
-            if (ok && [running isEqualToString:app.id]) {
-                // Resume it here, with this device's settings; the other device may take a few seconds to let go
-                Log(LOG_I, @"Handoff: resuming %@ on %@", app.name, host.name);
-                [self->_appManager stopRetrieving];
-                [self prepareToStreamApp:app];
-                self->_streamConfig.handoffRetryUntil = [NSDate dateWithTimeIntervalSinceNow:10];
-                [self performStreamSegue];
+            if (!ok) {
+                [self handoffResumeApp:app onHost:host serverAnswered:NO];
+                return;
             }
-            else {
-                // The PC isn't running that game any more (or can't be reached): just its page
-                Log(LOG_I, @"Handoff: %@ isn't running on %@ (running: %@), opening its page", app.name, host.name, running);
-                [self hideLaunchOverlay];
-                [[StarlightHandoff shared] openGamePageWithHostUUID:host.uuid appID:app.id appUUID:app.uuid];
+            if ([host.currentGame isEqualToString:app.id]) {
+                // Started on this device
+                [self handoffResumeApp:app onHost:host serverAnswered:YES];
+                return;
             }
+            // Started on the other device: Vibepollo only lists it in this device's app list
+            [self checkRemoteRunningGameOnHost:host completion:^(BOOL listed) {
+                [self handoffResumeApp:app onHost:host serverAnswered:listed];
+            }];
         });
     });
+}
+
+- (void)handoffResumeApp:(TemporaryApp*)app onHost:(TemporaryHost*)host serverAnswered:(BOOL)ok {
+    NSString* running = [host runningGame];
+    [self pushHomeState];
+    if (ok && [running isEqualToString:app.id]) {
+        // Resume it here, with this device's settings; the other device may take a few seconds to let go
+        Log(LOG_I, @"Handoff: resuming %@ on %@", app.name, host.name);
+        [_appManager stopRetrieving];
+        [self prepareToStreamApp:app];
+        _streamConfig.handoffRetryUntil = [NSDate dateWithTimeIntervalSinceNow:10];
+        [self performStreamSegue];
+    }
+    else {
+        // The PC isn't running that game any more (or can't be reached): just its page
+        Log(LOG_I, @"Handoff: %@ isn't running on %@ (running: %@), opening its page", app.name, host.name, running);
+        [self hideLaunchOverlay];
+        [[StarlightHandoff shared] openGamePageWithHostUUID:host.uuid appID:app.id appUUID:app.uuid];
+    }
 }
 
 // A stream continued from your other iPhone or iPad: resume that game here, with this device's own
@@ -1796,6 +1816,9 @@ static const NSUInteger kMaxQuickActions = 4;
     _background = NO;
     
     [self beginForegroundRefresh];
+#if !TARGET_OS_TV
+    [self checkRemoteRunningGameOnHost:[self hostWithUUID:[self homeCurrentHostUUID]]];
+#endif
     
     // Check for a pending shortcut action when returning to foreground
     [self handlePendingShortcutAction];
@@ -1870,7 +1893,10 @@ static const NSUInteger kMaxQuickActions = 4;
         // Controller navigation on the Starlight screens (the stream takes over the controller while it runs)
         [_home setControllerInputActive:YES];
         [self pushHomeState];
-        _homeRefreshTimer = [NSTimer scheduledTimerWithTimeInterval:2.0 target:self selector:@selector(pushHomeState) userInfo:nil repeats:YES];
+        _homeRefreshTicks = 0;
+        _homeRefreshTimer = [NSTimer scheduledTimerWithTimeInterval:2.0 target:self selector:@selector(homeRefreshTick) userInfo:nil repeats:YES];
+        // Back from a stream (or another device's): is a game still running on the PC?
+        [self checkRemoteRunningGameOnHost:[self hostWithUUID:[self homeCurrentHostUUID]]];
     }
 #endif
     
@@ -2251,6 +2277,58 @@ static const NSUInteger kMaxQuickActions = 4;
     return info;
 }
 
+#if !TARGET_OS_TV
+- (void)homeRefreshTick {
+    [self pushHomeState];
+    // Every 10 s: a game started from another device only shows in Vibepollo's app list
+    if (++_homeRefreshTicks % 5 == 0) {
+        [self checkRemoteRunningGameOnHost:[self hostWithUUID:[self homeCurrentHostUUID]]];
+    }
+}
+#endif
+
+// Vibepollo shows the running game only to the device that started it: every other paired
+// device is told the PC is free and gets a resume-only copy of the game in its app list.
+// Read that list (without touching the saved library) to know a game is running elsewhere.
+- (void)checkRemoteRunningGameOnHost:(TemporaryHost*)host {
+    [self checkRemoteRunningGameOnHost:host completion:nil];
+}
+
+- (void)checkRemoteRunningGameOnHost:(TemporaryHost*)host completion:(void (^)(BOOL ok))completion {
+    if (host == nil || host.uuid == nil || _background || host.state != StateOnline ||
+        !(host.pairState == PairStatePaired || (host.pairState == PairStateUnknown && host.serverCert != nil)) ||
+        host.appList.count == 0) {
+        if (completion != nil) {
+            completion(NO);
+        }
+        return;
+    }
+    if (_runningCheckHosts == nil) {
+        _runningCheckHosts = [NSMutableSet set];
+    }
+    if (completion == nil && [_runningCheckHosts containsObject:host.uuid]) {
+        return;
+    }
+    [_runningCheckHosts addObject:host.uuid];
+    dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
+        HttpManager* hMan = [[HttpManager alloc] initWithHost:host];
+        AppListResponse* appListResp = [[AppListResponse alloc] init];
+        [hMan executeRequestSynchronously:[HttpRequest requestForResponse:appListResp withUrlRequest:[hMan newAppListRequest]]];
+        BOOL ok = [appListResp isStatusOk] && [appListResp getAppList] != nil;
+        NSString* name = ok ? [appListResp runningGameName] : nil;
+        dispatch_async(dispatch_get_main_queue(), ^{
+            [self->_runningCheckHosts removeObject:host.uuid];
+            if (ok && [host setRemoteRunningGameName:name]) {
+                Log(LOG_I, @"%@ running on %@ from another device: %@", host.name, host.uuid, host.remoteRunningGame ?: @"none");
+                [self pushHomeState];
+            }
+            if (completion != nil) {
+                completion(ok);
+            }
+        });
+    });
+}
+
 - (void)pushHomeState {
     if (_home == nil) {
         return;
@@ -2309,7 +2387,7 @@ static const NSUInteger kMaxQuickActions = 4;
                                @"app": app.id,
                                @"uuid": app.uuid ?: @"",
                                @"name": app.name,
-                               @"running": @([app.id isEqualToString:current.currentGame]),
+                               @"running": @([app.id isEqualToString:[current runningGame]]),
                                @"pinIndex": @(pinIndex),
                                @"hidden": @(app.hidden),
                                @"gridPath": grid,
@@ -2618,6 +2696,7 @@ static const NSUInteger kMaxQuickActions = 4;
                 }
                 else {
                     host.currentGame = @"0";
+                    host.remoteRunningGame = nil;
                     [self hideLoadingFrame:nil];
                 }
                 [self updateAppsForHost:host];

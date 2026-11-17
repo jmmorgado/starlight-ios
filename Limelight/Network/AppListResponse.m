@@ -13,6 +13,7 @@
 
 @implementation AppListResponse {
     NSMutableSet* _appList;
+    NSString* _runningGameName;
 }
 @synthesize data, statusCode, statusMessage;
 
@@ -107,7 +108,21 @@ static const char* TAG_APP_UUID = "UUID";
 
                 appInfoNode = appInfoNode->next;
             }
-            if (appId != nil) {
+            // Vibepollo's host controls (Resume, Terminate and the resume-only copy of
+            // a game another device started) aren't games: keep them out of the library
+            static NSString* const kVibepolloControlPrefix = @"9a1c5a25-58fe-40e0-b9aa-7d3f0000000";
+            BOOL hostControl = NO;
+            if (appUuid != nil && [[appUuid lowercaseString] hasPrefix:kVibepolloControlPrefix]) {
+                NSString* control = [appUuid substringFromIndex:kVibepolloControlPrefix.length];
+                if ([control isEqualToString:@"7"]) {
+                    _runningGameName = [appName stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
+                    hostControl = YES;
+                }
+                else if ([control isEqualToString:@"1"] || [control isEqualToString:@"4"]) {
+                    hostControl = YES;
+                }
+            }
+            if (appId != nil && !hostControl) {
                 TemporaryApp* app = [[TemporaryApp alloc] init];
                 app.name = appName;
                 app.id = appId;
@@ -157,6 +172,10 @@ static const char* TAG_APP_UUID = "UUID";
         }
     }
 #endif
+}
+
+- (NSString*) runningGameName {
+    return _runningGameName.length > 0 ? _runningGameName : nil;
 }
 
 - (NSSet*) getAppList {
