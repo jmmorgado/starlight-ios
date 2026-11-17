@@ -510,12 +510,10 @@ final class HomeModel: ObservableObject {
     var currentHost: HostItem? { hosts.first { $0.id == selectedHost } }
     var pairedHosts: [HostItem] { hosts.filter { $0.paired } }
     var networkHosts: [HostItem] { hosts.filter { !$0.paired } }
-    }
 
     /// How far back Continue Playing looks
     static let continueWindow: TimeInterval = 30 * 24 * 3600
 
-    /// Only games started recently (through Starlight or on the PC per Steam) or running now, newest first
     /// New on Your PC: games that turned up in the PC's list in the last 14 days, newest first
     static let newOnPCWindow: TimeInterval = 14 * 24 * 60 * 60
 
