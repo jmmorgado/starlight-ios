@@ -74,7 +74,7 @@ final class StreamMenuState: ObservableObject {
         var destructive = false
     }
 
-    enum Page { case main, settings }
+    enum Page { case main, settings, controls }
 
     /// Changing these needs the stream to reconnect
     struct VideoValues: Equatable {
@@ -138,6 +138,9 @@ final class StreamMenuState: ObservableObject {
         if !resolutions.isEmpty {
             list.append(Item(id: "settings", title: "Stream Settings", symbol: "slider.horizontal.3"))
         }
+        if settingsLoaded {
+            list.append(Item(id: "controls", title: "Controls", symbol: "gamecontroller"))
+        }
         if pipAvailable {
             list.append(Item(id: "pip", title: "Picture in Picture", symbol: "pip.enter"))
         }
@@ -154,24 +157,20 @@ final class StreamMenuState: ObservableObject {
         return list
     }
 
-    /// Controls live on the main page, once the stream's settings are known
-    var showsControls: Bool { !confirmQuit && settingsLoaded }
-    private var settingsLoaded = false
+    /// The Controls page shows once the stream's settings are known
+    @Published private(set) var settingsLoaded = false
 
-    /// Focus order on the main page: the buttons, with the Controls rows before Stop Streaming
-    var mainFocusIDs: [String] {
-        let ids = items.map(\.id)
-        guard showsControls, let stop = ids.firstIndex(of: "disconnect") else { return ids }
-        return Array(ids[..<stop]) + controlRows.map(\.id) + Array(ids[stop...])
-    }
-
-    private var controlIDs: Set<String> { Set(controlRows.map(\.id)) }
+    /// Focus order on the main page
+    var mainFocusIDs: [String] { items.map(\.id) }
 
     func activate(_ id: String) {
         switch id {
         case "settings":
             video = savedVideo
             page = .settings
+            focus = 0
+        case "controls":
+            page = .controls
             focus = 0
         case "askQuit":
             confirmQuit = true
@@ -189,6 +188,10 @@ final class StreamMenuState: ObservableObject {
             navigateSettings(action)
             return
         }
+        if page == .controls {
+            navigateControls(action)
+            return
+        }
         let ids = mainFocusIDs
         let count = ids.count
         guard count > 0 else { return }
@@ -197,10 +200,7 @@ final class StreamMenuState: ObservableObject {
         switch action {
         case "up": focus = (focus - 1 + count) % count
         case "down": focus = (focus + 1) % count
-        case "left": if controlIDs.contains(id) { adjust(id, by: -1) }
-        case "right": if controlIDs.contains(id) { adjust(id, by: 1) }
-        case "select":
-            if controlIDs.contains(id) { select(id) } else { activate(id) }
+        case "select": activate(id)
         case "back":
             if confirmQuit { activate("cancelQuit") } else { onAction?("resume") }
         default: break
@@ -359,6 +359,27 @@ final class StreamMenuState: ObservableObject {
         }
     }
 
+    func leaveControls() {
+        page = .main
+        focus = mainFocusIDs.firstIndex(of: "controls") ?? 0
+    }
+
+    private func navigateControls(_ action: String) {
+        let ids = controlRows.map(\.id)
+        let count = ids.count
+        guard count > 0 else { return }
+        focus = min(focus, count - 1)
+        switch action {
+        case "up": focus = (focus - 1 + count) % count
+        case "down": focus = (focus + 1) % count
+        case "left": adjust(ids[focus], by: -1)
+        case "right": adjust(ids[focus], by: 1)
+        case "select": select(ids[focus])
+        case "back": leaveControls()
+        default: break
+        }
+    }
+
     private func navigateSettings(_ action: String) {
         let ids = settingsFocusIDs
         let count = ids.count
@@ -455,6 +476,38 @@ struct StreamMenuView: View {
         .animation(.easeInOut(duration: 0.15), value: state.videoChanged)
     }
 
+    // MARK: Controls page
+
+    private var controlsPanel: some View {
+        let ids = state.controlRows.map(\.id)
+        let focusedID: String? = device.controllerConnected && ids.indices.contains(state.focus) ? ids[state.focus] : nil
+        return VStack(alignment: .leading, spacing: 10) {
+            Button { state.leaveControls() } label: {
+                Label("Controls", systemImage: "chevron.left")
+                    .font(.system(size: 20, weight: .bold))
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Back to the menu")
+
+            ScrollView(showsIndicators: false) {
+                VStack(alignment: .leading, spacing: 6) {
+                    ForEach(state.controlRows) { settingRow($0, focused: focusedID == $0.id) }
+                    Text("These apply right away.")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                        .padding(.horizontal, 4)
+                }
+                .padding(.vertical, 2)
+            }
+        }
+        .padding(20)
+        .frame(width: 340)
+        .frame(maxHeight: .infinity, alignment: .top)
+        .modifier(StreamMenuGlass())
+        .padding(.vertical, 12)
+        .padding(.leading, 12)
+    }
+
     private func sectionTitle(_ title: String) -> some View {
         Text(title.uppercased())
             .font(.caption.weight(.semibold))
@@ -504,6 +557,8 @@ struct StreamMenuView: View {
     private var panel: some View {
         if state.page == .settings {
             settingsPanel
+        } else if state.page == .controls {
+            controlsPanel
         } else {
             mainPanel
         }
@@ -528,11 +583,6 @@ struct StreamMenuView: View {
                     VStack(alignment: .leading, spacing: 10) {
                         ForEach(state.items) { item in
                             if item.id == "disconnect" {
-                                if state.showsControls {
-                                    sectionTitle("Controls")
-                                        .padding(.top, 6)
-                                    ForEach(state.controlRows) { settingRow($0, focused: focusedID == $0.id) }
-                                }
                                 Spacer(minLength: 8)
                             }
                             menuButton(item, focused: focusedID == item.id)
@@ -555,7 +605,7 @@ struct StreamMenuView: View {
             }
         }
         .padding(20)
-        .frame(width: 330)
+        .frame(width: 300)
         .frame(maxHeight: .infinity, alignment: .top)
         .modifier(StreamMenuGlass())
         .padding(.vertical, 12)
