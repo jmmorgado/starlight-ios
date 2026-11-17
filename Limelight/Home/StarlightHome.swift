@@ -510,14 +510,6 @@ final class HomeModel: ObservableObject {
     var currentHost: HostItem? { hosts.first { $0.id == selectedHost } }
     var pairedHosts: [HostItem] { hosts.filter { $0.paired } }
     var networkHosts: [HostItem] { hosts.filter { !$0.paired } }
-
-    private func pinnedFirst(_ a: GameItem, _ b: GameItem) -> Bool? {
-        switch (a.pinIndex, b.pinIndex) {
-        case let (x?, y?): return x < y
-        case (_?, nil): return true
-        case (nil, _?): return false
-        default: return nil
-        }
     }
 
     /// How far back Continue Playing looks
@@ -572,10 +564,10 @@ final class HomeModel: ObservableObject {
     }
 
     /// Pinned games first, then alphabetical; hidden games live in Settings → Hidden Games
+    /// Ready to Play: by name (pinned games have their own row on Home, so they're not put first)
     var libraryGames: [GameItem] {
         games.filter { !$0.hidden }.sorted { a, b in
-            if let pinned = pinnedFirst(a, b) { return pinned }
-            return a.name.localizedCaseInsensitiveCompare(b.name) == .orderedAscending
+            a.name.localizedCaseInsensitiveCompare(b.name) == .orderedAscending
         }
     }
 

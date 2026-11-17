@@ -895,13 +895,6 @@ struct ShelfCard: View {
             .padding(.bottom, 9)
 
             HStack(spacing: 6) {
-                if game.pinned {
-                    Image(systemName: "pin.fill")
-                        .font(.system(size: 10, weight: .bold))
-                        .foregroundStyle(starlightGold)
-                        .padding(5)
-                        .background(.black.opacity(0.55), in: Circle())
-                }
                 if game.running {
                     Circle()
                         .fill(.green)
@@ -986,13 +979,6 @@ struct PosterCard: View {
                         .accessibilityLabel("Ready to Play")
                 }
                 Spacer(minLength: 0)
-                if game.pinned {
-                    Image(systemName: "pin.fill")
-                        .font(.system(size: 10, weight: .bold))
-                        .foregroundStyle(starlightGold)
-                        .padding(5)
-                        .background(.black.opacity(0.55), in: Circle())
-                }
                 if game.running {
                     Circle()
                         .fill(.green)
