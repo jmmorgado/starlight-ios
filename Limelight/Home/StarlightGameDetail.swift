@@ -110,6 +110,8 @@ struct GameDetailView: View {
     @ObservedObject private var steamArt = SteamOnlyArtwork.shared
     @ObservedObject private var store = SteamStore.shared
     @ObservedObject private var sidebar = SidebarInset.shared
+    /// How far the page is pulled down past its top (stretchy header)
+    @State private var pull: CGFloat = 0
     let game: GameItem
     @State private var page: GameDetailPage?
     @State private var media: GameMediaViewer?
@@ -206,6 +208,7 @@ struct GameDetailView: View {
                 }
             }
             .ignoresSafeArea(.container, edges: [.top, .horizontal])
+            .modifier(TrackPull(pull: $pull))
             .modifier(FollowSidebarInset(leading: geo.safeAreaInsets.leading))
             .onChange(of: focus.focusedID) { focused in
                 guard let focused = focused else { return }
@@ -305,7 +308,8 @@ struct GameDetailView: View {
     }
 
     private func hero(height: CGFloat, side: CGFloat) -> some View {
-        GeometryReader { geo in
+        let stretch = height > 0 ? 1 + pull / height : 1
+        return GeometryReader { geo in
             let width = max(1, geo.size.width - side)
             ZStack(alignment: .topLeading) {
                 // Under the iPad sidebar: the art mirrored at the edge and blurred
@@ -317,15 +321,19 @@ struct GameDetailView: View {
                         .clipped()
                         .blur(radius: 20, opaque: true)
                         .clipped()
+                        .scaleEffect(stretch, anchor: .bottom)
                         .accessibilityHidden(true)
                 }
                 // iPhone: centred, in line with the Home carousel and the buttons below
                 ZStack(alignment: isPhone ? .bottom : .bottomLeading) {
+                    // Pulled down past the top: the art grows upwards from its bottom edge, so no black shows above
                     heroArt
+                        .frame(width: width, height: height)
+                        .clipped()
+                        .scaleEffect(stretch, anchor: .bottom)
                     heroText
                 }
                 .frame(width: width, height: height)
-                .clipped()
                 .offset(x: side)
             }
         }

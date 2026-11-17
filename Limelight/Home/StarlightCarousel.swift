@@ -124,6 +124,8 @@ struct HomeCarousel: View {
     /// iPad sidebar width (animated): the slides start at its edge, and a mirrored copy of the current one
     /// (art and trailer) sits under its glass, so the glass takes their colours like in the Apple TV app
     var sidebarInset: CGFloat = 0
+    /// How far the list is pulled down past its top: the art stretches up to stay against the top of the screen
+    var stretch: CGFloat = 0
 
     @ObservedObject private var trailer = HomeTrailerState.shared
     @ObservedObject private var store = SteamStore.shared
@@ -168,6 +170,7 @@ struct HomeCarousel: View {
                         .clipped()
                         .blur(radius: 20, opaque: true)
                         .clipped()
+                        .scaleEffect(stretchScale, anchor: .bottom)
                         .allowsHitTesting(false)
                         .accessibilityHidden(true)
                 }
@@ -185,9 +188,15 @@ struct HomeCarousel: View {
                                 .opacity(artOpacity(incoming: layer.incoming))
                                 .zIndex(layer.incoming ? 1 : 0)
                         }
+                        // A strip of glass, blurring progressively, on the side the art comes in and goes out
+                        TransitionGlass(progress: neighborGame == nil ? 0 : Double(playback.progress),
+                                        fromTrailing: playback.direction > 0, width: width)
+                            .zIndex(2)
                     }
                     .frame(width: width, height: height)
                     .clipped()
+                    // Pulled down past the top: grows upwards from its bottom edge, so no black shows above
+                    .scaleEffect(stretchScale, anchor: .bottom)
                     .allowsHitTesting(false)
 
                     if let game = infoGame {
@@ -303,6 +312,10 @@ struct HomeCarousel: View {
         let p = Double(playback.progress)
         // The old art stays underneath longer, so the incoming edge always fades over it, never over black
         return incoming ? p : 1 - pow(p, 3)
+    }
+
+    private var stretchScale: CGFloat {
+        height > 0 ? 1 + max(0, stretch) / height : 1
     }
 
     private var infoGame: GameItem? {
@@ -673,6 +686,39 @@ private struct CarouselFocus: ViewModifier {
         } else {
             content
         }
+    }
+}
+
+/// Changing game: a strip of glass on the side the art comes in from, its blur fading in towards the middle and
+/// strongest halfway through the change, like the Apple TV app. Animatable, so it also follows animated changes
+private struct TransitionGlass: View, Animatable {
+    var progress: Double
+    let fromTrailing: Bool
+    let width: CGFloat
+
+    var animatableData: Double {
+        get { progress }
+        set { progress = newValue }
+    }
+
+    var body: some View {
+        let strength = sin(Double.pi * min(1, max(0, progress)))
+        let edge: UnitPoint = fromTrailing ? .trailing : .leading
+        let middle: UnitPoint = fromTrailing ? .leading : .trailing
+        ZStack {
+            // Two layers of glass, the stronger one narrower: the blur builds up towards the edge
+            Rectangle().fill(.ultraThinMaterial)
+                .mask(LinearGradient(colors: [.black, .clear], startPoint: edge, endPoint: middle))
+                .frame(width: width * 0.4)
+            Rectangle().fill(.thinMaterial)
+                .mask(LinearGradient(colors: [.black, .clear], startPoint: edge, endPoint: middle))
+                .frame(width: width * 0.2)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: fromTrailing ? .trailing : .leading)
+        .environment(\.colorScheme, .dark)
+        .opacity(strength)
+        .allowsHitTesting(false)
+        .accessibilityHidden(true)
     }
 }
 

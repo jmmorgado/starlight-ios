@@ -15,6 +15,7 @@ struct HomeTab: View {
     @ObservedObject var model: HomeModel
     @ObservedObject private var steam = SteamManager.shared
     @ObservedObject private var focus = GameFocus.shared
+    @State private var pull: CGFloat = 0
     @ObservedObject private var sidebar = SidebarInset.shared
     @Namespace private var zoom
     /// 0 at the top → 1 after scrolling a little: fades "Play Now" into the navigation bar
@@ -49,7 +50,8 @@ struct HomeTab: View {
                                 } else {
                                     HomeCarousel(games: recent, model: model, height: carouselHeight,
                                                  bottomInset: phoneLandscape ? geo.safeAreaInsets.bottom : 0, compact: compact,
-                                                 leadingAligned: isPad, leadingInset: 40, sidebarInset: side)
+                                                 leadingAligned: isPad, leadingInset: 40, sidebarInset: side,
+                                                 stretch: pull)
                                         .id("section-featured")
                                 }
 
@@ -62,6 +64,7 @@ struct HomeTab: View {
                         // Under the navigation bar (the carousel starts at the top of the screen) and edge to edge
                         .ignoresSafeArea(.container, edges: [.horizontal, .top])
                         .modifier(HomeScrollState(progress: $titleProgress))
+                        .modifier(TrackPull(pull: $pull))
                         .modifier(TabBarAutoHideScroll())
                         .modifier(TopEdgeEffect(hidden: titleProgress < 0.5))
                         .onChange(of: focus.focusedID) { id in
@@ -135,6 +138,23 @@ struct TopEdgeEffect: ViewModifier {
 
 /// How far the Home list has moved from the top, as 0…1 over the first 60 pt (iOS 18+; earlier versions keep the bar empty).
 /// Follows the finger continuously, like the system's own large-title collapse.
+/// How far the list is pulled down past its top (iOS 18), for the stretchy header art
+struct TrackPull: ViewModifier {
+    @Binding var pull: CGFloat
+
+    func body(content: Content) -> some View {
+        if #available(iOS 18.0, *) {
+            content.onScrollGeometryChange(for: CGFloat.self) { geo in
+                max(0, -(geo.contentOffset.y + geo.contentInsets.top)).rounded()
+            } action: { _, value in
+                pull = value
+            }
+        } else {
+            content
+        }
+    }
+}
+
 struct HomeScrollState: ViewModifier {
     @Binding var progress: Double
 
