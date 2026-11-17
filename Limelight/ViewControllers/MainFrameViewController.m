@@ -60,6 +60,8 @@
     BOOL _pendingLaunchFallbackScheduled;
     // Auto Wake-on-LAN for pinned games / links / Shortcuts
     BOOL _pendingLaunchWaking;
+    // Starlight Handoff: the stream activity being continued on this device (nil for links / pinned games)
+    NSDictionary* _handoffInfo;
     // Starlight: work that used to show the blocking loading screen runs in the background;
     // the PC button shows it as "connecting" instead
     NSInteger _backgroundBusy;
@@ -722,6 +724,8 @@ static NSMutableSet* hostList;
     _streamConfig.width = [streamSettings.width intValue];
 #else
     _streamConfig.hostUUID = app.host.uuid;
+    _streamConfig.hostName = app.host.name;
+    _streamConfig.appUUID = app.uuid;
     // Same rule as when the stream switches screens mid-stream (StreamFrameViewController)
     UIScreen* tvScreen = nil;
     if ([[NSUserDefaults standardUserDefaults] integerForKey:@"StarlightExternalDisplayMode"] == 1) {
@@ -1329,7 +1333,27 @@ static NSMutableSet* hostList;
     delegate.pendingLaunchApp = nil;
     _pendingLaunchFallbackScheduled = NO;
     _pendingLaunchWaking = NO;
+    _handoffInfo = nil;
 }
+
+#if !TARGET_OS_TV
+// A stream continued from your other iPhone or iPad: resume that game here, with this device's own
+// settings, through the same path as links and pinned games (find the PC, wait for it, then stream)
+- (void)handoffStream:(NSDictionary*)info {
+    NSString* host = info[@"host"];
+    NSString* app = info[@"app"];
+    if (![host isKindOfClass:[NSString class]] || ![app isKindOfClass:[NSString class]]) {
+        return;
+    }
+    Log(LOG_I, @"Handoff: continuing %@ on %@", info[@"appName"], info[@"hostName"]);
+    AppDelegate* delegate = (AppDelegate*)[UIApplication sharedApplication].delegate;
+    delegate.pendingLaunchHost = host;
+    delegate.pendingLaunchApp = app;
+    _handoffInfo = info;
+    _pendingLaunchFallbackScheduled = NO;
+    [self handlePendingLaunch:NO];
+}
+#endif
 
 // Settings → Launching → Wake PC Automatically (on unless turned off)
 - (BOOL)autoWakeEnabled {
@@ -1396,8 +1420,12 @@ static NSMutableSet* hostList;
 }
 
 - (void)showPendingLaunchError:(NSString*)message {
+    [self showPendingLaunchError:message title:@"Shortcut Launch Failed"];
+}
+
+- (void)showPendingLaunchError:(NSString*)message title:(NSString*)title {
     [self hideLaunchOverlay];
-    UIAlertController* alert = [UIAlertController alertControllerWithTitle:@"Shortcut Launch Failed"
+    UIAlertController* alert = [UIAlertController alertControllerWithTitle:title
                                                                    message:message
                                                             preferredStyle:UIAlertControllerStyleAlert];
     [alert addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:nil]];
@@ -1440,6 +1468,17 @@ static NSMutableSet* hostList;
         }
     }
 
+    NSDictionary* handoff = _handoffInfo;
+    if (handoff != nil && (host == nil || (host.pairState != PairStatePaired && host.serverCert == nil))) {
+        // Handoff to a device that isn't paired with that PC
+        NSString* pcName = host.name ?: ([handoff[@"hostName"] length] > 0 ? handoff[@"hostName"] : @"that PC");
+        NSString* gameName = [handoff[@"appName"] length] > 0 ? handoff[@"appName"] : @"the game";
+        [self clearPendingLaunch];
+        [self showPendingLaunchError:[NSString stringWithFormat:@"This device isn't paired with %@. To continue playing %@ here, add and pair %@ in Starlight on this device (Settings › PCs).", pcName, gameName, pcName]
+                               title:@"Can't Continue Here"];
+        return;
+    }
+
     if (host == nil) {
         [self clearPendingLaunch];
         [self showPendingLaunchError:[NSString stringWithFormat:@"No paired PC matches \"%@\". Add and pair the PC in Starlight first.", hostParam]];
@@ -1453,7 +1492,20 @@ static NSMutableSet* hostList;
     }
 
     TemporaryApp* app = nil;
+    // Handoff: the app's UUID on the PC first (stable), then its id
+    NSString* handoffUUID = [handoff[@"uuid"] isKindOfClass:[NSString class]] ? handoff[@"uuid"] : nil;
+    if (handoffUUID.length > 0) {
+        for (TemporaryApp* candidate in host.appList) {
+            if ([candidate.uuid isEqualToString:handoffUUID]) {
+                app = candidate;
+                break;
+            }
+        }
+    }
     for (TemporaryApp* candidate in host.appList) {
+        if (app != nil) {
+            break;
+        }
         if ([candidate.id isEqualToString:appParam]) {
             app = candidate;
             break;
@@ -1470,7 +1522,9 @@ static NSMutableSet* hostList;
 
     if (app == nil) {
         [self clearPendingLaunch];
-        [self showPendingLaunchError:[NSString stringWithFormat:@"\"%@\" was not found on %@. Open the PC in Starlight once to refresh its app list.", appParam, host.name]];
+        NSString* missing = [handoff[@"appName"] length] > 0 ? handoff[@"appName"] : appParam;
+        [self showPendingLaunchError:[NSString stringWithFormat:@"\"%@\" was not found on %@. Open the PC in Starlight once to refresh its app list.", missing, host.name]
+                               title:handoff != nil ? @"Can't Continue Here" : @"Shortcut Launch Failed"];
         return;
     }
 
@@ -1505,6 +1559,24 @@ static NSMutableSet* hostList;
     [self clearPendingLaunch];
 
     TemporaryApp* runningApp = [self findRunningApp:host];
+#if !TARGET_OS_TV
+    if (handoff != nil) {
+        if ([runningApp.id isEqualToString:app.id]) {
+            // Resume it here; the other device may take a few seconds to let go of the stream
+            [_appManager stopRetrieving];
+            [self prepareToStreamApp:app];
+            _streamConfig.handoffRetryUntil = [NSDate dateWithTimeIntervalSinceNow:10];
+            [self performStreamSegue];
+        }
+        else {
+            // The PC isn't running that game any more: just its page
+            Log(LOG_I, @"Handoff: %@ isn't running on %@, opening its page", app.name, host.name);
+            [self hideLaunchOverlay];
+            [[StarlightHandoff shared] openGamePageWithHostUUID:host.uuid appID:app.id appUUID:app.uuid];
+        }
+        return;
+    }
+#endif
     if (runningApp == nil || [runningApp.id isEqualToString:app.id]) {
         // Start (or resume) straight away, keeping the start screen up until the stream view appears
         [_appManager stopRetrieving];
@@ -2016,6 +2088,9 @@ static const NSUInteger kMaxQuickActions = 4;
     
     _home.onSelectHost = ^(NSString* hostUUID) {
         [weakSelf homeSelectedHost:hostUUID];
+    };
+    [StarlightHandoff shared].onStream = ^(NSDictionary<NSString*, id>* info) {
+        [weakSelf handoffStream:info];
     };
     _home.onLaunchApp = ^(NSString* hostUUID, NSString* appId) {
         MainFrameViewController* strongSelf = weakSelf;

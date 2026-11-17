@@ -340,6 +340,60 @@
     return view;
 }
 
+#pragma mark - Handoff (Starlight)
+
+// While streaming: the PC and game, for the user's other iPhone or iPad. Picking it up there stops
+// streaming here (the game keeps running on the PC) and resumes it there.
+- (void)advertiseHandoff {
+    if (self.streamConfig.hostUUID == nil || self.streamConfig.appID == nil) {
+        return;
+    }
+    StarlightHandoff* handoff = [StarlightHandoff shared];
+    [handoff advertiseStreamWithHostUUID:self.streamConfig.hostUUID
+                                hostName:self.streamConfig.hostName ?: @""
+                                   appID:self.streamConfig.appID
+                                 appUUID:self.streamConfig.appUUID
+                                 appName:self.streamConfig.appName ?: @""];
+    __weak StreamFrameViewController* weakSelf = self;
+    handoff.onStreamContinued = ^{
+        StreamFrameViewController* strongSelf = weakSelf;
+        if (strongSelf == nil || strongSelf->_leavingStream) {
+            return;
+        }
+        Log(LOG_I, @"Handoff: the stream was continued on another device, stopping it here");
+        [strongSelf streamMenuAction:@"disconnect"];
+    };
+}
+
+// A stream continued from another device: that device may still be letting go of the PC, so a failed
+// Resume is retried for a few seconds before the error shows. YES when a retry is on its way.
+- (BOOL)retryHandoffResume {
+    NSDate* until = self.streamConfig.handoffRetryUntil;
+    if (until == nil || [until timeIntervalSinceNow] <= 0 || _leavingStream) {
+        self.streamConfig.handoffRetryUntil = nil;
+        return NO;
+    }
+    dispatch_async(dispatch_get_main_queue(), ^{
+        Log(LOG_I, @"Handoff: the PC is still busy with the other device, retrying");
+        self->_stageLabel.text = @"Waiting for your other device to let go of the stream...";
+        [self->_stageLabel sizeToFit];
+        UIView* parent = self->_stageLabel.superview ?: self.view;
+        self->_stageLabel.center = CGPointMake(parent.bounds.size.width / 2, self->_stageLabel.center.y);
+        self->_streamMan = nil;
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.5 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+            if (self->_leavingStream) {
+                return;
+            }
+            self->_streamMan = [[StreamManager alloc] initWithConfig:self.streamConfig
+                                                          renderView:self->_streamView
+                                                 connectionCallbacks:self];
+            NSOperationQueue* opQueue = [[NSOperationQueue alloc] init];
+            [opQueue addOperation:self->_streamMan];
+        });
+    });
+    return YES;
+}
+
 #pragma mark - Reconnecting at another resolution (Starlight)
 
 // When the stream changes screens (stream menu, TV plugged in or out): if the resolution or frame rate it
@@ -629,6 +683,7 @@
 - (void) returnToMainFrame {
 #if !TARGET_OS_TV
     _leavingStream = YES;
+    [[StarlightHandoff shared] endStream];
     [self tearDownPictureInPicture];
     [self tearDownExternalDisplay];
 #endif
@@ -891,6 +946,10 @@
         [self->_controllerSupport connectionEstablished];
         
 #if !TARGET_OS_TV
+        // Handoff: connected, so no more retries; offer this stream to the user's other devices
+        self.streamConfig.handoffRetryUntil = nil;
+        [self advertiseHandoff];
+        
         // The stream may have changed screens while connecting
         self->_connectionReady = YES;
         [self checkStreamResolution];
@@ -1011,7 +1070,7 @@
 - (void) stageFailed:(const char*)stageName withError:(int)errorCode portTestFlags:(int)portTestFlags {
     Log(LOG_I, @"Stage %s failed: %d", stageName, errorCode);
 #if !TARGET_OS_TV
-    if (_reconnecting) {
+    if (_reconnecting || [self retryHandoffResume]) {
         return;
     }
 #endif
@@ -1048,7 +1107,7 @@
 - (void) launchFailed:(NSString*)message {
     Log(LOG_I, @"Launch failed: %@", message);
 #if !TARGET_OS_TV
-    if (_reconnecting) {
+    if (_reconnecting || [self retryHandoffResume]) {
         return;
     }
 #endif

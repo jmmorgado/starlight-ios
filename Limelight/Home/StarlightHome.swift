@@ -56,19 +56,9 @@ final class StarlightHomeController: NSObject {
         }
         // Steam data: refresh when it's more than a few hours old
         Task { @MainActor in SteamManager.shared.refreshIfStale() }
-        // Handoff (test): open the tab the other device was on, and say it arrived
+        // Handoff: open the tab, PC and game page the other device was on
         StarlightHandoff.shared.onBrowse = { [weak homeModel] info in
-            guard let homeModel = homeModel else { return }
-            if let raw = info["tab"] as? String, let tab = StarlightTab(rawValue: raw) {
-                homeModel.tab = tab
-            }
-            let alert = UIAlertController(title: "Handoff received",
-                                          message: "Continued from your other device (tab: \(info["tab"] as? String ?? "?")).",
-                                          preferredStyle: .alert)
-            alert.addAction(UIAlertAction(title: "OK", style: .default))
-            var top = UIApplication.shared.connectedScenes.compactMap { ($0 as? UIWindowScene)?.keyWindow }.first?.rootViewController
-            while let presented = top?.presentedViewController { top = presented }
-            top?.present(alert, animated: true)
+            homeModel?.continueBrowsing(info)
         }
         homeModel.advertiseHandoff()
     }
@@ -142,6 +132,7 @@ final class StarlightHomeController: NSObject {
         // Spotlight: Ready to Play games, and a result tapped there before the games had loaded
         StarlightSpotlight.index(model.libraryGames)
         model.openPendingSpotlightGame()
+        model.openPendingHandoffGame()
         if let featured = model.featuredId, !gameItems.contains(where: { $0.id == featured }) {
             model.featuredId = nil
         }
@@ -301,7 +292,9 @@ struct GameDetailRoute: Equatable {
 
 final class HomeModel: ObservableObject {
     @Published var hosts: [HostItem] = []
-    @Published var selectedHost: String?
+    @Published var selectedHost: String? {
+        didSet { if selectedHost != oldValue { advertiseHandoff() } }
+    }
     @Published var games: [GameItem] = []
     @Published var featuredId: String?
     /// Which row the featured game was picked from, so only that card is outlined
@@ -354,7 +347,9 @@ final class HomeModel: ObservableObject {
     @Published var pcExpanded = false
     @Published var gameMenu: GameItem?
     /// The game page that's open (zoom transition from the card it was opened from)
-    @Published var detail: GameDetailRoute?
+    @Published var detail: GameDetailRoute? {
+        didSet { if detail?.gameId != oldValue?.gameId { advertiseHandoff() } }
+    }
     var lastControllerInput = Date.distantPast
 
     /// Continue Playing: a card is selected (featured) rather than opened; Play at the top starts it
@@ -525,9 +520,53 @@ final class HomeModel: ObservableObject {
 
     var currentHost: HostItem? { hosts.first { $0.id == selectedHost } }
 
-    /// Handoff (test): the tab you're on
+    // MARK: Handoff
+
+    /// Where you are, for your other devices: the tab, the PC and the game page that's open (no keys or private data)
     func advertiseHandoff() {
-        StarlightHandoff.shared.advertiseBrowse(["tab": tab.rawValue], title: "Starlight \(tab.title)")
+        var info: [String: Any] = ["tab": tab.rawValue]
+        if let host = selectedHost { info["host"] = host }
+        var title = "Starlight \(tab.title)"
+        if let game = detailGame, game.isInstalled {
+            var gameInfo: [String: Any] = ["app": game.app]
+            if let uuid = game.uuid { gameInfo["uuid"] = uuid }
+            if let appid = game.steamAppId { gameInfo["steamAppId"] = appid }
+            info["host"] = game.host
+            info["game"] = gameInfo
+            title = game.name
+        }
+        StarlightHandoff.shared.advertiseBrowse(info, title: title)
+    }
+
+    /// A game page to open once its PC's games are listed (from Handoff)
+    private var pendingHandoffGame: (host: String, app: String, uuid: String?, steamAppId: Int?)?
+
+    /// Browsing continued from another device: same tab, same PC (if it's paired here), same game page
+    func continueBrowsing(_ info: [String: Any]) {
+        if let raw = info["tab"] as? String, let tab = StarlightTab(rawValue: raw) {
+            self.tab = tab
+        }
+        guard let host = info["host"] as? String, hosts.contains(where: { $0.id == host && $0.paired }) else { return }
+        if selectedHost != host {
+            onSelectHost?(host)
+        }
+        if let game = info["game"] as? [String: Any], let app = game["app"] as? String {
+            pendingHandoffGame = (host, app, game["uuid"] as? String, (game["steamAppId"] as? NSNumber)?.intValue)
+            openPendingHandoffGame()
+        }
+    }
+
+    func openPendingHandoffGame() {
+        guard let pending = pendingHandoffGame else { return }
+        let onHost = games.filter { $0.host == pending.host && !$0.hidden }
+        guard !onHost.isEmpty else { return }   // that PC's games aren't listed yet
+        pendingHandoffGame = nil
+        let match = onHost.first { pending.uuid != nil && $0.uuid == pending.uuid }
+            ?? onHost.first { $0.app == pending.app }
+            ?? onHost.first { pending.steamAppId != nil && $0.steamAppId == pending.steamAppId }
+        guard let game = match else { return }
+        if tab == .settings || tab == .search { tab = .home }
+        openDetail(game, source: "handoff-\(game.id)")
     }
     var pairedHosts: [HostItem] { hosts.filter { $0.paired } }
     var networkHosts: [HostItem] { hosts.filter { !$0.paired } }

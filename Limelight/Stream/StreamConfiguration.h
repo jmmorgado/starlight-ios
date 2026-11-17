@@ -16,6 +16,11 @@
 @property NSString* appName;
 // Starlight: the PC's UUID, used to look up the game's Steam appid during the stream
 @property NSString* hostUUID;
+// Starlight Handoff: the PC's name and the app's UUID (for the stream activity), and, for a stream
+// continued from another device, until when a failed Resume is retried (the other device may still be letting go)
+@property NSString* hostName;
+@property NSString* appUUID;
+@property NSDate* handoffRetryUntil;
 @property NSString* rtspSessionUrl;
 @property int serverCodecModeSupport;
 @property int width;
