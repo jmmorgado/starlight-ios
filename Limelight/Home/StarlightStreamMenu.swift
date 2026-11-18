@@ -11,24 +11,38 @@ import Security
 
 // MARK: - Stream menu (shown over a running stream)
 
-/// Liquid Glass panel opened by swiping from the left edge or holding Start on the controller.
-/// Works by touch and, when a controller is connected, with the D-pad / left stick and the face buttons.
+/// Liquid Glass menu over a running stream. It lives for the whole stream: closed, it is a small
+/// ••• glass button in the top-left corner (shown for a few seconds, then hidden); pulling from the
+/// left edge or dragging the button stretches it, and past a threshold it morphs into the menu panel
+/// (and back into the button when closed). Holding Start on a controller opens it too.
+/// The game is never dimmed. Works by touch and with the D-pad / left stick and the face buttons.
 @objc(StarlightStreamMenu)
 final class StarlightStreamMenu: NSObject {
     private let state: StreamMenuState
-    private lazy var hosting: UIHostingController<StreamMenuView> = {
-        let controller = UIHostingController(rootView: StreamMenuView(state: state))
-        controller.view.backgroundColor = .clear
-        controller.overrideUserInterfaceStyle = .dark
-        return controller
-    }()
+    private lazy var host = StreamMenuHostController(state: state)
 
     /// "resume", "keyboard", "pip", "display", "stats", "disconnect", "quit"
     @objc var onAction: ((String) -> Void)? {
         didSet { state.onAction = onAction }
     }
 
-    @objc var viewController: UIViewController { hosting }
+    /// Full-screen and transparent: touches outside the button (closed) reach the game
+    @objc var viewController: UIViewController { host }
+
+    @objc var isOpen: Bool { state.isOpen }
+
+    @objc func open() { state.open() }
+
+    @objc func close() { state.close() }
+
+    /// Shows the ••• button for a few seconds (when the stream starts)
+    @objc func flashButton() { state.flashButton(seconds: 4) }
+
+    /// The left-edge swipe, from UIKit: horizontal translation while the finger moves
+    @objc func dragChanged(_ translation: CGFloat) { state.dragChanged(translation) }
+
+    /// End of the swipe: translation, and where it would have ended given its speed
+    @objc func dragEnded(_ translation: CGFloat, predicted: CGFloat) { state.dragEnded(translation, predicted: predicted) }
 
     @objc init(gameName: String, statsVisible: Bool) {
         state = StreamMenuState(gameName: gameName, statsVisible: statsVisible)
@@ -118,6 +132,82 @@ final class StreamMenuState: ObservableObject {
     @Published var confirmQuit = false
     @Published var focus = 0
     var onAction: ((String) -> Void)?
+
+    // MARK: Open / close and the ••• button
+
+    @Published private(set) var isOpen = false
+    @Published private(set) var buttonVisible = false
+    /// How far the button is being pulled (points, from the left edge or the button itself)
+    @Published private(set) var drag: CGFloat = 0
+    private var hideWork: DispatchWorkItem?
+    private var passedThreshold = false
+    /// Pull this far (or flick) to open
+    static let openDistance: CGFloat = 70
+    private static let spring = Animation.spring(response: 0.42, dampingFraction: 0.82)
+
+    func open() {
+        hideWork?.cancel()
+        // Each opening starts on the main page
+        page = .main
+        confirmQuit = false
+        focus = 0
+        passedThreshold = false
+        withAnimation(Self.spring) {
+            isOpen = true
+            drag = 0
+        }
+    }
+
+    func close() {
+        guard isOpen else { return }
+        // The panel shrinks back into the button, which then fades away
+        withAnimation(Self.spring) {
+            isOpen = false
+            buttonVisible = true
+        }
+        scheduleHide(after: 2.5)
+    }
+
+    func flashButton(seconds: Double) {
+        guard !isOpen else { return }
+        withAnimation(.easeOut(duration: 0.3)) { buttonVisible = true }
+        scheduleHide(after: seconds)
+    }
+
+    func dragChanged(_ translation: CGFloat) {
+        guard !isOpen else { return }
+        hideWork?.cancel()
+        if !buttonVisible {
+            withAnimation(.easeOut(duration: 0.15)) { buttonVisible = true }
+        }
+        drag = max(0, translation)
+        let passed = drag >= Self.openDistance
+        if passed && !passedThreshold {
+            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+        }
+        passedThreshold = passed
+    }
+
+    func dragEnded(_ translation: CGFloat, predicted: CGFloat) {
+        guard !isOpen else { return }
+        if translation >= Self.openDistance || predicted >= Self.openDistance * 2.5 {
+            open()
+        } else {
+            passedThreshold = false
+            withAnimation(Self.spring) { drag = 0 }
+            scheduleHide(after: 2)
+        }
+    }
+
+    private func scheduleHide(after seconds: Double) {
+        hideWork?.cancel()
+        let work = DispatchWorkItem { [weak self] in
+            guard let self, !self.isOpen, self.drag == 0 else { return }
+            withAnimation(.easeOut(duration: 0.4)) { self.buttonVisible = false }
+        }
+        hideWork = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + seconds, execute: work)
+    }
 
     init(gameName: String, statsVisible: Bool) {
         self.gameName = gameName
@@ -400,27 +490,64 @@ final class StreamMenuState: ObservableObject {
 struct StreamMenuView: View {
     @ObservedObject var state: StreamMenuState
     @ObservedObject private var device = DeviceStatus.shared
-    @State private var shown = false
+    /// The ••• button and the panel share one glass shape, so one morphs into the other (iOS 26)
+    @Namespace private var glassSpace
 
     var body: some View {
-        ZStack(alignment: .leading) {
-            // Tap outside the panel to go back to the game
-            Color.black.opacity(shown ? 0.35 : 0)
-                .ignoresSafeArea()
-                .onTapGesture { state.onAction?("resume") }
-                .accessibilityLabel("Back to game")
-                .accessibilityAddTraits(.isButton)
+        StreamGlassContainer {
+            ZStack(alignment: .topLeading) {
+                if state.isOpen {
+                    // Tap outside the panel to go back to the game (the game stays undimmed)
+                    Color.clear
+                        .contentShape(Rectangle())
+                        .ignoresSafeArea()
+                        .onTapGesture { state.onAction?("resume") }
+                        .accessibilityLabel("Back to game")
+                        .accessibilityAddTraits(.isButton)
 
-            panel
-                .offset(x: shown ? 0 : -360)
-
-        }
-        .onAppear {
-            withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) { shown = true }
+                    panel
+                        .transition(Self.panelTransition)
+                } else if state.buttonVisible {
+                    moreButton
+                        .transition(.opacity)
+                }
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         }
         .animation(.easeInOut(duration: 0.15), value: state.focus)
         .animation(.easeInOut(duration: 0.2), value: state.confirmQuit)
         .animation(.easeInOut(duration: 0.2), value: state.page)
+    }
+
+    /// iOS 26 morphs the glass; earlier versions slide the panel in
+    private static var panelTransition: AnyTransition {
+        if #available(iOS 26.0, *) {
+            return .opacity
+        }
+        return .move(edge: .leading).combined(with: .opacity)
+    }
+
+    // MARK: ••• button
+
+    private var moreButton: some View {
+        // Stretches as it's pulled, with resistance
+        let stretch = min(state.drag * 0.6, 70)
+        return Image(systemName: "ellipsis")
+            .font(.system(size: 17, weight: .bold))
+            .foregroundStyle(.white)
+            .frame(width: StreamMenuHostController.buttonSize + stretch, height: StreamMenuHostController.buttonSize)
+            .modifier(StreamMenuGlass(namespace: glassSpace, capsule: true))
+            .contentShape(Capsule())
+            .onTapGesture { state.open() }
+            .gesture(
+                DragGesture(minimumDistance: 6)
+                    .onChanged { state.dragChanged($0.translation.width) }
+                    .onEnded { state.dragEnded($0.translation.width, predicted: $0.predictedEndTranslation.width) }
+            )
+            .padding(.leading, StreamMenuHostController.margin)
+            .padding(.top, StreamMenuHostController.margin)
+            .accessibilityLabel("Stream menu")
+            .accessibilityAddTraits(.isButton)
     }
 
     // MARK: Stream Settings page
@@ -470,7 +597,7 @@ struct StreamMenuView: View {
         .padding(20)
         .frame(width: 340)
         .frame(maxHeight: .infinity, alignment: .top)
-        .modifier(StreamMenuGlass())
+        .modifier(StreamMenuGlass(namespace: glassSpace))
         .padding(.vertical, 12)
         .padding(.leading, 12)
         .animation(.easeInOut(duration: 0.15), value: state.videoChanged)
@@ -503,7 +630,7 @@ struct StreamMenuView: View {
         .padding(20)
         .frame(width: 340)
         .frame(maxHeight: .infinity, alignment: .top)
-        .modifier(StreamMenuGlass())
+        .modifier(StreamMenuGlass(namespace: glassSpace))
         .padding(.vertical, 12)
         .padding(.leading, 12)
     }
@@ -607,7 +734,7 @@ struct StreamMenuView: View {
         .padding(20)
         .frame(width: 300)
         .frame(maxHeight: .infinity, alignment: .top)
-        .modifier(StreamMenuGlass())
+        .modifier(StreamMenuGlass(namespace: glassSpace))
         .padding(.vertical, 12)
         .padding(.leading, 12)
     }
@@ -631,13 +758,110 @@ struct StreamMenuView: View {
     }
 }
 
+/// Clear (most transparent) Liquid Glass. Button and panels share one glass id so they morph.
 private struct StreamMenuGlass: ViewModifier {
+    var namespace: Namespace.ID? = nil
+    var capsule = false
+
     func body(content: Content) -> some View {
         if #available(iOS 26.0, *) {
-            content.glassEffect(.regular, in: RoundedRectangle(cornerRadius: 28, style: .continuous))
+            if capsule {
+                content
+                    .glassEffect(.clear.interactive(), in: Capsule())
+                    .streamGlassID(namespace)
+            } else {
+                content
+                    .glassEffect(.clear, in: RoundedRectangle(cornerRadius: 28, style: .continuous))
+                    .streamGlassID(namespace)
+            }
+        } else if capsule {
+            content.background(.ultraThinMaterial, in: Capsule())
         } else {
             content.background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 28, style: .continuous))
         }
+    }
+}
+
+@available(iOS 26.0, *)
+private extension View {
+    @ViewBuilder
+    func streamGlassID(_ namespace: Namespace.ID?) -> some View {
+        if let namespace {
+            glassEffectID("streamMenu", in: namespace)
+        } else {
+            self
+        }
+    }
+}
+
+/// GlassEffectContainer on iOS 26 (needed for the morph), nothing before
+private struct StreamGlassContainer<Content: View>: View {
+    private let content: Content
+
+    init(@ViewBuilder content: () -> Content) {
+        self.content = content()
+    }
+
+    var body: some View {
+        if #available(iOS 26.0, *) {
+            GlassEffectContainer(spacing: 20) { content }
+        } else {
+            content
+        }
+    }
+}
+
+/// Hosts the menu over the stream for the whole session. Only the ••• button (closed) or the
+/// whole screen (open) takes touches; everything else falls through to the game.
+final class StreamMenuHostController: UIViewController {
+    static let buttonSize: CGFloat = 44
+    static let margin: CGFloat = 12
+
+    private let state: StreamMenuState
+    private let hosting: UIHostingController<StreamMenuView>
+
+    init(state: StreamMenuState) {
+        self.state = state
+        hosting = UIHostingController(rootView: StreamMenuView(state: state))
+        super.init(nibName: nil, bundle: nil)
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
+
+    override func loadView() {
+        let passthrough = StreamMenuPassthroughView()
+        passthrough.state = state
+        passthrough.backgroundColor = .clear
+        view = passthrough
+    }
+
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        overrideUserInterfaceStyle = .dark
+        hosting.view.backgroundColor = .clear
+        addChild(hosting)
+        hosting.view.frame = view.bounds
+        hosting.view.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+        view.addSubview(hosting.view)
+        hosting.didMove(toParent: self)
+    }
+}
+
+private final class StreamMenuPassthroughView: UIView {
+    weak var state: StreamMenuState?
+
+    override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
+        guard let state, !isHidden, isUserInteractionEnabled else { return nil }
+        if state.isOpen {
+            return super.hitTest(point, with: event)
+        }
+        guard state.buttonVisible else { return nil }
+        // The button's corner, with room for it to stretch and a forgiving margin
+        let size = StreamMenuHostController.buttonSize
+        let margin = StreamMenuHostController.margin
+        let area = CGRect(x: safeAreaInsets.left, y: safeAreaInsets.top,
+                          width: margin + size + 70 + 24, height: margin + size + 24)
+        return area.contains(point) ? super.hitTest(point, with: event) : nil
     }
 }
 

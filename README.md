@@ -36,10 +36,11 @@ Icons skip Steam (its icons are too small). **Edit Artwork** works on every game
 
 ### Controller
 - Full controller navigation of the interface: D-pad / left stick to move, **A / ✕** opens a game page, **R2** plays, **Options** opens the game menu, **L1 / R1** switch tabs, **Y / △** search, **X / □** PC.
-- In the stream, iOS 26 reserves the Home button for Apple's Games app, so Starlight uses **Start + Select** (Options + Share, Menu + View): tap both to send **Guide** to the PC, hold both for a second to open the stream menu.
+- In the stream, iOS 26 reserves the Home button for Apple's Games app: **hold Start** for a second to open the stream menu (a short press still reaches the game), and tap **Start + Select** (Options + Share, Menu + View) to send **Guide** to the PC.
 
 ### Stream menu
-- Swipe from the left edge (or Start + Select hold) to open a Liquid Glass panel: back to game, on-screen keyboard with PC keys, stats, disconnect and quit.
+- A small clear-glass **•••** button shows in the top-left corner for a few seconds when the stream starts. Pull it (or swipe from the left edge) and it stretches; past a short distance it morphs into the menu panel, and back into the button when you close it. Holding Start opens it too.
+- The panel: back to game, on-screen keyboard with PC keys, Controls, Stream Settings, stats, disconnect and quit. The game keeps playing behind it, undimmed.
 
 ## Requirements
 - iPhone or iPad on **iOS 26** for the full Liquid Glass design. Earlier versions fall back to materials.

@@ -785,10 +785,31 @@
 
 - (void)edgeSwiped {
 #if !TARGET_OS_TV
-    // Starlight: open the stream menu instead of disconnecting right away
-    if (_exitSwipeRecognizer.state == UIGestureRecognizerStateBegan) {
-        Log(LOG_I, @"User swiped from the edge: showing the stream menu");
-        [self showStreamMenu];
+    // Starlight: the swipe pulls out the ••• button, which morphs into the stream menu past a threshold
+    if ([self streamMenuVisible]) {
+        return;
+    }
+    CGFloat translation = [_exitSwipeRecognizer translationInView:self.view].x;
+    switch (_exitSwipeRecognizer.state) {
+        case UIGestureRecognizerStateBegan:
+            [self prepareStreamMenuOn:self];
+            [_streamMenu dragChanged:translation];
+            break;
+        case UIGestureRecognizerStateChanged:
+            [_streamMenu dragChanged:translation];
+            break;
+        case UIGestureRecognizerStateEnded: {
+            CGFloat velocity = [_exitSwipeRecognizer velocityInView:self.view].x;
+            Log(LOG_I, @"User swiped from the edge (%.0f pt)", translation);
+            [_streamMenu dragEnded:translation predicted:translation + velocity * 0.25];
+            break;
+        }
+        case UIGestureRecognizerStateCancelled:
+        case UIGestureRecognizerStateFailed:
+            [_streamMenu dragEnded:0 predicted:0];
+            break;
+        default:
+            break;
     }
 #else
     Log(LOG_I, @"User swiped to end stream");
@@ -800,7 +821,7 @@
 #pragma mark - Stream menu (Starlight)
 
 - (void)streamMenuRequested {
-    if (_streamMenu != nil) {
+    if ([self streamMenuVisible]) {
         [self hideStreamMenu];
     }
     else {
@@ -809,43 +830,61 @@
 }
 
 - (BOOL)streamMenuVisible {
-    return _streamMenu != nil;
+    return _streamMenu.isOpen;
 }
 
 - (void)streamMenuNavigate:(NSString*)action {
     [_streamMenu navigate:action];
 }
 
-- (void)showStreamMenu {
-    if (_streamMenu != nil) {
-        return;
+// The menu lives for the whole stream (closed it's the ••• button): create it once, refresh what it
+// shows, and put it in the given view controller (the device, the TV, or the second-screen page)
+- (void)prepareStreamMenuOn:(UIViewController*)host {
+    if (_streamMenu == nil) {
+        _streamMenu = [[StarlightStreamMenu alloc] initWithGameName:self.streamConfig.appName ?: @"Game"
+                                                       statsVisible:(_statsUpdateTimer != nil)];
+        __weak StreamFrameViewController* weakSelf = self;
+        _streamMenu.onAction = ^(NSString* action) {
+            [weakSelf streamMenuAction:action];
+        };
+        _streamMenu.onSettings = ^(NSDictionary<NSString*, id>* values, BOOL reconnect) {
+            [weakSelf streamMenuSettingsChanged:values reconnect:reconnect];
+        };
     }
-    _streamMenu = [[StarlightStreamMenu alloc] initWithGameName:self.streamConfig.appName ?: @"Game"
-                                                   statsVisible:(_statsUpdateTimer != nil)];
+    [_streamMenu setStatsVisible:(_statsUpdateTimer != nil)];
     [_streamMenu setPictureInPictureAvailable:[self pipCanStartManually]];
     [_streamMenu setDisplayOption:[self displayMenuOption]];
-    __weak StreamFrameViewController* weakSelf = self;
-    _streamMenu.onAction = ^(NSString* action) {
-        [weakSelf streamMenuAction:action];
-    };
-#if !TARGET_OS_TV
     [_streamMenu setStreamSettings:[MainFrameViewController streamSettingsDictionaryForWindow:self.view.window]];
-    _streamMenu.onSettings = ^(NSDictionary<NSString*, id>* values, BOOL reconnect) {
-        [weakSelf streamMenuSettingsChanged:values reconnect:reconnect];
-    };
-#endif
     
+    UIViewController* menuVC = _streamMenu.viewController;
+    if (menuVC.parentViewController != host) {
+        if (menuVC.parentViewController != nil) {
+            [menuVC willMoveToParentViewController:nil];
+            [menuVC.view removeFromSuperview];
+            [menuVC removeFromParentViewController];
+        }
+        [host addChildViewController:menuVC];
+        menuVC.view.frame = host.view.bounds;
+        menuVC.view.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
+        [host.view addSubview:menuVC.view];
+        [menuVC didMoveToParentViewController:host];
+    }
+    else {
+        [host.view bringSubviewToFront:menuVC.view];
+    }
+}
+
+- (void)showStreamMenu {
+    if ([self streamMenuVisible]) {
+        return;
+    }
     // With the stream on a TV the menu opens there, where you're looking (and you drive it with the controller);
     // a tap on the device's artwork opens it on the device instead
     UIViewController* host = _menuOnDevice && _companionVC != nil ? _companionVC
         : (_externalWindow != nil ? _externalWindow.rootViewController : self);
     _menuOnDevice = NO;
-    UIViewController* menuVC = _streamMenu.viewController;
-    [host addChildViewController:menuVC];
-    menuVC.view.frame = host.view.bounds;
-    menuVC.view.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
-    [host.view addSubview:menuVC.view];
-    [menuVC didMoveToParentViewController:host];
+    [self prepareStreamMenuOn:host];
+    [_streamMenu open];
 }
 
 // Alerts go over the second-screen page when it's showing
@@ -858,18 +897,20 @@
 }
 
 - (void)hideStreamMenu {
-    if (_streamMenu == nil) {
+    if (![self streamMenuVisible]) {
         return;
     }
+    // The panel shrinks back into the ••• button
+    [_streamMenu close];
+    // Opened on the TV or the second-screen page: come back to the device once the animation is done
     UIViewController* menuVC = _streamMenu.viewController;
-    _streamMenu = nil;
-    [UIView animateWithDuration:0.2 animations:^{
-        menuVC.view.alpha = 0;
-    } completion:^(BOOL finished) {
-        [menuVC willMoveToParentViewController:nil];
-        [menuVC.view removeFromSuperview];
-        [menuVC removeFromParentViewController];
-    }];
+    if (menuVC.parentViewController != self) {
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.5 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+            if (self->_streamMenu != nil && !self->_streamMenu.isOpen && menuVC.parentViewController != self) {
+                [self prepareStreamMenuOn:self];
+            }
+        });
+    }
 }
 
 - (void)streamMenuAction:(NSString*)action {
@@ -944,6 +985,14 @@
         [self->_streamView showOnScreenControls];
         
         [self->_controllerSupport connectionEstablished];
+        
+#if !TARGET_OS_TV
+        // Starlight: show the ••• menu button for a few seconds so the menu is easy to find
+        if (self->_externalWindow == nil) {
+            [self prepareStreamMenuOn:self];
+            [self->_streamMenu flashButton];
+        }
+#endif
         
 #if !TARGET_OS_TV
         // Handoff: connected, so no more retries; offer this stream to the user's other devices
@@ -1676,7 +1725,7 @@
 }
 
 - (void)companionTapped {
-    if (_streamMenu != nil) {
+    if ([self streamMenuVisible]) {
         return;
     }
     _menuOnDevice = YES;

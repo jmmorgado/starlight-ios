@@ -18,8 +18,14 @@ Guia prático em português. A descrição geral, a instalação e a compilaçã
 - **Cruz / stick esquerdo:** mexer entre os jogos · **✕ / A:** abrir a página do jogo · **R2:** jogar · **Options:** opções do jogo · **○ / B:** voltar
 - **△ / Y:** pesquisa · **□ / X:** PC · **L1 / R1:** mudar de aba
 - **Settings:** cruz para cima/baixo entre opções · **✕** abre, liga/desliga ou avança · **← / →** mudam o valor (resolução, FPS, bitrate ±1 Mbps, codec, interruptores) · **○** volta atrás. Em campos de texto, ✕ abre o teclado. Ações de remover pedem **✕ duas vezes**.
-- **No stream:** o iOS 26 reserva o botão Home para a app Jogos da Apple, por isso a Starlight usa **Start + Select** (Options + Share, Menu + View):
-  um toque nos dois envia **Guide** para o PC; mantidos 1 segundo abrem o painel do stream. Deslizar da margem esquerda também abre o painel.
+- **No stream:** o iOS 26 reserva o botão Home para a app Jogos da Apple. **Manter Start** 1 segundo abre o menu do stream (um toque curto chega ao jogo);
+  um toque em **Start + Select** (Options + Share, Menu + View) envia **Guide** para o PC.
+
+## Menu do stream
+
+- No início de cada stream aparece, durante uns segundos, um botão **•••** de vidro no canto superior esquerdo.
+- Puxa o botão (ou desliza a partir da margem esquerda): ele estica e, passado um pequeno limite, transforma-se no painel do menu. Ao fechar, o painel volta a encolher para o botão.
+- O jogo continua visível e a correr por trás, sem escurecer. Tocar fora do painel volta ao jogo.
 
 ## Acordar o PC (Wake-on-LAN)
 
