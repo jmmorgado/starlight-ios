@@ -133,6 +133,23 @@ final class StreamMenuState: ObservableObject {
     @Published var focus = 0
     var onAction: ((String) -> Void)?
 
+    // MARK: Page navigation
+
+    /// Entering a section pushes from the right; going back pops to the right
+    @Published private(set) var pageForward = true
+    static let pageSpring = Animation.spring(response: 0.38, dampingFraction: 0.86)
+
+    /// The direction is set first (so the outgoing page also slides the right way), then the page changes
+    private func go(to newPage: Page, forward: Bool, focus newFocus: Int) {
+        pageForward = forward
+        DispatchQueue.main.async {
+            withAnimation(Self.pageSpring) {
+                self.page = newPage
+                self.focus = newFocus
+            }
+        }
+    }
+
     // MARK: Open / close and the ••• button
 
     @Published private(set) var isOpen = false
@@ -257,17 +274,19 @@ final class StreamMenuState: ObservableObject {
         switch id {
         case "settings":
             video = savedVideo
-            page = .settings
-            focus = 0
+            go(to: .settings, forward: true, focus: 0)
         case "controls":
-            page = .controls
-            focus = 0
+            go(to: .controls, forward: true, focus: 0)
         case "askQuit":
-            confirmQuit = true
-            focus = 1   // Cancel first, so a stray press doesn't quit
+            withAnimation(Self.pageSpring) {
+                confirmQuit = true
+                focus = 1   // Cancel first, so a stray press doesn't quit
+            }
         case "cancelQuit":
-            confirmQuit = false
-            focus = mainFocusIDs.firstIndex(of: "askQuit") ?? 0
+            withAnimation(Self.pageSpring) {
+                confirmQuit = false
+                focus = mainFocusIDs.firstIndex(of: "askQuit") ?? 0
+            }
         default:
             onAction?(id)
         }
@@ -400,8 +419,7 @@ final class StreamMenuState: ObservableObject {
 
     func leaveSettings() {
         video = savedVideo
-        page = .main
-        focus = mainFocusIDs.firstIndex(of: "settings") ?? 0
+        go(to: .main, forward: false, focus: mainFocusIDs.firstIndex(of: "settings") ?? 0)
     }
 
     private func cycle<T: Equatable>(_ value: T, in options: [T], by delta: Int) -> T {
@@ -450,8 +468,7 @@ final class StreamMenuState: ObservableObject {
     }
 
     func leaveControls() {
-        page = .main
-        focus = mainFocusIDs.firstIndex(of: "controls") ?? 0
+        go(to: .main, forward: false, focus: mainFocusIDs.firstIndex(of: "controls") ?? 0)
     }
 
     private func navigateControls(_ action: String) {
@@ -492,6 +509,8 @@ struct StreamMenuView: View {
     @ObservedObject private var device = DeviceStatus.shared
     /// The ••• button and the panel share one glass shape, so one morphs into the other (iOS 26)
     @Namespace private var glassSpace
+    /// The controller's focus ring slides between items
+    @Namespace private var focusSpace
 
     var body: some View {
         StreamGlassContainer {
@@ -514,9 +533,7 @@ struct StreamMenuView: View {
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         }
-        .animation(.easeInOut(duration: 0.15), value: state.focus)
-        .animation(.easeInOut(duration: 0.2), value: state.confirmQuit)
-        .animation(.easeInOut(duration: 0.2), value: state.page)
+        .animation(.spring(response: 0.28, dampingFraction: 0.82), value: state.focus)
     }
 
     /// iOS 26 morphs the glass; earlier versions slide the panel in
@@ -590,17 +607,13 @@ struct StreamMenuView: View {
                         .padding(.vertical, 6)
                 }
                 .modifier(StreamMenuButtonStyle(prominent: true, destructive: false))
-                .overlay(Capsule().stroke(starlightGold, lineWidth: focusedID == "apply" ? 3 : 0))
-                .transition(.opacity)
+                .overlay(focusRing(Capsule(), lineWidth: 3, visible: focusedID == "apply"))
+                .transition(.move(edge: .bottom).combined(with: .opacity))
             }
         }
         .padding(20)
-        .frame(width: 340)
-        .frame(maxHeight: .infinity, alignment: .top)
-        .modifier(StreamMenuGlass(namespace: glassSpace))
-        .padding(.vertical, 12)
-        .padding(.leading, 12)
-        .animation(.easeInOut(duration: 0.15), value: state.videoChanged)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .animation(StreamMenuState.pageSpring, value: state.videoChanged)
     }
 
     // MARK: Controls page
@@ -628,11 +641,7 @@ struct StreamMenuView: View {
             }
         }
         .padding(20)
-        .frame(width: 340)
-        .frame(maxHeight: .infinity, alignment: .top)
-        .modifier(StreamMenuGlass(namespace: glassSpace))
-        .padding(.vertical, 12)
-        .padding(.leading, 12)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     }
 
     private func sectionTitle(_ title: String) -> some View {
@@ -673,15 +682,31 @@ struct StreamMenuView: View {
         .padding(.horizontal, 12)
         .padding(.vertical, 9)
         .background(Color.white.opacity(focused ? 0.16 : 0.07), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).stroke(starlightGold, lineWidth: focused ? 2 : 0))
+        .overlay(focusRing(RoundedRectangle(cornerRadius: 14, style: .continuous), lineWidth: 2, visible: focused))
         .contentShape(Rectangle())
         .onTapGesture { if !row.isToggle { state.select(row.id) } }
         .id(row.id)
         .accessibilityElement(children: .combine)
     }
 
-    @ViewBuilder
+    /// One glass panel for every page: its width springs to the page's, and the page content
+    /// slides inside it like a navigation push (forward) or pop (back)
     private var panel: some View {
+        ZStack(alignment: .topLeading) {
+            pageContent
+                .id(state.page)
+                .transition(pageTransition)
+        }
+        .frame(width: state.page == .main ? 300 : 340)
+        .frame(maxHeight: .infinity, alignment: .top)
+        .clipShape(RoundedRectangle(cornerRadius: 28, style: .continuous))
+        .modifier(StreamMenuGlass(namespace: glassSpace))
+        .padding(.vertical, 12)
+        .padding(.leading, 12)
+    }
+
+    @ViewBuilder
+    private var pageContent: some View {
         if state.page == .settings {
             settingsPanel
         } else if state.page == .controls {
@@ -689,6 +714,14 @@ struct StreamMenuView: View {
         } else {
             mainPanel
         }
+    }
+
+    private var pageTransition: AnyTransition {
+        let forward = state.pageForward
+        return .asymmetric(
+            insertion: .move(edge: forward ? .trailing : .leading).combined(with: .opacity),
+            removal: .move(edge: forward ? .leading : .trailing).combined(with: .opacity)
+        )
     }
 
     private var mainPanel: some View {
@@ -702,6 +735,7 @@ struct StreamMenuView: View {
                 Text("The game closes on your PC. Unsaved progress may be lost.")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
+                    .transition(.move(edge: .top).combined(with: .opacity))
             }
 
             // Scrolls with a finger when the menu doesn't fit (iPhone in landscape)
@@ -732,11 +766,7 @@ struct StreamMenuView: View {
             }
         }
         .padding(20)
-        .frame(width: 300)
-        .frame(maxHeight: .infinity, alignment: .top)
-        .modifier(StreamMenuGlass(namespace: glassSpace))
-        .padding(.vertical, 12)
-        .padding(.leading, 12)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     }
 
     private func menuButton(_ item: StreamMenuState.Item, focused: Bool) -> some View {
@@ -749,12 +779,21 @@ struct StreamMenuView: View {
                 .padding(.vertical, 6)
         }
         .modifier(StreamMenuButtonStyle(prominent: item.prominent, destructive: item.destructive))
-        .overlay(
-            Capsule()
-                .stroke(starlightGold, lineWidth: focused ? 3 : 0)
-        )
+        .overlay(focusRing(Capsule(), lineWidth: 3, visible: focused))
         .scaleEffect(focused ? 1.03 : 1)
         .accessibilityAddTraits(focused ? .isSelected : [])
+        // Quit / Cancel slide in when confirming
+        .transition(.move(edge: .bottom).combined(with: .opacity))
+    }
+
+    /// The gold controller focus ring: one shape that slides from item to item
+    @ViewBuilder
+    private func focusRing<S: Shape>(_ shape: S, lineWidth: CGFloat, visible: Bool) -> some View {
+        if visible {
+            shape
+                .stroke(starlightGold, lineWidth: lineWidth)
+                .matchedGeometryEffect(id: "focusRing", in: focusSpace)
+        }
     }
 }
 
