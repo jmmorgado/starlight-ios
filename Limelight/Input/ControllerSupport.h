@@ -23,6 +23,10 @@
 - (BOOL) streamMenuVisible;
 // "up", "down", "select", "back"
 - (void) streamMenuNavigate:(NSString*)action;
+// While Start is held (menu closed): 0…1 of the hold, so the ••• button can stretch open like a pull;
+// cancelled when Start is let go (or used with other buttons) before the menu opens
+- (void) streamMenuHoldProgress:(CGFloat)progress;
+- (void) streamMenuHoldCancelled;
 
 @end
 

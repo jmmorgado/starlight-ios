@@ -874,17 +874,39 @@
     }
 }
 
+// With the stream on a TV the menu opens there, where you're looking (and you drive it with the controller);
+// a tap on the device's artwork opens it on the device instead
+- (UIViewController*)streamMenuHost {
+    return _menuOnDevice && _companionVC != nil ? _companionVC
+        : (_externalWindow != nil ? _externalWindow.rootViewController : self);
+}
+
 - (void)showStreamMenu {
     if ([self streamMenuVisible]) {
         return;
     }
-    // With the stream on a TV the menu opens there, where you're looking (and you drive it with the controller);
-    // a tap on the device's artwork opens it on the device instead
-    UIViewController* host = _menuOnDevice && _companionVC != nil ? _companionVC
-        : (_externalWindow != nil ? _externalWindow.rootViewController : self);
+    UIViewController* host = [self streamMenuHost];
     _menuOnDevice = NO;
     [self prepareStreamMenuOn:host];
     [_streamMenu open];
+}
+
+// Holding Start: the ••• button stretches open as if pulled from the edge, then morphs into the menu
+- (void)streamMenuHoldProgress:(CGFloat)progress {
+    if ([self streamMenuVisible]) {
+        return;
+    }
+    UIViewController* host = [self streamMenuHost];
+    if (_streamMenu == nil || _streamMenu.viewController.parentViewController != host) {
+        [self prepareStreamMenuOn:host];
+    }
+    [_streamMenu holdProgress:progress];
+}
+
+- (void)streamMenuHoldCancelled {
+    if (![self streamMenuVisible]) {
+        [_streamMenu holdCancelled];
+    }
 }
 
 // Alerts go over the second-screen page when it's showing

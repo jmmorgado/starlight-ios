@@ -34,7 +34,7 @@ struct OptionsGlyph: View {
 
     var body: some View {
         Image(systemName: device.controllerConnected ? PadGlyph.options : "ellipsis")
-            .font(.system(size: device.controllerConnected ? size + 1 : size, weight: .bold))
+            .font(.system(size: device.controllerConnected ? size - 3 : size, weight: .semibold))
     }
 }
 

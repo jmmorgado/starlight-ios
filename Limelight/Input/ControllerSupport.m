@@ -7,6 +7,7 @@
 //
 
 #import "ControllerSupport.h"
+#import <QuartzCore/QuartzCore.h>
 #import "Controller.h"
 
 #import "OnScreenControls.h"
@@ -340,8 +341,7 @@ static const double MOUSE_SPEED_DIVISOR = 1.25;
         if (controller.comboActive) {
             controller.comboActive = NO;
             dispatch_async(dispatch_get_main_queue(), ^{
-                [controller.comboTimer invalidate];
-                controller.comboTimer = nil;
+                [self cancelMenuHold:controller];
             });
         }
     }
@@ -370,8 +370,7 @@ static const double MOUSE_SPEED_DIVISOR = 1.25;
             BOOL fired = controller.comboFired;
             controller.comboFired = NO;
             dispatch_async(dispatch_get_main_queue(), ^{
-                [controller.comboTimer invalidate];
-                controller.comboTimer = nil;
+                [self cancelMenuHold:controller];
                 if (!fired) {
                     [self sendStartTap:controller];
                 }
@@ -383,8 +382,7 @@ static const double MOUSE_SPEED_DIVISOR = 1.25;
             controller.comboActive = NO;
             controller.startPassThrough = YES;
             dispatch_async(dispatch_get_main_queue(), ^{
-                [controller.comboTimer invalidate];
-                controller.comboTimer = nil;
+                [self cancelMenuHold:controller];
             });
             return flags;
         }
@@ -400,16 +398,48 @@ static const double MOUSE_SPEED_DIVISOR = 1.25;
         controller.comboFired = NO;
         dispatch_async(dispatch_get_main_queue(), ^{
             [controller.comboTimer invalidate];
-            controller.comboTimer = [NSTimer scheduledTimerWithTimeInterval:1.0 repeats:NO block:^(NSTimer* timer) {
-                if (controller.comboActive && !controller.comboFired) {
+            controller.comboStart = CACurrentMediaTime();
+            controller.comboShowedHold = NO;
+            // Ticks through the hold: after a short grace (so a tap for the game shows nothing) the
+            // ••• button stretches as if pulled from the edge, and at one second it opens into the menu
+            controller.comboTimer = [NSTimer scheduledTimerWithTimeInterval:1.0 / 60.0 repeats:YES block:^(NSTimer* timer) {
+                if (!controller.comboActive || controller.comboFired) {
+                    [timer invalidate];
+                    return;
+                }
+                CFTimeInterval elapsed = CACurrentMediaTime() - controller.comboStart;
+                if (elapsed >= 1.0) {
+                    [timer invalidate];
+                    controller.comboTimer = nil;
                     controller.comboFired = YES;
+                    controller.comboShowedHold = NO;
                     [self->_delegate streamMenuRequested];
+                    return;
+                }
+                BOOL menuOpen = [self->_delegate respondsToSelector:@selector(streamMenuVisible)] && [self->_delegate streamMenuVisible];
+                CGFloat progress = (elapsed - 0.15) / 0.85;
+                if (!menuOpen && progress > 0 && [self->_delegate respondsToSelector:@selector(streamMenuHoldProgress:)]) {
+                    controller.comboShowedHold = YES;
+                    [self->_delegate streamMenuHoldProgress:progress];
                 }
             }];
         });
         return flags & ~PLAY_FLAG;
     }
     return flags;
+}
+
+// Called on the main queue: a Start hold that ended before the menu opened springs the ••• button back
+-(void) cancelMenuHold:(Controller*)controller
+{
+    [controller.comboTimer invalidate];
+    controller.comboTimer = nil;
+    if (controller.comboShowedHold) {
+        controller.comboShowedHold = NO;
+        if ([_delegate respondsToSelector:@selector(streamMenuHoldCancelled)]) {
+            [_delegate streamMenuHoldCancelled];
+        }
+    }
 }
 
 // Called on the main queue: a short Start press, sent to the PC once it's clear it wasn't a hold

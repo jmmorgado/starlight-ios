@@ -34,6 +34,8 @@ typedef struct {
 @property (nonatomic)                   BOOL comboActive;       // Start held alone, waiting to see if it's a hold
 @property (nonatomic)                   BOOL comboFired;        // the hold opened/closed the menu
 @property (nonatomic)                   NSTimer* _Nullable comboTimer;
+@property (nonatomic)                   CFTimeInterval comboStart;
+@property (nonatomic)                   BOOL comboShowedHold;   // the ••• button started stretching
 @property (nonatomic)                   BOOL guideComboActive;  // Start+Select down together
 @property (nonatomic)                   BOOL startPassThrough;  // Start pressed with other buttons: goes to the PC as is
 @property (nonatomic)                   BOOL guideTapInProgress;

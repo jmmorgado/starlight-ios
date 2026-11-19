@@ -44,6 +44,11 @@ final class StarlightStreamMenu: NSObject {
     /// End of the swipe: translation, and where it would have ended given its speed
     @objc func dragEnded(_ translation: CGFloat, predicted: CGFloat) { state.dragEnded(translation, predicted: predicted) }
 
+    /// Holding Start on the controller pulls the button open like a finger would (0…1 of the hold)
+    @objc func holdProgress(_ progress: CGFloat) { state.holdProgress(progress) }
+
+    @objc func holdCancelled() { state.dragEnded(0, predicted: 0) }
+
     @objc init(gameName: String, statsVisible: Bool) {
         state = StreamMenuState(gameName: gameName, statsVisible: statsVisible)
         super.init()
@@ -203,6 +208,18 @@ final class StreamMenuState: ObservableObject {
             UIImpactFeedbackGenerator(style: .light).impactOccurred()
         }
         passedThreshold = passed
+    }
+
+    func holdProgress(_ progress: CGFloat) {
+        guard !isOpen else { return }
+        // Ease out, so it feels pulled; stops just short of the open distance (the hold opens it at 1 s)
+        let p = min(max(progress, 0), 1)
+        let eased = 1 - pow(1 - p, 2)
+        hideWork?.cancel()
+        if !buttonVisible {
+            withAnimation(.easeOut(duration: 0.15)) { buttonVisible = true }
+        }
+        drag = eased * (Self.openDistance - 1)
     }
 
     func dragEnded(_ translation: CGFloat, predicted: CGFloat) {
