@@ -880,16 +880,6 @@ struct ShelfCard: View {
                     .foregroundStyle(.white.opacity(0.85))
                     .lineLimit(1)
                 Spacer(minLength: 4)
-                Menu {
-                    GameMenuItems(game: game, model: model)
-                } label: {
-                    Image(systemName: "ellipsis")
-                        .font(.system(size: 15, weight: .bold))
-                        .foregroundStyle(.white.opacity(0.85))
-                        .frame(width: 30, height: 24)
-                        .contentShape(Rectangle())
-                }
-                .accessibilityLabel("Game options")
             }
             .padding(.horizontal, 12)
             .padding(.bottom, 9)
@@ -908,6 +898,9 @@ struct ShelfCard: View {
         .frame(width: width, height: height)
         .opacity(game.hidden ? 0.45 : 1)
         .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+        // Taps only inside the card: the art is wider than the card and, clipped or not, would catch
+        // taps meant for the card on its left
+        .contentShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
         .overlay(
             RoundedRectangle(cornerRadius: 18, style: .continuous)
                 .stroke(.white.opacity(selected ? 0.95 : 0.12), lineWidth: selected ? 2.5 : 1)
@@ -992,6 +985,7 @@ struct PosterCard: View {
         .frame(width: width, height: height)
         .opacity(game.hidden ? 0.45 : 1)
         .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .contentShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
         .overlay(
             RoundedRectangle(cornerRadius: 14, style: .continuous)
                 .stroke(.white.opacity(0.12), lineWidth: 1)
