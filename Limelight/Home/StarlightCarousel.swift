@@ -576,8 +576,7 @@ struct HomeCarousel: View {
                 Menu {
                     GameMenuItems(game: game, model: model)
                 } label: {
-                    Image(systemName: "ellipsis")
-                        .font(.system(size: 18, weight: .bold))
+                    OptionsGlyph(size: 18)
                         .foregroundStyle(.white)
                         .frame(width: compact ? 44 : 50, height: compact ? 44 : 50)
                         .contentShape(Circle())

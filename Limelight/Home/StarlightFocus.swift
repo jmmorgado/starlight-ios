@@ -26,6 +26,18 @@ enum PadGlyph {
     static var rightShoulder: String { pad?.rightShoulder.sfSymbolsName ?? "r1.rectangle.roundedbottom" }
 }
 
+/// The ••• of a game's options: with a controller connected, that controller's own Start/Menu
+/// button (Options on a DualSense, Menu on Xbox, + on Switch…), since that's what opens it
+struct OptionsGlyph: View {
+    var size: CGFloat = 18
+    @ObservedObject private var device = DeviceStatus.shared
+
+    var body: some View {
+        Image(systemName: device.controllerConnected ? PadGlyph.options : "ellipsis")
+            .font(.system(size: device.controllerConnected ? size + 1 : size, weight: .bold))
+    }
+}
+
 // MARK: - Focus engine (controller navigation)
 
 struct FocusEntry: Equatable {

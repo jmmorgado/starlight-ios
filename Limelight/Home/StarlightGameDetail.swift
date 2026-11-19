@@ -297,8 +297,7 @@ struct GameDetailView: View {
         Menu {
             GameMenuItems(game: game, model: model)
         } label: {
-            Image(systemName: device.controllerConnected ? PadGlyph.options : "ellipsis")
-                .font(.system(size: device.controllerConnected ? 19 : 18, weight: .bold))
+            OptionsGlyph(size: 18)
                 .foregroundStyle(.white)
                 .frame(width: 44, height: 44)
                 .contentShape(Circle())
