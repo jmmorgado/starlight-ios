@@ -58,7 +58,7 @@ There's no App Store build. Each push to the `starlight` branch builds an unsign
 With a free Apple ID the app expires after 7 days. Reinstall the same `.ipa` over it (your data stays) or use Sideloadly's auto refresh. To update, install a newer `.ipa` with the same Bundle ID.
 
 ## Setup
-On first launch, a **setup guide** walks through all of this (PC software, finding and pairing the PC, the games list, Steam and the controller). It works in portrait and landscape on iPhone and iPad, and opens again from **Settings › About › Setup Guide**.
+On first launch, a **setup guide** walks through all of this (PC software, finding and pairing the PC, the games list, Steam, getting around with a controller and the shortcuts in a stream). It works in portrait and landscape on iPhone and iPad, and opens again from **Settings › About › Setup Guide**. **Settings › Reset Starlight** erases everything the app keeps on the device (PCs and pairing, settings, keys, artwork) and closes it.
 
 1. **Pair your PC:** open Starlight, pick the PC and enter the PIN in the Vibepollo / Sunshine web UI.
 2. **Let Starlight see your games:** in the Vibepollo web UI, go to **Client Management**, open this iPhone and enable **List applications**. Without it, Starlight shows a notice instead of your games.

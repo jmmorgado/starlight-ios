@@ -18,6 +18,7 @@ struct SettingsTab: View {
     @State private var route: String?
     /// Read by MainFrameViewController when a pinned game, link or Shortcut launches a game
     @AppStorage("StarlightAutoWake") private var autoWake = true
+    @State private var confirmReset = false
     /// Read by MainFrameViewController on opening the app and a game page
     @AppStorage("StarlightConnectEarly") private var connectEarly = true
     /// "wifi", "always", "off" (HomeTrailerState)
@@ -205,6 +206,22 @@ struct SettingsTab: View {
                             .foregroundStyle(.secondary)
                     } header: {
                         Text("About")
+                    }
+
+                    Section {
+                        Button(role: .destructive) { confirmReset = true } label: {
+                            Label("Reset Starlight…", systemImage: "arrow.counterclockwise")
+                                .foregroundStyle(.red)
+                        }
+                        .settingsFocus("set-reset", scope: "settings") { confirmReset = true }
+                    } footer: {
+                        Text("Erases everything Starlight keeps on this device: PCs and pairing, settings, pinned games, Steam and SteamGridDB keys and artwork. The games on your PC aren't touched. Starlight closes afterwards; open it again to set it up.")
+                    }
+                    .confirmationDialog("Reset Starlight?", isPresented: $confirmReset, titleVisibility: .visible) {
+                        Button("Erase and Reset", role: .destructive) { model.command("resetApp") }
+                        Button("Cancel", role: .cancel) {}
+                    } message: {
+                        Text("You'll need to pair your PC again and paste your keys again.")
                     }
                 }
                 .modifier(FocusScrollFollower(proxy: proxy))

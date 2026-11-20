@@ -6,6 +6,8 @@
 //
 
 @import ImageIO;
+@import CoreSpotlight;
+@import Security;
 
 #import "MainFrameViewController.h"
 #import "CryptoManager.h"
@@ -16,6 +18,7 @@
 #import "UIComputerView.h"
 #import "UIAppView.h"
 #import "DataManager.h"
+#import "AppDelegate.h"
 #import "TemporarySettings.h"
 #import "WakeOnLanManager.h"
 #import "AppListResponse.h"
@@ -2493,6 +2496,9 @@ static const NSUInteger kMaxQuickActions = 4;
     if ([command isEqualToString:@"addHost"]) {
         [self addHostClicked];
     }
+    else if ([command isEqualToString:@"resetApp"]) {
+        [self resetStarlight];
+    }
     else if ([command isEqualToString:@"cancelPairing"]) {
         // Setup guide: stop waiting (the PC stops accepting the PIN after a while)
         if (_onboardingPairing) {
@@ -2505,6 +2511,69 @@ static const NSUInteger kMaxQuickActions = 4;
         // No view: always goes through the full refresh (server info + app list)
         [self hostClicked:host view:nil];
     }
+}
+
+// Settings › About › Reset Starlight: erase everything kept on this device, then close the app
+// (iOS can't relaunch it; the next launch starts the setup guide)
+- (void)resetStarlight {
+    Log(LOG_I, @"Resetting Starlight");
+    [_homeRefreshTimer invalidate];
+    _homeRefreshTimer = nil;
+    [_discMan stopDiscovery];
+    
+    // PCs and their games
+    DataManager* dataMan = [[DataManager alloc] init];
+    for (TemporaryHost* host in [dataMan getHosts]) {
+        [dataMan removeHost:host];
+    }
+    @synchronized(hostList) {
+        [hostList removeAllObjects];
+    }
+    
+    // Artwork, manual artwork choices and the SteamGridDB key
+    SteamGridDBManager* sgdb = [SteamGridDBManager sharedManager];
+    [sgdb clearCache];
+    [sgdb setApiKey:nil];
+    
+    // Every Keychain item of the app (Steam and SteamGridDB keys)
+    for (id itemClass in @[(__bridge id)kSecClassGenericPassword, (__bridge id)kSecClassInternetPassword,
+                           (__bridge id)kSecClassKey, (__bridge id)kSecClassCertificate, (__bridge id)kSecClassIdentity]) {
+        SecItemDelete((__bridge CFDictionaryRef)@{ (__bridge id)kSecClass: itemClass });
+    }
+    
+    // Cached files (Steam data, artwork, box art), but not the database
+    NSFileManager* fm = [NSFileManager defaultManager];
+    NSURL* caches = [[fm URLsForDirectory:NSCachesDirectory inDomains:NSUserDomainMask] firstObject];
+    for (NSURL* item in [fm contentsOfDirectoryAtURL:caches includingPropertiesForKeys:nil options:0 error:nil] ?: @[]) {
+        if (![item.lastPathComponent hasPrefix:@"Limelight_iOS"]) {
+            [fm removeItemAtURL:item error:nil];
+        }
+    }
+    
+    // Pinned games, Spotlight and Siri suggestions
+    [UIApplication sharedApplication].shortcutItems = @[];
+    [[CSSearchableIndex defaultSearchableIndex] deleteAllSearchableItemsWithCompletionHandler:nil];
+    
+    // Settings, the pairing certificate, Steam account and everything else in user defaults
+    NSString* bundleId = [[NSBundle mainBundle] bundleIdentifier];
+    if (bundleId != nil) {
+        [[NSUserDefaults standardUserDefaults] removePersistentDomainForName:bundleId];
+    }
+    
+    UIAlertController* done = [UIAlertController alertControllerWithTitle:@"Starlight Was Reset"
+                                                                  message:@"Starlight will close now. Open it again to set it up."
+                                                           preferredStyle:UIAlertControllerStyleAlert];
+    [done addAction:[UIAlertAction actionWithTitle:@"Close Starlight" style:UIAlertActionStyleDefault handler:^(UIAlertAction* action) {
+        // Stream settings live in the database: remove its files last, right before closing,
+        // so the next launch starts with a fresh one
+        NSURL* store = [(AppDelegate*)[UIApplication sharedApplication].delegate getStoreURL];
+        for (NSString* suffix in @[@"", @"-wal", @"-shm"]) {
+            NSURL* file = [NSURL fileURLWithPath:[store.path stringByAppendingString:suffix]];
+            [[NSFileManager defaultManager] removeItemAtURL:file error:nil];
+        }
+        exit(0);
+    }]];
+    [[self activeViewController] presentViewController:done animated:YES completion:nil];
 }
 
 - (void)homeHostAction:(NSString*)action host:(NSString*)hostUUID {

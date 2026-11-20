@@ -10,15 +10,15 @@ import GameController
 // MARK: - Setup guide (first launch)
 
 /// Guided first-launch setup: PC software, finding and pairing the PC, letting Starlight list
-/// the games, Steam (optional) and the controller. Works on iPhone and iPad, in portrait
+/// the games, Steam (optional), getting around with a controller and the shortcuts in a stream. Works on iPhone and iPad, in portrait
 /// (stacked, actions pinned at the bottom) and landscape (copy on the left, card on the right).
 /// Settings › About › Setup Guide opens it again.
 enum OnboardingStep: Int, CaseIterable {
-    case welcome, pcSoftware, findPC, pair, games, steam, controller, done
+    case welcome, pcSoftware, findPC, pair, games, steam, controller, playing, done
 
-    /// Position in the progress dots (1...6); the welcome screen has none
+    /// Position in the progress dots (1...7); the welcome screen has none
     var progress: Int { min(rawValue, OnboardingStep.dotCount) }
-    static let dotCount = 6
+    static let dotCount = 7
 }
 
 struct OnboardingView: View {
@@ -259,8 +259,11 @@ struct OnboardingView: View {
             return ("Optional", "Connect Steam",
                     "See playtime, achievements and recently played games, and your whole Steam collection in the Library.")
         case .controller:
-            return ("Controls", "Play your way",
-                    "Starlight works best with a controller: connect it in Bluetooth settings. You can also play by touch.")
+            return ("Controller", "Get around with a controller",
+                    "Connect it in Bluetooth settings and use it everywhere in Starlight, not just in games. Touch works too.")
+        case .playing:
+            return ("While you play", "Play your way",
+                    "In a stream the controller belongs to the game. These shortcuts open Starlight's menu and the PC's Guide.")
         case .done:
             return ("Done", "You're all set",
                     "Your games are ready. Add a SteamGridDB key in Settings any time for artwork on games that aren't on Steam.")
@@ -278,7 +281,8 @@ struct OnboardingView: View {
             case .pair: pairCard
             case .games: gamesCard
             case .steam: steamCard
-            case .controller: controllerCard
+            case .controller: navigationCard
+            case .playing: playingCard
             case .done: doneCard
             }
         }
@@ -540,7 +544,7 @@ struct OnboardingView: View {
         }
     }
 
-    private var controllerCard: some View {
+    private var controllerStatus: some View {
         Group {
             if device.controllerConnected {
                 HStack(spacing: 10) {
@@ -557,6 +561,57 @@ struct OnboardingView: View {
                         .font(.system(size: 15, weight: .semibold))
                 }
             }
+        }
+    }
+
+    /// How the Starlight screens map to the controller (glyphs follow the connected controller)
+    private var navigationCard: some View {
+        Group {
+            controllerStatus
+            cardLabel("In Starlight")
+                .padding(.top, 4)
+            LazyVGrid(columns: [GridItem(.flexible(), spacing: 8), GridItem(.flexible(), spacing: 8)], spacing: 8) {
+                buttonTile(PadGlyph.dpad, "Move between games")
+                buttonTile(PadGlyph.confirm, "Open the game page")
+                buttonTile(PadGlyph.play, "Play")
+                buttonTile(PadGlyph.options, "Game options")
+                buttonTile(PadGlyph.back, "Back")
+                buttonTile(PadGlyph.search, "Search")
+                buttonTile(PadGlyph.pc, "Choose the PC")
+                buttonTile(PadGlyph.leftShoulder, "Change tab", second: PadGlyph.rightShoulder)
+            }
+            Text("In Settings, left and right change a value.")
+                .font(.footnote)
+                .foregroundStyle(.white.opacity(0.7))
+        }
+    }
+
+    private func buttonTile(_ symbol: String, _ title: String, second: String? = nil) -> some View {
+        HStack(spacing: 10) {
+            HStack(spacing: 2) {
+                Image(systemName: symbol)
+                if let second {
+                    Image(systemName: second)
+                }
+            }
+            .font(.system(size: 20, weight: .semibold))
+            .foregroundStyle(starlightGold)
+            .frame(minWidth: 30)
+            Text(title)
+                .font(.system(size: 13.5, weight: .medium))
+                .lineLimit(2)
+                .minimumScaleFactor(0.85)
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 12)
+        .frame(maxWidth: .infinity, minHeight: 48, alignment: .leading)
+        .background(Color.white.opacity(0.07), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .accessibilityElement(children: .combine)
+    }
+
+    private var playingCard: some View {
+        Group {
+            controllerStatus
             cardLabel("While you play")
                 .padding(.top, 4)
             shortcutRow("Open the stream menu") { keyCap("Hold START") }
@@ -650,6 +705,8 @@ struct OnboardingView: View {
                     secondaryButton("Skip for Now") { go(to: .controller, forward: true) }
                 }
             case .controller:
+                primaryButton("Continue") { go(to: .playing, forward: true) }
+            case .playing:
                 primaryButton("Continue") { go(to: .done, forward: true) }
             case .done:
                 primaryButton("Open Starlight") { model.finishOnboarding() }

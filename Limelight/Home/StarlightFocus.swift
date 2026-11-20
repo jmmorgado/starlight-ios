@@ -24,6 +24,8 @@ enum PadGlyph {
     static var options: String { pad?.buttonMenu.sfSymbolsName ?? "line.3.horizontal.circle" }
     static var leftShoulder: String { pad?.leftShoulder.sfSymbolsName ?? "l1.rectangle.roundedbottom" }
     static var rightShoulder: String { pad?.rightShoulder.sfSymbolsName ?? "r1.rectangle.roundedbottom" }
+    static var back: String { pad?.buttonB.sfSymbolsName ?? "b.circle" }
+    static var dpad: String { pad?.dpad.sfSymbolsName ?? "dpad" }
 }
 
 /// The ••• of a game's options: with a controller connected, that controller's own Start/Menu
