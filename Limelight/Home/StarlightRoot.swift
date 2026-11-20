@@ -60,6 +60,13 @@ struct HomeRootView: View {
             if let game = model.gameMenu {
                 GameActionPanel(model: model, game: game)
             }
+
+            // First launch: the setup guide covers the app until it's finished or skipped
+            if model.onboardingVisible {
+                OnboardingView(model: model)
+                    .transition(.opacity)
+                    .zIndex(10)
+            }
         }
         .onPreferenceChange(FocusFrameKey.self) { entries in
             GameFocus.shared.entries = entries

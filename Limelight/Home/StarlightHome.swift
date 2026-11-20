@@ -22,6 +22,7 @@
 //    StarlightArtworkEditor  Edit Artwork (manual SteamGridDB match and images)
 //    StarlightStreamMenu     the menu shown over a running stream
 //    StarlightSteam          Steam account, games, achievements
+//    StarlightOnboarding     setup guide on first launch (and from Settings › About)
 //
 
 import SwiftUI
@@ -106,11 +107,27 @@ final class StarlightHomeController: NSObject {
         didSet { model.artworkRequest = artworkRequest }
     }
 
+    /// The setup guide is showing: pairing PINs go to it instead of an alert
+    @objc var onboardingVisible: Bool { model.onboardingVisible }
+
+    /// Pairing started from the setup guide: the PIN to enter on the PC
+    @objc func showPairingPIN(_ pin: String) {
+        model.pairingError = nil
+        model.pairingPIN = pin
+    }
+
+    /// Pairing from the setup guide ended: nil on success, else the reason it failed
+    @objc func pairingFinished(_ error: String?) {
+        model.pairingPIN = nil
+        model.pairingError = error
+    }
+
     @objc(updateWithHosts:selectedHost:apps:artwork:)
     func update(hosts: [[String: Any]], selectedHost: String?, apps: [[String: Any]], artwork: [String: Any]) {
         let hostItems = hosts.compactMap(HostItem.init)
         let gameItems = apps.compactMap(GameItem.init)
         if model.hosts != hostItems { model.hosts = hostItems }
+        model.decideOnboarding()
         if model.selectedHost != selectedHost { model.selectedHost = selectedHost }
         if model.games != gameItems {
             // Only drop the images of games whose artwork changed (artStamp follows the files' dates)
@@ -305,6 +322,40 @@ final class HomeModel: ObservableObject {
     /// SteamGridDB / Steam artwork download running (Settings → Game Artwork), and its last result
     @Published var artworkBusy = false
     @Published var artworkFailed = false
+
+    // MARK: Setup guide (first launch)
+
+    @Published var onboardingVisible = false
+    /// PIN shown while pairing from the guide, and the last pairing error
+    @Published var pairingPIN: String?
+    @Published var pairingError: String?
+    private var onboardingDecided = false
+    static let onboardingDoneKey = "StarlightOnboardingDone"
+
+    /// On the first state from the app: show the guide on a first launch. People who already
+    /// paired a PC (earlier builds) never see it unless they open it from Settings.
+    func decideOnboarding() {
+        guard !onboardingDecided else { return }
+        onboardingDecided = true
+        let defaults = UserDefaults.standard
+        if defaults.bool(forKey: Self.onboardingDoneKey) { return }
+        if hosts.contains(where: \.paired) {
+            defaults.set(true, forKey: Self.onboardingDoneKey)
+            return
+        }
+        onboardingVisible = true
+    }
+
+    func showOnboarding() {
+        pairingPIN = nil
+        pairingError = nil
+        withAnimation(.easeInOut(duration: 0.3)) { onboardingVisible = true }
+    }
+
+    func finishOnboarding() {
+        UserDefaults.standard.set(true, forKey: Self.onboardingDoneKey)
+        withAnimation(.easeInOut(duration: 0.35)) { onboardingVisible = false }
+    }
 
     var onSelectHost: ((String) -> Void)?
     var onLaunchApp: ((String, String) -> Void)?

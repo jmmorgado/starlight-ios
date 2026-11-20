@@ -191,6 +191,10 @@ struct SettingsTab: View {
                     }
 
                     Section {
+                        Button { model.showOnboarding() } label: {
+                            Label("Setup Guide", systemImage: "sparkles")
+                        }
+                        .settingsFocus("set-onboarding", scope: "settings") { model.showOnboarding() }
                         HStack {
                             Text("Version")
                             Spacer()

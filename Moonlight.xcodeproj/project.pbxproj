@@ -8,6 +8,7 @@
 
 /* Begin PBXBuildFile section */
 		5A7A1C0000000000000000C2 /* StarlightHome.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5A7A1C0000000000000000C1 /* StarlightHome.swift */; };
+		5A7A1C00000000000000E0A2 /* StarlightOnboarding.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5A7A1C00000000000000E0A1 /* StarlightOnboarding.swift */; };
 		5A7A1C00000000000000D0A2 /* StarlightRoot.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5A7A1C00000000000000D0A1 /* StarlightRoot.swift */; };
 		5A7A1C00000000000000D1A2 /* StarlightFocus.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5A7A1C00000000000000D1A1 /* StarlightFocus.swift */; };
 		5A7A1C00000000000000D2A2 /* StarlightComponents.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5A7A1C00000000000000D2A1 /* StarlightComponents.swift */; };
@@ -186,6 +187,7 @@
 
 /* Begin PBXFileReference section */
 		5A7A1C0000000000000000C1 /* StarlightHome.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = StarlightHome.swift; sourceTree = "<group>"; };
+		5A7A1C00000000000000E0A1 /* StarlightOnboarding.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = StarlightOnboarding.swift; sourceTree = "<group>"; };
 		5A7A1C00000000000000D0A1 /* StarlightRoot.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = StarlightRoot.swift; sourceTree = "<group>"; };
 		5A7A1C00000000000000D1A1 /* StarlightFocus.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = StarlightFocus.swift; sourceTree = "<group>"; };
 		5A7A1C00000000000000D2A1 /* StarlightComponents.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = StarlightComponents.swift; sourceTree = "<group>"; };
@@ -400,6 +402,7 @@
 			isa = PBXGroup;
 			children = (
 				5A7A1C0000000000000000C1 /* StarlightHome.swift */,
+				5A7A1C00000000000000E0A1 /* StarlightOnboarding.swift */,
 				5A7A1C00000000000000D0A1 /* StarlightRoot.swift */,
 				5A7A1C00000000000000D1A1 /* StarlightFocus.swift */,
 				5A7A1C00000000000000D2A1 /* StarlightComponents.swift */,
@@ -949,6 +952,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				5A7A1C0000000000000000C2 /* StarlightHome.swift in Sources */,
+				5A7A1C00000000000000E0A2 /* StarlightOnboarding.swift in Sources */,
 				5A7A1C00000000000000D0A2 /* StarlightRoot.swift in Sources */,
 				5A7A1C00000000000000D1A2 /* StarlightFocus.swift in Sources */,
 				5A7A1C00000000000000D2A2 /* StarlightComponents.swift in Sources */,

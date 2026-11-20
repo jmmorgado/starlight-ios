@@ -88,6 +88,8 @@
     // Artwork paths and stamp per game, so pushHomeState (every 2 s) doesn't hit the disk each time.
     // Cleared for a game when its artwork or box art changes.
     NSMutableDictionary<NSString*, NSDictionary*>* _artInfoCache;
+    // Pairing started from the setup guide: the PIN and the result go to it, not to alerts
+    BOOL _onboardingPairing;
 #endif
 }
 static NSMutableSet* hostList;
@@ -96,6 +98,13 @@ static NSMutableSet* hostList;
     // Needs to be synchronous to ensure the alert is shown before any potential
     // failure callback could be invoked.
     dispatch_sync(dispatch_get_main_queue(), ^{
+#if !TARGET_OS_TV
+        if (self->_home != nil && self->_home.onboardingVisible) {
+            self->_onboardingPairing = YES;
+            [self->_home showPairingPIN:PIN];
+            return;
+        }
+#endif
         self->_pairAlert = [UIAlertController alertControllerWithTitle:@"Pairing"
                                                                message:[NSString stringWithFormat:@"Enter the following PIN on the host machine: %@\n\nIf your host PC is running Sunshine, navigate to the Sunshine web UI to enter the PIN.", PIN]
                                                         preferredStyle:UIAlertControllerStyleAlert];
@@ -127,6 +136,15 @@ static NSMutableSet* hostList;
 
 - (void)pairFailed:(NSString *)message {
     dispatch_async(dispatch_get_main_queue(), ^{
+#if !TARGET_OS_TV
+        if (self->_onboardingPairing) {
+            self->_onboardingPairing = NO;
+            [self->_home pairingFinished:message];
+            [self->_discMan startDiscovery];
+            [self hideLoadingFrame:nil];
+            return;
+        }
+#endif
         if (self->_pairAlert != nil) {
             [self->_pairAlert dismissViewControllerAnimated:YES completion:^{
                 [self displayPairingFailureDialog:message];
@@ -140,6 +158,12 @@ static NSMutableSet* hostList;
     dispatch_async(dispatch_get_main_queue(), ^{
         // Store the cert from pairing with the host
         self->_selectedHost.serverCert = serverCert;
+#if !TARGET_OS_TV
+        if (self->_onboardingPairing) {
+            self->_onboardingPairing = NO;
+            [self->_home pairingFinished:nil];
+        }
+#endif
         
         [self->_pairAlert dismissViewControllerAnimated:YES completion:nil];
         self->_pairAlert = nil;
@@ -2468,6 +2492,14 @@ static const NSUInteger kMaxQuickActions = 4;
     
     if ([command isEqualToString:@"addHost"]) {
         [self addHostClicked];
+    }
+    else if ([command isEqualToString:@"cancelPairing"]) {
+        // Setup guide: stop waiting (the PC stops accepting the PIN after a while)
+        if (_onboardingPairing) {
+            _onboardingPairing = NO;
+            [_discMan startDiscovery];
+            [self hideLoadingFrame:nil];
+        }
     }
     else if ([command isEqualToString:@"refreshHost"] && host != nil) {
         // No view: always goes through the full refresh (server info + app list)
