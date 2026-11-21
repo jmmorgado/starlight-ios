@@ -115,4 +115,4 @@ Com comando: **✕** abre, **○** volta; no trailer **✕** pausa e **← / →
 
 ## O PC "isn't sharing its games"
 
-Ativa **List applications** e **Launch applications** para este dispositivo no Vibepollo (Web UI → Client Management).
+Ativa **List applications**, **View streams**, **Launch applications**, **Controller input** e **Touch input** para este dispositivo no Vibepollo (Web UI → Client Management).

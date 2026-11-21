@@ -194,6 +194,8 @@ struct OnboardingView: View {
                 .frame(maxWidth: 640)
                 .frame(maxWidth: .infinity)
             }
+            // Keeps scrolled content out from under the status bar
+            .clipped()
             actions
                 .padding(.horizontal, 24)
                 .padding(.vertical, 16)
@@ -479,11 +481,7 @@ struct OnboardingView: View {
                           highlighted: !found) {
                 permissionMark(on: found)
             }
-            OnboardingRow(symbol: "play.rectangle", title: "Launch applications",
-                          subtitle: "Lets Starlight start games for you",
-                          highlighted: found) {
-                permissionMark(on: false)
-            }
+            permissionsToTurnOn
             if found {
                 HStack(spacing: 10) {
                     checkBadge
@@ -501,7 +499,7 @@ struct OnboardingView: View {
             } else {
                 Text(host?.permissionDenied == true
                      ? "\(host?.name ?? "Your PC") isn't sharing its games yet. Turn on List applications, then refresh."
-                     : "No games yet. If they don't show up, check both switches on the PC and refresh.")
+                     : "No games yet. If they don't show up, check the switches on the PC and refresh.")
                     .font(.footnote)
                     .foregroundStyle(.white.opacity(0.72))
                     .fixedSize(horizontal: false, vertical: true)
@@ -509,6 +507,38 @@ struct OnboardingView: View {
                 checkAgainButton
             }
         }
+    }
+
+    /// The other permissions to switch on in Vibepollo. Starlight can't check them from the device,
+    /// so this is a plain list of instructions (nothing to tap here)
+    private var permissionsToTurnOn: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Also turn on, for this device")
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(.white.opacity(0.7))
+            permissionLine("eye", "View streams", "so the stream can start")
+            permissionLine("play.rectangle", "Launch applications", "so Starlight can start games")
+            permissionLine("gamecontroller", "Controller input", "so the game gets your controller")
+            permissionLine("hand.tap", "Touch input", "so touch controls reach the PC")
+        }
+        .padding(14)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .overlay(RoundedRectangle(cornerRadius: 18, style: .continuous)
+                    .strokeBorder(Color.white.opacity(0.18), style: StrokeStyle(lineWidth: 1, dash: [5, 4])))
+    }
+
+    private func permissionLine(_ symbol: String, _ name: String, _ reason: String) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 10) {
+            Image(systemName: symbol)
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundStyle(starlightGold)
+                .frame(width: 22)
+                .accessibilityHidden(true)
+            (Text(name).fontWeight(.semibold) + Text("  \(reason)").foregroundColor(.white.opacity(0.62)))
+                .font(.system(size: 14))
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .accessibilityElement(children: .combine)
     }
 
     /// A gold check once Starlight could confirm it, else the switch to turn on (on the PC, not here)
@@ -682,24 +712,14 @@ struct OnboardingView: View {
             doneRow("Games", status: model.games.contains(where: \.isInstalled) ? "Ready to play" : "Check Settings › PCs",
                     ok: model.games.contains(where: \.isInstalled))
             doneRow("Steam", status: steam.isConfigured ? "Connected" : "Skipped · add it in Settings", ok: steam.isConfigured)
-            doneRow("Artwork", status: "Steam artwork", ok: true)
+            doneRow("Artwork", status: model.artworkConfigured ? "Steam + SteamGridDB"
+                                                              : "Steam · SteamGridDB in Settings", ok: true)
             infoRow("play.rectangle", "Stream", status: streamSummary)
             infoRow("tv", "TV", status: tvSummary)
+            infoRow("power", "Wake PC", status: autoWake ? "Automatically, when you start a game" : "Off")
             Text("You can change these in Settings.")
                 .font(.footnote)
                 .foregroundStyle(.white.opacity(0.62))
-            Toggle(isOn: $autoWake) {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Wake PC automatically").font(.system(size: 15, weight: .semibold))
-                    Text("Turns the PC on when you start a game")
-                        .font(.footnote)
-                        .foregroundStyle(.white.opacity(0.7))
-                }
-            }
-            .tint(starlightGold)
-            .padding(14)
-            .background(Color.white.opacity(0.12), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
-            .padding(.top, 4)
         }
     }
 
