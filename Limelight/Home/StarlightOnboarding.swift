@@ -270,7 +270,7 @@ struct OnboardingView: View {
                     "Pairing happens once. It lets only your devices connect to your PC.")
         case .games:
             return ("Your games", "Let Starlight see your games",
-                    "Vibepollo keeps your game list private until you allow it. Turn on List applications for this device on your PC.")
+                    "On your PC, Vibepollo decides what each device may do. Starlight needs to list your games and launch them.")
         case .steam:
             return ("Optional", "Connect Steam",
                     "See playtime, achievements and recently played games, and your whole Steam collection in the Library.")
@@ -466,30 +466,29 @@ struct OnboardingView: View {
         return model.games.filter { $0.host == id && $0.isInstalled }
     }
 
+    /// Both permissions Starlight needs on the PC, then the games (or a Refresh button)
     private var gamesCard: some View {
         Group {
             let host = chosenHost
-            if host?.permissionDenied == true {
-                cardLabel("In Vibepollo › Client Management › this device")
-                OnboardingRow(symbol: "list.bullet.rectangle", title: "List applications",
-                              subtitle: "Lets Starlight show your games", highlighted: true) {
-                    // An illustration of the switch to turn on (on the PC, not here)
-                    Capsule()
-                        .fill(starlightGold)
-                        .frame(width: 46, height: 28)
-                        .overlay(Circle().fill(.white).padding(2), alignment: .trailing)
-                        .accessibilityHidden(true)
-                }
-                Text("Starlight can't see the games on \(host?.name ?? "your PC") yet.")
-                    .font(.footnote)
-                    .foregroundStyle(.white.opacity(0.7))
-                checkAgainButton
-            } else if !hostGames.isEmpty {
+            let found = !hostGames.isEmpty
+            cardLabel("In Vibepollo › Client Management › this device, turn on")
+            OnboardingRow(symbol: "list.bullet.rectangle", title: "List applications",
+                          subtitle: found ? "On: Starlight can see your games" : "Lets Starlight show your games",
+                          highlighted: !found) {
+                permissionMark(on: found)
+            }
+            OnboardingRow(symbol: "play.rectangle", title: "Launch applications",
+                          subtitle: "Lets Starlight start games for you",
+                          highlighted: found) {
+                permissionMark(on: false)
+            }
+            if found {
                 HStack(spacing: 10) {
                     checkBadge
                     Text("Games found on \(host?.name ?? "your PC")")
                         .font(.system(size: 15, weight: .semibold))
                 }
+                .padding(.top, 4)
                 LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 8), count: 5), spacing: 8) {
                     ForEach(hostGames.prefix(5)) { game in
                         ArtworkImage(path: game.artPath("grid"), fallbackText: game.name)
@@ -498,13 +497,29 @@ struct OnboardingView: View {
                     }
                 }
             } else {
-                HStack(spacing: 8) {
-                    ProgressView()
-                    Text("Loading your games…").foregroundStyle(.white.opacity(0.75))
-                }
-                .frame(maxWidth: .infinity, minHeight: 72)
+                Text(host?.permissionDenied == true
+                     ? "\(host?.name ?? "Your PC") isn't sharing its games yet. Turn on List applications, then refresh."
+                     : "No games yet. If they don't show up, check both switches on the PC and refresh.")
+                    .font(.footnote)
+                    .foregroundStyle(.white.opacity(0.72))
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.top, 4)
                 checkAgainButton
             }
+        }
+    }
+
+    /// A gold check once Starlight could confirm it, else the switch to turn on (on the PC, not here)
+    @ViewBuilder
+    private func permissionMark(on confirmed: Bool) -> some View {
+        if confirmed {
+            checkBadge
+        } else {
+            Capsule()
+                .fill(starlightGold)
+                .frame(width: 46, height: 28)
+                .overlay(Circle().fill(.white).padding(2), alignment: .trailing)
+                .accessibilityHidden(true)
         }
     }
 
@@ -512,7 +527,7 @@ struct OnboardingView: View {
         Button {
             if let host = chosenHost { model.hostAction("refresh", host) }
         } label: {
-            Label("Check Again", systemImage: "arrow.clockwise")
+            Label("Refresh", systemImage: "arrow.clockwise")
                 .font(.system(size: 15, weight: .semibold))
                 .frame(maxWidth: .infinity, minHeight: 44)
         }

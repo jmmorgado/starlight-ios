@@ -304,7 +304,7 @@ struct EmptyStateView: View {
         if model.hosts.isEmpty { return "Starlight finds PCs running Sunshine or Vibepollo on your network. You can also add one by address." }
         guard let host = model.currentHost else { return "Pick a PC from the menu at the top." }
         if host.permissionDenied {
-            return "On the PC, open the Vibepollo Web UI, go to Client Management, select this iPhone and turn on \u{201C}List applications\u{201D}. Then refresh."
+            return "On the PC, open the Vibepollo Web UI, go to Client Management, select this iPhone and turn on \u{201C}List applications\u{201D} and \u{201C}Launch applications\u{201D}. Then refresh."
         }
         return host.paired ? "Refresh to load the games from \(host.name)." : "Pair once to see and stream its games."
     }

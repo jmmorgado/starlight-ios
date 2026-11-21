@@ -61,7 +61,7 @@ With a free Apple ID the app expires after 7 days. Reinstall the same `.ipa` ove
 On first launch, a **setup guide** walks through all of this (PC software, finding and pairing the PC, the games list, Steam, getting around with a controller and the shortcuts in a stream). It works in portrait and landscape on iPhone and iPad, and opens again from **Settings › About › Setup Guide**. **Settings › Reset Starlight** erases everything the app keeps on the device (PCs and pairing, settings, keys, artwork) and closes it.
 
 1. **Pair your PC:** open Starlight, pick the PC and enter the PIN in the Vibepollo / Sunshine web UI.
-2. **Let Starlight see your games:** in the Vibepollo web UI, go to **Client Management**, open this iPhone and enable **List applications**. Without it, Starlight shows a notice instead of your games.
+2. **Let Starlight see your games:** in the Vibepollo web UI, go to **Client Management**, open this iPhone and enable **List applications** and **Launch applications**. Without them, Starlight can't show or start your games.
 3. **Artwork (optional):** Steam games get Steam's artwork without any setup. For games that aren't on Steam, missing images and Edit Artwork, sign in on steamgriddb.com, generate a key under **Preferences › API** and paste it in **Settings › Game Artwork**.
 4. **Steam:** create a key at [steamcommunity.com/dev/apikey](https://steamcommunity.com/dev/apikey) and paste it in **Settings › Steam** with your SteamID64 or profile URL. Your profile's **Game details** must be public for playtime and achievements.
 
