@@ -26,6 +26,8 @@ struct OnboardingView: View {
     @ObservedObject private var steam = SteamManager.shared
     @ObservedObject private var device = DeviceStatus.shared
     @AppStorage("StarlightAutoWake") private var autoWake = true
+    @AppStorage("StarlightExternalDisplayMode") private var externalMode = 0
+    @AppStorage("StarlightExternalMatchResolution") private var externalMatchResolution = true
 
     @State private var step: OnboardingStep = .welcome
     @State private var forward = true
@@ -681,6 +683,11 @@ struct OnboardingView: View {
                     ok: model.games.contains(where: \.isInstalled))
             doneRow("Steam", status: steam.isConfigured ? "Connected" : "Skipped · add it in Settings", ok: steam.isConfigured)
             doneRow("Artwork", status: "Steam artwork", ok: true)
+            infoRow("play.rectangle", "Stream", status: streamSummary)
+            infoRow("tv", "TV", status: tvSummary)
+            Text("You can change these in Settings.")
+                .font(.footnote)
+                .foregroundStyle(.white.opacity(0.62))
             Toggle(isOn: $autoWake) {
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Wake PC automatically").font(.system(size: 15, weight: .semibold))
@@ -835,6 +842,49 @@ struct OnboardingView: View {
         .padding(.horizontal, 14)
         .padding(.vertical, 11)
         .background(Color.white.opacity(0.07), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+    }
+
+    /// Resolution, frame rate and bitrate as saved (e.g. "Full screen · 60 FPS · 50 Mbps")
+    private var streamSummary: String {
+        guard let settings = model.settingsProvider?() else { return "Settings › Stream" }
+        let width = (settings["width"] as? NSNumber)?.intValue ?? 0
+        let height = (settings["height"] as? NSNumber)?.intValue ?? 0
+        let fps = (settings["framerate"] as? NSNumber)?.intValue ?? 60
+        let mbps = ((settings["bitrate"] as? NSNumber)?.intValue ?? 0) / 1000
+        let resolutions = settings["resolutions"] as? [[String: Any]] ?? []
+        let match = resolutions.first {
+            ($0["width"] as? NSNumber)?.intValue == width && ($0["height"] as? NSNumber)?.intValue == height
+        }
+        let label = (match?["label"] as? String).map { $0 == "Full Screen" ? "Full screen" : $0 } ?? "\(width)×\(height)"
+        return "\(label) · \(fps) FPS · \(mbps) Mbps"
+    }
+
+    private var tvSummary: String {
+        if externalMode == 1 {
+            return externalMatchResolution ? "Second screen at TV resolution" : "Second screen"
+        }
+        return "Mirror"
+    }
+
+    /// A setting the guide picked for you (not something to tick off)
+    private func infoRow(_ symbol: String, _ title: String, status: String) -> some View {
+        HStack(spacing: 12) {
+            Image(systemName: symbol)
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(starlightGold)
+                .frame(width: 26, height: 26)
+                .accessibilityHidden(true)
+            Text(title).font(.system(size: 15, weight: .semibold))
+            Spacer(minLength: 8)
+            Text(status)
+                .font(.footnote)
+                .foregroundStyle(.white.opacity(0.7))
+                .multilineTextAlignment(.trailing)
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 11)
+        .background(Color.white.opacity(0.07), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .accessibilityElement(children: .combine)
     }
 
     private func doneRow(_ title: String, status: String, ok: Bool) -> some View {

@@ -1875,6 +1875,7 @@ static const NSUInteger kMaxQuickActions = 4;
     
 #if !TARGET_OS_TV
     [self.navigationController setNavigationBarHidden:(_home != nil) animated:NO];
+    [self applyFirstRunDefaultsIfNeeded];
 #else
     [self.navigationController setNavigationBarHidden:NO animated:YES];
 #endif
@@ -2511,6 +2512,36 @@ static const NSUInteger kMaxQuickActions = 4;
         // No view: always goes through the full refresh (server info + app list)
         [self hostClicked:host view:nil];
     }
+}
+
+// Starlight's defaults for a fresh install (or after Reset): with a TV, the stream goes to the TV
+// at the TV's resolution; on the device it fills the screen at 60 FPS and 50 Mbps.
+// Runs once; people who already use Starlight keep their settings.
+- (void)applyFirstRunDefaultsIfNeeded {
+    NSUserDefaults* defaults = [NSUserDefaults standardUserDefaults];
+    if ([defaults boolForKey:@"StarlightFirstRunDefaults"] || self.view.window == nil) {
+        return;
+    }
+    [defaults setBool:YES forKey:@"StarlightFirstRunDefaults"];
+    BOOL fresh = ![defaults boolForKey:@"StarlightOnboardingDone"] && [[[DataManager alloc] init] getHosts].count == 0;
+    if (!fresh) {
+        return;
+    }
+    Log(LOG_I, @"Applying Starlight's first-run defaults");
+    
+    [defaults setInteger:1 forKey:@"StarlightExternalDisplayMode"];      // Second Screen
+    [defaults setBool:YES forKey:@"StarlightExternalMatchResolution"];   // Match TV Resolution
+    
+    NSMutableDictionary* values = [[MainFrameViewController streamSettingsDictionaryForWindow:self.view.window] mutableCopy];
+    for (NSDictionary* resolution in values[@"resolutions"]) {
+        if ([resolution[@"label"] isEqualToString:@"Full Screen"]) {
+            values[@"width"] = resolution[@"width"];
+            values[@"height"] = resolution[@"height"];
+        }
+    }
+    values[@"framerate"] = @60;
+    values[@"bitrate"] = @50000;   // kbps
+    [MainFrameViewController saveStreamSettingsDictionary:values];
 }
 
 // Settings › About › Reset Starlight: erase everything kept on this device, then close the app
