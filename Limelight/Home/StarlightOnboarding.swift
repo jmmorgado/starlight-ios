@@ -32,9 +32,19 @@ struct OnboardingView: View {
     @State private var chosenHostID: String?
     @State private var steamKey = ""
     @State private var steamProfile = ""
+    @State private var streamingApp: StreamingApp = .vibepollo
+
+    /// The app to install on the PC (step 2)
+    enum StreamingApp {
+        case vibepollo, sunshine
+        var name: String { self == .vibepollo ? "Vibepollo" : "Sunshine" }
+        var url: URL {
+            URL(string: self == .vibepollo ? "https://github.com/Nonary/Vibepollo/releases"
+                                           : "https://github.com/LizardByte/Sunshine/releases")!
+        }
+    }
 
     private static let spring = Animation.spring(response: 0.45, dampingFraction: 0.86)
-    private static let vibepolloURL = URL(string: "https://github.com/Nonary/Vibepollo/releases")!
     private static let steamKeyURL = URL(string: "https://steamcommunity.com/dev/apikey")!
 
     var body: some View {
@@ -44,7 +54,7 @@ struct OnboardingView: View {
                 background
                 Group {
                     if step == .welcome {
-                        welcome
+                        welcome(compact: geo.size.height < 500)
                     } else if landscape {
                         landscapeLayout
                     } else {
@@ -110,33 +120,39 @@ struct OnboardingView: View {
             .ignoresSafeArea()
     }
 
-    private var welcome: some View {
-        VStack(spacing: 14) {
-            Spacer(minLength: 0)
+    /// compact: short screens (iPhone in landscape) get a smaller logo and tighter spacing
+    private func welcome(compact: Bool) -> some View {
+        VStack(spacing: compact ? 10 : 14) {
             Image("StarlightLogo")
                 .resizable()
-                .frame(width: 104, height: 104)
+                .frame(width: compact ? 76 : 104, height: compact ? 76 : 104)
                 .shadow(color: .black.opacity(0.5), radius: 24, y: 14)
                 .accessibilityHidden(true)
             Text("Starlight")
-                .font(.system(size: 44, weight: .bold))
-                .padding(.top, 6)
+                .font(.system(size: compact ? 36 : 44, weight: .bold))
+                .padding(.top, compact ? 2 : 6)
             Text("Your PC game library on iPhone and iPad. Set it up in a couple of minutes.")
-                .font(.system(size: 17))
+                .font(.system(size: compact ? 16 : 17))
                 .foregroundStyle(.white.opacity(0.76))
                 .multilineTextAlignment(.center)
+                .fixedSize(horizontal: false, vertical: true)
                 .frame(maxWidth: 460)
             primaryButton("Get Started") { go(to: .pcSoftware, forward: true) }
-                .padding(.top, 14)
+                .padding(.top, compact ? 6 : 14)
             Text("You'll need your PC turned on and on the same network.")
                 .font(.footnote)
                 .foregroundStyle(.white.opacity(0.62))
                 .multilineTextAlignment(.center)
-            Spacer(minLength: 0)
-            skipButton
+                .fixedSize(horizontal: false, vertical: true)
         }
-        .padding(28)
+        .padding(.horizontal, 28)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        // Skip sits in the top corner, like on the other steps, away from the home indicator
+        .overlay(alignment: .topTrailing) {
+            skipButton
+                .padding(.top, 16)
+                .padding(.trailing, 28)
+        }
     }
 
     /// Copy and actions on the left, the step's card on the right
@@ -294,16 +310,23 @@ struct OnboardingView: View {
     private var pcSoftwareCard: some View {
         Group {
             cardLabel("On your PC, install one of these")
-            OnboardingRow(symbol: "desktopcomputer", title: "Vibepollo",
-                          subtitle: "Lists your games and lets Starlight launch them",
-                          highlighted: true) {
-                goldPill("Recommended")
+            Button { withAnimation(.easeInOut(duration: 0.2)) { streamingApp = .vibepollo } } label: {
+                OnboardingRow(symbol: "desktopcomputer", title: "Vibepollo",
+                              subtitle: "Lists and launches your games",
+                              highlighted: streamingApp == .vibepollo) {
+                    goldPill("Recommended")
+                }
             }
-            OnboardingRow(symbol: "desktopcomputer", title: "Sunshine",
-                          subtitle: "Works too, with fewer Starlight features") { EmptyView() }
+            .buttonStyle(.plain)
+            Button { withAnimation(.easeInOut(duration: 0.2)) { streamingApp = .sunshine } } label: {
+                OnboardingRow(symbol: "desktopcomputer", title: "Sunshine",
+                              subtitle: "Works too, with fewer features",
+                              highlighted: streamingApp == .sunshine) { EmptyView() }
+            }
+            .buttonStyle(.plain)
             shareLink
                 .padding(.top, 6)
-            Text("Send the link to your PC by message or email.")
+            Text("Send the \(streamingApp.name) link to your PC by message or email.")
                 .font(.footnote)
                 .foregroundStyle(.white.opacity(0.62))
                 .frame(maxWidth: .infinity)
@@ -313,17 +336,17 @@ struct OnboardingView: View {
     @ViewBuilder
     private var shareLink: some View {
         if #available(iOS 16.0, *) {
-            ShareLink(item: Self.vibepolloURL) {
-                Label("Share Download Link", systemImage: "square.and.arrow.up")
+            ShareLink(item: streamingApp.url) {
+                Label("Share \(streamingApp.name) Link", systemImage: "square.and.arrow.up")
                     .font(.system(size: 15, weight: .semibold))
                     .frame(maxWidth: .infinity, minHeight: 44)
             }
             .buttonStyle(OnboardingSecondaryButtonStyle())
         } else {
             Button {
-                UIPasteboard.general.url = Self.vibepolloURL
+                UIPasteboard.general.url = streamingApp.url
             } label: {
-                Label("Copy Download Link", systemImage: "doc.on.doc")
+                Label("Copy \(streamingApp.name) Link", systemImage: "doc.on.doc")
                     .font(.system(size: 15, weight: .semibold))
                     .frame(maxWidth: .infinity, minHeight: 44)
             }
@@ -755,6 +778,8 @@ struct OnboardingView: View {
     private func goldPill(_ text: String) -> some View {
         Text(text)
             .font(.system(size: 12, weight: .semibold))
+            .lineLimit(1)
+            .fixedSize()
             .foregroundStyle(Color(white: 0.08))
             .padding(.horizontal, 10)
             .padding(.vertical, 5)
