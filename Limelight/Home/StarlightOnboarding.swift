@@ -313,9 +313,7 @@ struct OnboardingView: View {
             Button { withAnimation(.easeInOut(duration: 0.2)) { streamingApp = .vibepollo } } label: {
                 OnboardingRow(symbol: "desktopcomputer", title: "Vibepollo",
                               subtitle: "Lists and launches your games",
-                              highlighted: streamingApp == .vibepollo) {
-                    goldPill("Recommended")
-                }
+                              highlighted: streamingApp == .vibepollo) { EmptyView() }
             }
             .buttonStyle(.plain)
             Button { withAnimation(.easeInOut(duration: 0.2)) { streamingApp = .sunshine } } label: {
@@ -326,7 +324,7 @@ struct OnboardingView: View {
             .buttonStyle(.plain)
             shareLink
                 .padding(.top, 6)
-            Text("Send the \(streamingApp.name) link to your PC by message or email.")
+            Text("Send it to your PC by message or email.")
                 .font(.footnote)
                 .foregroundStyle(.white.opacity(0.62))
                 .frame(maxWidth: .infinity)
@@ -773,17 +771,6 @@ struct OnboardingView: View {
         Text(text)
             .font(.system(size: 12.5, weight: .semibold))
             .foregroundStyle(.white.opacity(0.75))
-    }
-
-    private func goldPill(_ text: String) -> some View {
-        Text(text)
-            .font(.system(size: 12, weight: .semibold))
-            .lineLimit(1)
-            .fixedSize()
-            .foregroundStyle(Color(white: 0.08))
-            .padding(.horizontal, 10)
-            .padding(.vertical, 5)
-            .background(starlightGold, in: Capsule())
     }
 
     /// Done / found marks follow the app's gold
