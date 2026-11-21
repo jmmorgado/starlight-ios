@@ -592,14 +592,14 @@ struct OnboardingView: View {
             cardLabel("In Starlight")
                 .padding(.top, 4)
             LazyVGrid(columns: [GridItem(.flexible(), spacing: 8), GridItem(.flexible(), spacing: 8)], spacing: 8) {
-                buttonTile(PadGlyph.dpad, "Move between games")
-                buttonTile(PadGlyph.confirm, "Open the game page")
+                buttonTile(PadGlyph.dpad, "Move")
+                buttonTile(PadGlyph.confirm, "Open game")
                 buttonTile(PadGlyph.play, "Play")
-                buttonTile(PadGlyph.options, "Game options")
+                buttonTile(PadGlyph.options, "Options")
                 buttonTile(PadGlyph.back, "Back")
                 buttonTile(PadGlyph.search, "Search")
-                buttonTile(PadGlyph.pc, "Choose the PC")
-                buttonTile(PadGlyph.leftShoulder, "Change tab", second: PadGlyph.rightShoulder)
+                buttonTile(PadGlyph.pc, "Choose PC")
+                buttonTile(PadGlyph.leftShoulder, "Tabs", second: PadGlyph.rightShoulder)
             }
             Text("In Settings, left and right change a value.")
                 .font(.footnote)
@@ -619,9 +619,9 @@ struct OnboardingView: View {
             .foregroundStyle(starlightGold)
             .frame(minWidth: 30)
             Text(title)
-                .font(.system(size: 13.5, weight: .medium))
+                .font(.system(size: 14, weight: .medium))
                 .lineLimit(2)
-                .minimumScaleFactor(0.85)
+                .fixedSize(horizontal: false, vertical: true)
             Spacer(minLength: 0)
         }
         .padding(.horizontal, 12)
@@ -799,6 +799,8 @@ struct OnboardingView: View {
     private func keyCap(_ text: String) -> some View {
         Text(text)
             .font(.system(size: 11, weight: .bold))
+            .lineLimit(1)
+            .fixedSize()
             .foregroundStyle(Color(white: 0.08))
             .padding(.horizontal, 8)
             .frame(minWidth: 24, minHeight: 24)
@@ -807,9 +809,13 @@ struct OnboardingView: View {
 
     private func shortcutRow<Keys: View>(_ title: String, @ViewBuilder keys: () -> Keys) -> some View {
         HStack(spacing: 12) {
-            Text(title).font(.system(size: 14, weight: .medium))
+            Text(title)
+                .font(.system(size: 14, weight: .medium))
+                .fixedSize(horizontal: false, vertical: true)
             Spacer(minLength: 8)
             keys()
+                .fixedSize()
+                .layoutPriority(1)
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 11)
