@@ -61,7 +61,7 @@ jobs:
           ls -lh Starlight.ipa
 
       - name: Upload IPA
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: Starlight-test-${{ github.run_number }}
           path: dist/Starlight.ipa
