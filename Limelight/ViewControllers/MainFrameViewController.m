@@ -2399,6 +2399,8 @@ static const NSUInteger kMaxQuickActions = 4;
             NSArray* features = [caps[@"features"] isKindOfClass:[NSArray class]] ? caps[@"features"] : nil;
             if (code == 200 && features != nil) {
                 host.nativeFeatures = [NSSet setWithArray:features];
+                NSDictionary* hostInfo = [caps[@"host"] isKindOfClass:[NSDictionary class]] ? caps[@"host"] : nil;
+                host.nativeServerVersion = [hostInfo[@"version"] isKindOfClass:[NSString class]] ? hostInfo[@"version"] : nil;
                 Log(LOG_I, @"%@ runs Rubylight (native API %d): %@", host.name, host.nativeApiVersion, [features componentsJoinedByString:@", "]);
             }
             else if (code == 404) {
@@ -2585,6 +2587,7 @@ static const NSUInteger kMaxQuickActions = 4;
                             @"refreshFailed": @([_refreshFailedHosts containsObject:host.uuid]),
                             @"busy": @([self isHostBusy:host current:[host.uuid isEqualToString:currentUUID]]),
                             @"server": host.nativeApiVersion >= 1 ? @"Rubylight" : @"",
+                            @"serverVersion": host.nativeServerVersion ?: @"",
                             @"features": host.nativeFeatures != nil ? [[host.nativeFeatures allObjects] sortedArrayUsingSelector:@selector(compare:)] : @[],
                             @"ownSettings": @([MainFrameViewController hostHasOwnStreamSettings:host.uuid]),
                             @"address": host.activeAddress ?: (host.localAddress ?: (host.address ?: @"")) }];

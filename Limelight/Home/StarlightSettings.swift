@@ -505,6 +505,7 @@ struct StreamSettingsView: View {
     /// Per-PC settings: "" = the settings every PC shares; a PC's uuid = that PC
     @State private var selectedHost = ""
     @State private var hostOwn = false
+    @State private var featureInfo: ServerFeature?
 
     private var pairedHosts: [HostItem] { model.hosts.filter(\.paired) }
     private var selectedHostItem: HostItem? { pairedHosts.first { $0.id == selectedHost } }
@@ -556,18 +557,26 @@ struct StreamSettingsView: View {
                     HStack {
                         Text("Server")
                         Spacer()
-                        Text(host.server).foregroundStyle(.secondary)
+                        Text(host.serverVersion.isEmpty ? host.server : "\(host.server) \(host.serverVersion)")
+                            .foregroundStyle(.secondary)
                     }
-                    if host.features.contains("session.continue_here") {
-                        Label("Continue Here and Join", systemImage: "arrow.left.arrow.right")
-                    }
-                    if host.features.contains("session.guests") {
-                        Label("Guests", systemImage: "person.2.fill")
+                    ForEach(ServerFeature.offered(by: host)) { feature in
+                        HStack {
+                            Label(feature.title, systemImage: feature.symbol)
+                            Spacer()
+                            Button { featureInfo = feature } label: {
+                                Image(systemName: "info.circle")
+                                    .font(.system(size: 20))
+                            }
+                            .buttonStyle(.borderless)
+                            .accessibilityLabel("About \(feature.title)")
+                        }
+                        .settingsFocus("st-feature-\(feature.id)", scope: scope) { featureInfo = feature }
                     }
                 } header: {
                     Text("This PC")
                 } footer: {
-                    Text("Features this PC's server offers to this device.")
+                    Text("Extras this PC's server offers to this device. Tap ⓘ to see what each one does.")
                 }
             }
 
@@ -665,6 +674,9 @@ struct StreamSettingsView: View {
         .navigationTitle("Stream Settings")
         .onChange(of: customField) { GameFocus.shared.textEditing = $0 != nil }
         .settingsScreen(scope, dismiss: dismiss)
+        .alert(item: $featureInfo) { feature in
+            Alert(title: Text(feature.title), message: Text(feature.detail), dismissButton: .default(Text("OK")))
+        }
         .onAppear { load() }
         .onChange(of: selectedHost) { _ in
             loaded = false
@@ -780,6 +792,37 @@ struct StreamSettingsView: View {
     }
 }
 
+
+// MARK: - Server extras (Rubylight)
+
+/// An extra a PC's server offers this device, with what it does (Settings › Stream Settings › This PC)
+struct ServerFeature: Identifiable {
+    let id: String
+    let title: String
+    let symbol: String
+    let detail: String
+
+    static func offered(by host: HostItem) -> [ServerFeature] {
+        var list: [ServerFeature] = []
+        if host.features.contains("session.continue_here") {
+            list.append(ServerFeature(id: "continue", title: "Continue Here", symbol: "arrow.down.forward.and.arrow.up.backward",
+                detail: "Moves a game another of your devices is playing to this one. The game gets a screen of its own on the PC, at this device's resolution, and the other device's stream ends. Handoff uses it too: continue a stream on your iPad and the game moves there.\n\nShown as the main button when the other device isn't streaming, and in ••• while it is."))
+        }
+        if host.features.contains("session") {
+            list.append(ServerFeature(id: "join", title: "Join", symbol: "person.2.fill",
+                detail: "Plays a game another device is streaming, beside it: you see the same picture and play with your own controller, as another player.\n\nThe PC may ask the player first, depending on Play together in the PC's settings."))
+        }
+        if host.features.contains("session.guests") {
+            list.append(ServerFeature(id: "guests", title: "Guests", symbol: "person.crop.circle.badge.checkmark",
+                detail: "While you play, a device that asks to join brings up Guests in the stream menu: let it in or not. There you also choose what each guest may do (watch only, controller, or controller with keyboard and mouse), and kick or block them.\n\nNeeds Play together set to Ask or Let in on the PC."))
+        }
+        if host.features.contains("session.launcher") {
+            list.append(ServerFeature(id: "launcher", title: "Launcher Notices", symbol: "exclamationmark.bubble",
+                detail: "Tells you when Steam, Epic Games, the EA app or Ubisoft Connect holds up a game: an update or install, a sign-in or Steam Guard code, or another window waiting. It shows on the start screen, or in a banner at the top of the stream, and goes once the game opens."))
+        }
+        return list
+    }
+}
 
 // MARK: - Buttons that start a refresh / download
 

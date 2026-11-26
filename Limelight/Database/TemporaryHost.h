@@ -23,6 +23,7 @@
 @property (atomic) int nativeApiVersion;
 @property (atomic, nullable, retain) NSSet<NSString*> * nativeFeatures;
 @property (atomic, nullable, retain) NSDictionary * nativeSession;
+@property (atomic, nullable, retain) NSString * nativeServerVersion;
 @property (atomic) unsigned short httpsPort;
 @property (atomic) BOOL isNvidiaServerSoftware;
 

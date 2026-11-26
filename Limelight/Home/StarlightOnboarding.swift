@@ -38,11 +38,20 @@ struct OnboardingView: View {
 
     /// The app to install on the PC (step 2)
     enum StreamingApp {
-        case vibepollo, sunshine
-        var name: String { self == .vibepollo ? "Vibepollo" : "Sunshine" }
+        case vibepollo, rubylight, sunshine
+        var name: String {
+            switch self {
+            case .vibepollo: return "Vibepollo"
+            case .rubylight: return "Rubylight"
+            case .sunshine: return "Sunshine"
+            }
+        }
         var url: URL {
-            URL(string: self == .vibepollo ? "https://github.com/Nonary/Vibepollo/releases"
-                                           : "https://github.com/LizardByte/Sunshine/releases")!
+            switch self {
+            case .vibepollo: return URL(string: "https://github.com/Nonary/Vibepollo/releases")!
+            case .rubylight: return URL(string: "https://github.com/RamazanKara/Rubylight/releases")!
+            case .sunshine: return URL(string: "https://github.com/LizardByte/Sunshine/releases")!
+            }
         }
     }
 
@@ -274,7 +283,7 @@ struct OnboardingView: View {
                     "Pairing happens once. It lets only your devices connect to your PC.")
         case .games:
             return ("Your games", "Let Starlight see your games",
-                    "On your PC, Vibepollo decides what each device may do. Starlight needs to list your games and launch them.")
+                    "On your PC, Vibepollo (or Rubylight) decides what each device may do. Starlight needs to list your games and launch them.")
         case .steam:
             return ("Optional", "Connect Steam",
                     "See playtime, achievements and recently played games, and your whole Steam collection in the Library.")
@@ -320,6 +329,25 @@ struct OnboardingView: View {
                               highlighted: streamingApp == .vibepollo) { EmptyView() }
             }
             .buttonStyle(.plain)
+            Button { withAnimation(.easeInOut(duration: 0.2)) { streamingApp = .rubylight } } label: {
+                OnboardingRow(symbol: "desktopcomputer", title: "Rubylight",
+                              subtitle: "Everything Vibepollo does, plus playing across devices",
+                              highlighted: streamingApp == .rubylight) { EmptyView() }
+            }
+            .buttonStyle(.plain)
+            if streamingApp == .rubylight {
+                VStack(alignment: .leading, spacing: 8) {
+                    rubylightExtra("arrow.down.forward.and.arrow.up.backward", "Continue Here",
+                                   "Move a game to another of your devices, at its own resolution (Handoff too)")
+                    rubylightExtra("person.2.fill", "Join", "Play together on the game another device is playing")
+                    rubylightExtra("person.crop.circle.badge.checkmark", "Guests",
+                                   "Let others in from the stream menu and choose what they can do")
+                    rubylightExtra("exclamationmark.bubble", "Launcher Notices",
+                                   "Know when Steam is updating or asking you to sign in")
+                }
+                .padding(.horizontal, 6)
+                .transition(.opacity.combined(with: .move(edge: .top)))
+            }
             Button { withAnimation(.easeInOut(duration: 0.2)) { streamingApp = .sunshine } } label: {
                 OnboardingRow(symbol: "desktopcomputer", title: "Sunshine",
                               subtitle: "Works too, with fewer features",
@@ -332,6 +360,18 @@ struct OnboardingView: View {
                 .font(.footnote)
                 .foregroundStyle(.white.opacity(0.62))
                 .frame(maxWidth: .infinity)
+        }
+    }
+
+    private func rubylightExtra(_ symbol: String, _ title: String, _ text: String) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 10) {
+            Image(systemName: symbol)
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(Color(red: 0.85, green: 0.74, blue: 0.47))
+                .frame(width: 20)
+            (Text(title).fontWeight(.semibold) + Text(" · " + text).foregroundColor(.white.opacity(0.7)))
+                .font(.system(size: 13))
+                .fixedSize(horizontal: false, vertical: true)
         }
     }
 
@@ -382,7 +422,7 @@ struct OnboardingView: View {
                 }
             }
             if model.hosts.isEmpty {
-                Text("No PCs found yet. Make sure the PC is on, on the same Wi-Fi, and Vibepollo or Sunshine is running.")
+                Text("No PCs found yet. Make sure the PC is on, on the same Wi-Fi, and Vibepollo, Rubylight or Sunshine is running.")
                     .font(.system(size: 14))
                     .foregroundStyle(.white.opacity(0.72))
                     .padding(.vertical, 8)
@@ -442,7 +482,7 @@ struct OnboardingView: View {
                 }
                 .frame(maxWidth: .infinity, minHeight: 72)
             }
-            numberedLine(1, "On the PC, open the Vibepollo or Sunshine web page (localhost:47990).")
+            numberedLine(1, "On the PC, open the Vibepollo, Rubylight or Sunshine web page (localhost:47990).")
             numberedLine(2, "Go to PIN, type the code and give this device a name.")
             if model.pairingPIN != nil {
                 HStack(spacing: 8) {
@@ -475,7 +515,7 @@ struct OnboardingView: View {
         Group {
             let host = chosenHost
             let found = !hostGames.isEmpty
-            cardLabel("In Vibepollo › Client Management › this device, turn on")
+            cardLabel("In Vibepollo › Client Management (Rubylight › Devices) › this device, turn on")
             OnboardingRow(symbol: "list.bullet.rectangle", title: "List applications",
                           subtitle: found ? "On: Starlight can see your games" : "Lets Starlight show your games",
                           highlighted: !found) {

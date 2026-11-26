@@ -177,6 +177,7 @@ struct HostItem: Identifiable, Equatable {
     let busy: Bool
     /// The streaming host software when Starlight knows it ("Rubylight"), and the extras it offers this device
     let server: String
+    let serverVersion: String
     let features: [String]
     /// The PC has stream settings of its own
     let ownSettings: Bool
@@ -191,6 +192,7 @@ struct HostItem: Identifiable, Equatable {
         permissionDenied = dict["permissionDenied"] as? Bool ?? false
         address = dict["address"] as? String ?? ""
         server = dict["server"] as? String ?? ""
+        serverVersion = dict["serverVersion"] as? String ?? ""
         features = dict["features"] as? [String] ?? []
         ownSettings = dict["ownSettings"] as? Bool ?? false
         refreshing = dict["refreshing"] as? Bool ?? false
