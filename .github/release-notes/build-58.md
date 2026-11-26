@@ -14,5 +14,5 @@ Starlight now recognises a PC running [Rubylight](https://github.com/RamazanKara
 
 - **Settings For:** Stream Settings can now be set for one PC. Choose the PC and turn on Own Settings for This PC: its resolution, frame rate, bitrate, codec, HDR, frame pacing, Optimize Game Settings and Play Audio on PC start from the shared settings and apply only to it, including from the stream menu. Controls and the statistics overlay stay the same for every PC.
 - **This PC:** a PC running Rubylight shows its server and the features it offers this device (Continue Here and Join, Guests). Other PCs show nothing extra.
-- **Setup guide:** Rubylight is now one of the PC apps to choose from, with what it adds (Continue Here, Join, Guests, Launcher Notices).
+- **Setup guide:** Rubylight comes first and is recommended. Each PC app (Rubylight, Vibepollo, Sunshine) lists what it gives you in Starlight when you choose it.
 - **This PC:** shows the server's version and each extra it offers (Continue Here, Join, Guests, Launcher Notices), with ⓘ explaining what each one does.

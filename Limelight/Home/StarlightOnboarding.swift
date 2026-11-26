@@ -34,7 +34,7 @@ struct OnboardingView: View {
     @State private var chosenHostID: String?
     @State private var steamKey = ""
     @State private var steamProfile = ""
-    @State private var streamingApp: StreamingApp = .vibepollo
+    @State private var streamingApp: StreamingApp = .rubylight
 
     /// The app to install on the PC (step 2)
     enum StreamingApp {
@@ -323,43 +323,61 @@ struct OnboardingView: View {
     private var pcSoftwareCard: some View {
         Group {
             cardLabel("On your PC, install one of these")
-            Button { withAnimation(.easeInOut(duration: 0.2)) { streamingApp = .vibepollo } } label: {
-                OnboardingRow(symbol: "desktopcomputer", title: "Vibepollo",
-                              subtitle: "Lists and launches your games",
-                              highlighted: streamingApp == .vibepollo) { EmptyView() }
-            }
-            .buttonStyle(.plain)
-            Button { withAnimation(.easeInOut(duration: 0.2)) { streamingApp = .rubylight } } label: {
-                OnboardingRow(symbol: "desktopcomputer", title: "Rubylight",
-                              subtitle: "Everything Vibepollo does, plus playing across devices",
-                              highlighted: streamingApp == .rubylight) { EmptyView() }
-            }
-            .buttonStyle(.plain)
-            if streamingApp == .rubylight {
-                VStack(alignment: .leading, spacing: 8) {
-                    rubylightExtra("arrow.down.forward.and.arrow.up.backward", "Continue Here",
-                                   "Move a game to another of your devices, at its own resolution (Handoff too)")
-                    rubylightExtra("person.2.fill", "Join", "Play together on the game another device is playing")
-                    rubylightExtra("person.crop.circle.badge.checkmark", "Guests",
-                                   "Let others in from the stream menu and choose what they can do")
-                    rubylightExtra("exclamationmark.bubble", "Launcher Notices",
-                                   "Know when Steam is updating or asking you to sign in")
-                }
-                .padding(.horizontal, 6)
-                .transition(.opacity.combined(with: .move(edge: .top)))
-            }
-            Button { withAnimation(.easeInOut(duration: 0.2)) { streamingApp = .sunshine } } label: {
-                OnboardingRow(symbol: "desktopcomputer", title: "Sunshine",
-                              subtitle: "Works too, with fewer features",
-                              highlighted: streamingApp == .sunshine) { EmptyView() }
-            }
-            .buttonStyle(.plain)
+            softwareOption(.rubylight, subtitle: "Recommended · everything Vibepollo does, plus playing across devices")
+            softwareOption(.vibepollo, subtitle: "Your game library, a screen per device, permissions")
+            softwareOption(.sunshine, subtitle: "The basics: streams your screen, games added by hand")
             shareLink
                 .padding(.top, 6)
             Text("Send it to your PC by message or email.")
                 .font(.footnote)
                 .foregroundStyle(.white.opacity(0.62))
                 .frame(maxWidth: .infinity)
+        }
+    }
+
+    /// One of the PC apps; chosen, it lists what it gives you in Starlight
+    @ViewBuilder
+    private func softwareOption(_ app: StreamingApp, subtitle: String) -> some View {
+        Button { withAnimation(.easeInOut(duration: 0.2)) { streamingApp = app } } label: {
+            OnboardingRow(symbol: "desktopcomputer", title: app.name, subtitle: subtitle,
+                          highlighted: streamingApp == app) { EmptyView() }
+        }
+        .buttonStyle(.plain)
+        if streamingApp == app {
+            VStack(alignment: .leading, spacing: 8) {
+                ForEach(Array(softwareFeatures(app).enumerated()), id: \.offset) { _, feature in
+                    rubylightExtra(feature.0, feature.1, feature.2)
+                }
+            }
+            .padding(.horizontal, 6)
+            .transition(.opacity.combined(with: .move(edge: .top)))
+        }
+    }
+
+    private func softwareFeatures(_ app: StreamingApp) -> [(String, String, String)] {
+        switch app {
+        case .rubylight:
+            return [
+                ("square.stack.3d.up.fill", "Everything in Vibepollo", "Game library, a screen per device, permissions"),
+                ("arrow.down.forward.and.arrow.up.backward", "Continue Here",
+                 "Move a game to another of your devices, at its own resolution (Handoff too)"),
+                ("person.2.fill", "Join", "Play together on the game another device is playing"),
+                ("person.crop.circle.badge.checkmark", "Guests", "Let others in from the stream menu and choose what they can do"),
+                ("exclamationmark.bubble", "Launcher Notices", "Know when Steam is updating or asking you to sign in"),
+            ]
+        case .vibepollo:
+            return [
+                ("square.grid.2x2.fill", "Game Library", "Your Steam and Playnite games appear on their own, with covers"),
+                ("rectangle.on.rectangle", "A Screen per Device", "Each device streams at its own resolution, without touching your monitors"),
+                ("lock.shield", "Permissions", "Choose what each device may do on your PC"),
+                ("play.circle", "Resume Anywhere", "Pick up a game started on another device, at that device's resolution"),
+            ]
+        case .sunshine:
+            return [
+                ("display", "Streams Your Screen", "Plays what's on one of your PC's monitors"),
+                ("plus.square", "Games by Hand", "Add each game in Sunshine's settings"),
+                ("play.circle", "Resume", "Only on the device that started the game"),
+            ]
         }
     }
 
