@@ -739,7 +739,8 @@ static NSMutableSet* hostList;
     _streamConfig.serverCert = app.host.serverCert;
     
     DataManager* dataMan = [[DataManager alloc] init];
-    TemporarySettings* streamSettings = [dataMan getSettings];
+    TemporarySettings* streamSettings = [MainFrameViewController settingsForHost:app.host.uuid];
+    (void)dataMan;
     
 #if TARGET_OS_TV
     _streamConfig.frameRate = [streamSettings.framerate intValue];
@@ -759,6 +760,7 @@ static NSMutableSet* hostList;
     _streamConfig.appUUID = app.uuid;
 #if !TARGET_OS_TV
     _streamConfig.nativeGuests = [self hostHasNativeFeature:@"session.guests" host:app.host];
+    _streamConfig.nativeLauncher = [self hostHasNativeFeature:@"session.launcher" host:app.host];
 #endif
     // Same rule as when the stream switches screens mid-stream (StreamFrameViewController)
     UIScreen* tvScreen = nil;
@@ -2235,6 +2237,25 @@ static const NSUInteger kMaxQuickActions = 4;
     _home.onSaveSettings = ^(NSDictionary<NSString*, id>* settings) {
         [weakSelf homeSaveStreamSettings:settings];
     };
+    // Per-PC stream settings: "get" (the PC's settings, with hostOwnSettings), "save", "own" (turn the
+    // PC's own settings on, starting from the shared ones) and "shared" (back to the shared ones)
+    _home.hostSettingsRequest = ^NSDictionary<NSString*, id>* (NSString* action, NSString* hostUUID, NSDictionary<NSString*, id>* values) {
+        MainFrameViewController* strongSelf = weakSelf;
+        UIWindow* window = strongSelf.view.window;
+        if ([action isEqualToString:@"save"] && values != nil) {
+            [MainFrameViewController saveStreamSettingsDictionary:values host:hostUUID];
+        }
+        else if ([action isEqualToString:@"own"]) {
+            [MainFrameViewController setHostStreamOverrides:[MainFrameViewController streamSettingsDictionaryForWindow:window] host:hostUUID];
+        }
+        else if ([action isEqualToString:@"shared"]) {
+            [MainFrameViewController setHostStreamOverrides:nil host:hostUUID];
+        }
+        if (![action isEqualToString:@"get"]) {
+            [strongSelf pushHomeState];
+        }
+        return [MainFrameViewController streamSettingsDictionaryForWindow:window host:hostUUID];
+    };
     _home.artworkRequest = ^(NSString* action, NSDictionary<NSString*, id>* params, void (^reply)(NSDictionary<NSString*, id>*)) {
         [weakSelf homeArtworkRequest:action params:params reply:reply];
     };
@@ -2563,6 +2584,9 @@ static const NSUInteger kMaxQuickActions = 4;
                             @"refreshing": @([_refreshingHosts containsObject:host.uuid]),
                             @"refreshFailed": @([_refreshFailedHosts containsObject:host.uuid]),
                             @"busy": @([self isHostBusy:host current:[host.uuid isEqualToString:currentUUID]]),
+                            @"server": host.nativeApiVersion >= 1 ? @"Rubylight" : @"",
+                            @"features": host.nativeFeatures != nil ? [[host.nativeFeatures allObjects] sortedArrayUsingSelector:@selector(compare:)] : @[],
+                            @"ownSettings": @([MainFrameViewController hostHasOwnStreamSettings:host.uuid]),
                             @"address": host.activeAddress ?: (host.localAddress ?: (host.address ?: @"")) }];
     }
     
@@ -3166,6 +3190,97 @@ static const NSUInteger kMaxQuickActions = 4;
 
 - (void)homeSaveStreamSettings:(NSDictionary<NSString*, id>*)values {
     [MainFrameViewController saveStreamSettingsDictionary:values];
+}
+
+#pragma mark - Per-PC stream settings
+
+static NSString* const kHostStreamSettingsKey = @"StarlightHostStreamSettings";
+
+// The settings a PC can have of its own: the video ones and the Host ones
++ (NSArray<NSString*>*)perHostStreamKeys {
+    return @[ @"width", @"height", @"framerate", @"bitrate", @"codec", @"hdr", @"framePacing", @"optimizeGames", @"audioOnPC" ];
+}
+
++ (NSDictionary<NSString*, id>*)hostStreamOverrides:(NSString*)hostUUID {
+    if (hostUUID.length == 0) {
+        return nil;
+    }
+    NSDictionary* all = [[NSUserDefaults standardUserDefaults] dictionaryForKey:kHostStreamSettingsKey];
+    NSDictionary* mine = all[hostUUID];
+    return [mine isKindOfClass:[NSDictionary class]] ? mine : nil;
+}
+
++ (BOOL)hostHasOwnStreamSettings:(NSString*)hostUUID {
+    return [self hostStreamOverrides:hostUUID] != nil;
+}
+
+// Turn a PC's own settings on (starting from the shared ones) or off (nil)
++ (void)setHostStreamOverrides:(NSDictionary<NSString*, id>*)values host:(NSString*)hostUUID {
+    if (hostUUID.length == 0) {
+        return;
+    }
+    NSMutableDictionary* all = [[[NSUserDefaults standardUserDefaults] dictionaryForKey:kHostStreamSettingsKey] mutableCopy] ?: [NSMutableDictionary dictionary];
+    if (values == nil) {
+        [all removeObjectForKey:hostUUID];
+    }
+    else {
+        NSMutableDictionary* mine = [NSMutableDictionary dictionary];
+        for (NSString* key in [self perHostStreamKeys]) {
+            if (values[key] != nil) {
+                mine[key] = values[key];
+            }
+        }
+        all[hostUUID] = mine;
+    }
+    [[NSUserDefaults standardUserDefaults] setObject:all forKey:kHostStreamSettingsKey];
+}
+
++ (NSDictionary<NSString*, id>*)streamSettingsDictionaryForWindow:(UIWindow*)window host:(NSString*)hostUUID {
+    NSMutableDictionary* values = [[self streamSettingsDictionaryForWindow:window] mutableCopy];
+    NSDictionary* mine = [self hostStreamOverrides:hostUUID];
+    [values addEntriesFromDictionary:mine ?: @{}];
+    values[@"hostOwnSettings"] = @(mine != nil);
+    return values;
+}
+
++ (void)saveStreamSettingsDictionary:(NSDictionary<NSString*, id>*)values host:(NSString*)hostUUID {
+    NSDictionary* mine = [self hostStreamOverrides:hostUUID];
+    if (mine == nil) {
+        [self saveStreamSettingsDictionary:values];
+        return;
+    }
+    // The PC's own values go to the PC; the rest (controls, overlay…) stay shared
+    [self setHostStreamOverrides:values host:hostUUID];
+    NSMutableDictionary* shared = [[self streamSettingsDictionaryForWindow:nil] mutableCopy];
+    for (NSString* key in values) {
+        if (![[self perHostStreamKeys] containsObject:key]) {
+            shared[key] = values[key];
+        }
+    }
+    [self saveStreamSettingsDictionary:shared];
+}
+
+// The settings to stream with on this PC: the shared ones with the PC's own on top (not saved)
++ (TemporarySettings*)settingsForHost:(NSString*)hostUUID {
+    TemporarySettings* settings = [[[DataManager alloc] init] getSettings];
+    NSDictionary* mine = [self hostStreamOverrides:hostUUID];
+    if (mine == nil) {
+        return settings;
+    }
+    if (mine[@"width"] != nil) settings.width = mine[@"width"];
+    if (mine[@"height"] != nil) settings.height = mine[@"height"];
+    if (mine[@"framerate"] != nil) settings.framerate = mine[@"framerate"];
+    if (mine[@"bitrate"] != nil) settings.bitrate = mine[@"bitrate"];
+    if (mine[@"codec"] != nil) {
+        int codec = [mine[@"codec"] intValue];
+        settings.preferredCodec = (codec >= CODEC_PREF_AUTO && codec <= CODEC_PREF_AV1) ? codec : CODEC_PREF_AUTO;
+    }
+    if (mine[@"hdr"] != nil) settings.enableHdr = [mine[@"hdr"] boolValue];
+    if (mine[@"framePacing"] != nil) settings.useFramePacing = [mine[@"framePacing"] boolValue];
+    if (mine[@"optimizeGames"] != nil) settings.optimizeGames = [mine[@"optimizeGames"] boolValue];
+    if (mine[@"audioOnPC"] != nil) settings.playAudioOnPC = [mine[@"audioOnPC"] boolValue];
+    Log(LOG_I, @"Using this PC's own stream settings (%@x%@, %@ FPS, %@ kbps)", settings.width, settings.height, settings.framerate, settings.bitrate);
+    return settings;
 }
 
 + (void)saveStreamSettingsDictionary:(NSDictionary<NSString*, id>*)values {

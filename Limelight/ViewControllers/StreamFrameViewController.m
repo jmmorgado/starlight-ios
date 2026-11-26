@@ -51,6 +51,11 @@
     NSTimer *_inactivityTimer;
     NSTimer *_statsUpdateTimer;
     NSTimer *_guestsTimer;
+    NSTimer *_launcherTimer;
+    NSDate *_launcherWatchUntil;
+    BOOL _launcherNoteShown;
+    BOOL _launcherRequestInFlight;
+    UIVisualEffectView *_launcherBanner;
     BOOL _guestsRequestInFlight;
     UITapGestureRecognizer *_menuTapGestureRecognizer;
     UITapGestureRecognizer *_menuDoubleTapGestureRecognizer;
@@ -164,7 +169,7 @@
     
     [UIApplication sharedApplication].idleTimerDisabled = YES;
     
-    _settings = [[[DataManager alloc] init] getSettings];
+    _settings = [MainFrameViewController settingsForHost:self.streamConfig.hostUUID];
     
     _stageLabel = [[UILabel alloc] init];
     [_stageLabel setUserInteractionEnabled:NO];
@@ -243,6 +248,10 @@
                                    connectionCallbacks:self];
     NSOperationQueue* opQueue = [[NSOperationQueue alloc] init];
     [opQueue addOperation:_streamMan];
+#if !TARGET_OS_TV
+    // Rubylight: say so when Steam (or another launcher) holds up the game
+    [self startLauncherWatch];
+#endif
     
     [[NSNotificationCenter defaultCenter] addObserver:self
                                              selector:@selector(applicationWillResignActive:)
@@ -453,8 +462,8 @@
 
 // Stream Settings changed from the stream menu: Controls apply now; Video ones reconnect when asked
 - (void)streamMenuSettingsChanged:(NSDictionary<NSString*, id>*)values reconnect:(BOOL)reconnect {
-    [MainFrameViewController saveStreamSettingsDictionary:values];
-    _settings = [[[DataManager alloc] init] getSettings];
+    [MainFrameViewController saveStreamSettingsDictionary:values host:self.streamConfig.hostUUID];
+    _settings = [MainFrameViewController settingsForHost:self.streamConfig.hostUUID];
     
     self.streamConfig.swapABXYButtons = _settings.swapABXYButtons;
     [_controllerSupport setSwapABXYButtons:_settings.swapABXYButtons];
@@ -704,6 +713,7 @@
     _statsUpdateTimer = nil;
 #if !TARGET_OS_TV
     [self stopGuestsPolling];
+    [self stopLauncherWatch];
 #endif
     
     [self.navigationController popToRootViewControllerAnimated:YES];
@@ -832,6 +842,130 @@
 #if !TARGET_OS_TV
 #pragma mark - Stream menu (Starlight)
 
+#pragma mark - Launcher notice (Rubylight)
+
+// While the game hasn't shown up (up to 10 minutes after the launch), the PC may say a launcher
+// is in the way: Steam updating, asking to sign in, or another window waiting
+- (void)startLauncherWatch {
+    if (!self.streamConfig.nativeLauncher || _launcherTimer != nil) {
+        return;
+    }
+    _launcherWatchUntil = [NSDate dateWithTimeIntervalSinceNow:600];
+    __weak StreamFrameViewController* weakSelf = self;
+    _launcherTimer = [NSTimer scheduledTimerWithTimeInterval:2.5 repeats:YES block:^(NSTimer* timer) {
+        [weakSelf refreshLauncherNote];
+    }];
+}
+
+- (void)stopLauncherWatch {
+    [_launcherTimer invalidate];
+    _launcherTimer = nil;
+    [self showLauncherNote:nil];
+}
+
+- (void)refreshLauncherNote {
+    if (_launcherRequestInFlight) {
+        return;
+    }
+    if ([_launcherWatchUntil timeIntervalSinceNow] < 0) {
+        [self stopLauncherWatch];
+        return;
+    }
+    _launcherRequestInFlight = YES;
+    HttpManager* hMan = [self streamHttpManager];
+    dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
+        NSInteger code = 0;
+        NSDictionary* session = [hMan nativeRequest:@"GET" path:@"/session" body:nil timeout:4 statusCode:&code errorMessage:nil];
+        dispatch_async(dispatch_get_main_queue(), ^{
+            self->_launcherRequestInFlight = NO;
+            if (self->_launcherTimer == nil || code != 200 || session == nil) {
+                if (code == 404) {
+                    [self stopLauncherWatch];
+                }
+                return;
+            }
+            NSDictionary* note = [session[@"launcher"] isKindOfClass:[NSDictionary class]] ? session[@"launcher"] : nil;
+            if (note != nil) {
+                self->_launcherNoteShown = YES;
+                [self showLauncherNote:[self launcherNoteText:note]];
+            }
+            else if (self->_launcherNoteShown) {
+                // The game showed up (or the launcher window closed): done watching
+                [self stopLauncherWatch];
+            }
+        });
+    });
+}
+
+- (NSString*)launcherNoteText:(NSDictionary*)note {
+    NSDictionary* names = @{ @"steam": @"Steam", @"epic": @"Epic Games", @"ea": @"EA app", @"ubisoft": @"Ubisoft Connect" };
+    NSString* key = [note[@"launcher"] isKindOfClass:[NSString class]] ? note[@"launcher"] : @"";
+    NSString* launcher = names[key] ?: (key.length > 0 ? key : @"The launcher");
+    NSString* kind = [note[@"kind"] isKindOfClass:[NSString class]] ? note[@"kind"] : @"prompt";
+    NSString* title = [note[@"window_title"] isKindOfClass:[NSString class]] ? note[@"window_title"] : @"";
+    NSString* line;
+    if ([kind isEqualToString:@"update"]) {
+        line = [NSString stringWithFormat:@"%@ is updating or installing before the game starts", launcher];
+    }
+    else if ([kind isEqualToString:@"sign_in"]) {
+        line = [NSString stringWithFormat:@"%@ is asking you to sign in", launcher];
+    }
+    else {
+        line = [NSString stringWithFormat:@"%@ is waiting for you", launcher];
+    }
+    return title.length > 0 ? [NSString stringWithFormat:@"%@\n%@", line, title] : line;
+}
+
+// The note: on the start screen while connecting, as a banner at the top once the stream shows
+- (void)showLauncherNote:(NSString*)text {
+    if (text == nil) {
+        if (_launcherBanner != nil) {
+            UIView* banner = _launcherBanner;
+            _launcherBanner = nil;
+            [UIView animateWithDuration:0.3 animations:^{ banner.alpha = 0; } completion:^(BOOL finished) { [banner removeFromSuperview]; }];
+        }
+        return;
+    }
+    if (!_connectionReady && _stageLabel.superview != nil) {
+        _stageLabel.numberOfLines = 0;
+        [_stageLabel setText:text];
+        [_stageLabel sizeToFit];
+        _stageLabel.center = CGPointMake(self.view.frame.size.width / 2, self.view.frame.size.height / 2);
+        return;
+    }
+    UIView* container = _externalWindow != nil ? _externalWindow.rootViewController.view : self.view;
+    if (_launcherBanner == nil || _launcherBanner.superview != container) {
+        [_launcherBanner removeFromSuperview];
+        _launcherBanner = [[UIVisualEffectView alloc] initWithEffect:[UIBlurEffect effectWithStyle:UIBlurEffectStyleSystemThinMaterialDark]];
+        _launcherBanner.layer.cornerRadius = 18;
+        _launcherBanner.clipsToBounds = YES;
+        _launcherBanner.userInteractionEnabled = NO;
+        UILabel* label = [[UILabel alloc] init];
+        label.tag = 1;
+        label.numberOfLines = 2;
+        label.textAlignment = NSTextAlignmentCenter;
+        label.textColor = [UIColor whiteColor];
+        label.font = [UIFont systemFontOfSize:14 weight:UIFontWeightSemibold];
+        label.translatesAutoresizingMaskIntoConstraints = NO;
+        [_launcherBanner.contentView addSubview:label];
+        _launcherBanner.translatesAutoresizingMaskIntoConstraints = NO;
+        [container addSubview:_launcherBanner];
+        [NSLayoutConstraint activateConstraints:@[
+            [label.leadingAnchor constraintEqualToAnchor:_launcherBanner.contentView.leadingAnchor constant:16],
+            [label.trailingAnchor constraintEqualToAnchor:_launcherBanner.contentView.trailingAnchor constant:-16],
+            [label.topAnchor constraintEqualToAnchor:_launcherBanner.contentView.topAnchor constant:10],
+            [label.bottomAnchor constraintEqualToAnchor:_launcherBanner.contentView.bottomAnchor constant:-10],
+            [_launcherBanner.centerXAnchor constraintEqualToAnchor:container.centerXAnchor],
+            [_launcherBanner.topAnchor constraintEqualToAnchor:container.safeAreaLayoutGuide.topAnchor constant:12],
+            [_launcherBanner.widthAnchor constraintLessThanOrEqualToAnchor:container.widthAnchor multiplier:0.8],
+        ]];
+        _launcherBanner.alpha = 0;
+        [UIView animateWithDuration:0.3 animations:^{ self->_launcherBanner.alpha = 1; }];
+    }
+    UILabel* label = [_launcherBanner.contentView viewWithTag:1];
+    label.text = text;
+}
+
 #pragma mark - Guests (Rubylight)
 
 - (HttpManager*)streamHttpManager {
@@ -959,7 +1093,7 @@
     [_streamMenu setStatsVisible:(_statsUpdateTimer != nil)];
     [_streamMenu setPictureInPictureAvailable:[self pipCanStartManually]];
     [_streamMenu setDisplayOption:[self displayMenuOption]];
-    [_streamMenu setStreamSettings:[MainFrameViewController streamSettingsDictionaryForWindow:self.view.window]];
+    [_streamMenu setStreamSettings:[MainFrameViewController streamSettingsDictionaryForWindow:self.view.window host:self.streamConfig.hostUUID]];
     
     UIViewController* menuVC = _streamMenu.viewController;
     if (menuVC.parentViewController != host) {

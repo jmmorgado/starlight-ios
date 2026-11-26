@@ -28,6 +28,13 @@
 // Starlight: Stream Settings as a dictionary (the keys StreamSettingsView uses), and saving them back
 + (NSDictionary<NSString*, id>*)streamSettingsDictionaryForWindow:(UIWindow*)window;
 + (void)saveStreamSettingsDictionary:(NSDictionary<NSString*, id>*)values;
+// Per-PC stream settings: a PC can have its own video and host settings (nil host = every PC).
+// The dictionary versions merge the PC's own values over the shared ones; saving writes the PC's
+// own values when it has them, the shared ones otherwise.
++ (NSDictionary<NSString*, id>*)streamSettingsDictionaryForWindow:(UIWindow*)window host:(NSString*)hostUUID;
++ (void)saveStreamSettingsDictionary:(NSDictionary<NSString*, id>*)values host:(NSString*)hostUUID;
++ (TemporarySettings*)settingsForHost:(NSString*)hostUUID;
++ (BOOL)hostHasOwnStreamSettings:(NSString*)hostUUID;
 #endif
 
 // Starlight: bitrate, frame pacing and video formats (codec, HDR) from Stream Settings; after the resolution is set

@@ -502,6 +502,14 @@ struct StreamSettingsView: View {
     @State private var framePacing = false
     @State private var btMouse = false
     @State private var statsOverlay = false
+    /// Per-PC settings: "" = the settings every PC shares; a PC's uuid = that PC
+    @State private var selectedHost = ""
+    @State private var hostOwn = false
+
+    private var pairedHosts: [HostItem] { model.hosts.filter(\.paired) }
+    private var selectedHostItem: HostItem? { pairedHosts.first { $0.id == selectedHost } }
+    /// The Video and Host sections show for every PC, or for a PC with its own settings
+    private var showsStreamValues: Bool { selectedHost.isEmpty || hostOwn }
 
     struct ResolutionOption: Hashable {
         let label: String
@@ -514,6 +522,56 @@ struct StreamSettingsView: View {
     var body: some View {
         ScrollViewReader { proxy in
         Form {
+            if !pairedHosts.isEmpty {
+                Section {
+                    Picker("Settings For", selection: $selectedHost) {
+                        Text("All PCs").tag("")
+                        ForEach(pairedHosts) { host in
+                            Text(host.name).tag(host.id)
+                        }
+                    }
+                    .settingsFocus("st-host", scope: scope, adjust: { delta in
+                        let ids = [""] + pairedHosts.map(\.id)
+                        step(&selectedHost, in: ids, by: delta)
+                    }) {
+                        let ids = [""] + pairedHosts.map(\.id)
+                        step(&selectedHost, in: ids, by: 1, wrap: true)
+                    }
+                    if selectedHost != "" {
+                        switchRow("Own Settings for This PC", $hostOwn, id: "st-hostown")
+                    }
+                } footer: {
+                    if selectedHost.isEmpty {
+                        Text("A PC can have its own resolution, frame rate, bitrate and video settings. Choose it above.")
+                    } else if hostOwn {
+                        Text("Video and Host settings below apply only to this PC. Controls and the statistics overlay are the same for every PC.")
+                    } else {
+                        Text("This PC uses the settings for All PCs.")
+                    }
+                }
+            }
+
+            if let host = selectedHostItem, !host.server.isEmpty {
+                Section {
+                    HStack {
+                        Text("Server")
+                        Spacer()
+                        Text(host.server).foregroundStyle(.secondary)
+                    }
+                    if host.features.contains("session.continue_here") {
+                        Label("Continue Here and Join", systemImage: "arrow.left.arrow.right")
+                    }
+                    if host.features.contains("session.guests") {
+                        Label("Guests", systemImage: "person.2.fill")
+                    }
+                } header: {
+                    Text("This PC")
+                } footer: {
+                    Text("Features this PC's server offers to this device.")
+                }
+            }
+
+            if showsStreamValues {
             Section("Video") {
                 Picker("Resolution", selection: $resolutionIndex) {
                     ForEach(Array(resolutions.enumerated()), id: \.offset) { index, res in
@@ -567,6 +625,9 @@ struct StreamSettingsView: View {
                 switchRow("Smoothest Video (frame pacing)", $framePacing, id: "st-pacing")
             }
 
+            }
+
+            if selectedHost.isEmpty {
             Section("Controls") {
                 Picker("Touch Mode", selection: $absoluteTouch) {
                     Text("Touchpad").tag(false)
@@ -587,11 +648,16 @@ struct StreamSettingsView: View {
                 switchRow("Swap A/B and X/Y Buttons", $swapABXY, id: "st-swap")
                 switchRow("Bluetooth Mouse Support", $btMouse, id: "st-mouse")
             }
+            }
 
+            if showsStreamValues {
             Section("Host") {
                 switchRow("Optimize Game Settings", $optimizeGames, id: "st-optimize")
                 switchRow("Play Audio on PC", $audioOnPC, id: "st-audio")
-                switchRow("Statistics Overlay", $statsOverlay, id: "st-stats")
+                if selectedHost.isEmpty {
+                    switchRow("Statistics Overlay", $statsOverlay, id: "st-stats")
+                }
+            }
             }
         }
         .modifier(FocusScrollFollower(proxy: proxy))
@@ -599,7 +665,17 @@ struct StreamSettingsView: View {
         .navigationTitle("Stream Settings")
         .onChange(of: customField) { GameFocus.shared.textEditing = $0 != nil }
         .settingsScreen(scope, dismiss: dismiss)
-        .onAppear(perform: load)
+        .onAppear { load() }
+        .onChange(of: selectedHost) { _ in
+            loaded = false
+            load(force: true)
+        }
+        .onChange(of: hostOwn) { own in
+            guard loaded, !selectedHost.isEmpty else { return }
+            loaded = false
+            _ = model.hostSettingsRequest?(own ? "own" : "shared", selectedHost, nil)
+            load(force: true)
+        }
         .onDisappear(perform: save)
         .onChange(of: resolutionIndex) { _ in save() }
         .onChange(of: framerate) { _ in save() }
@@ -622,8 +698,16 @@ struct StreamSettingsView: View {
             .settingsFocus(id, scope: scope, adjust: { value.wrappedValue = $0 > 0 }) { value.wrappedValue.toggle() }
     }
 
-    private func load() {
-        guard !loaded, let settings = model.settingsProvider?() else { return }
+    private func load(force: Bool = false) {
+        guard !loaded || force else { return }
+        let fetched: [String: Any]?
+        if selectedHost.isEmpty {
+            fetched = model.settingsProvider?()
+        } else {
+            fetched = model.hostSettingsRequest?("get", selectedHost, nil)
+        }
+        guard let settings = fetched else { return }
+        hostOwn = !selectedHost.isEmpty && ((settings["hostOwnSettings"] as? NSNumber)?.boolValue ?? false)
         let list = (settings["resolutions"] as? [[String: Any]] ?? []).compactMap { dict -> ResolutionOption? in
             guard let label = dict["label"] as? String,
                   let w = (dict["width"] as? NSNumber)?.intValue,
@@ -671,7 +755,7 @@ struct StreamSettingsView: View {
         } else {
             return
         }
-        model.onSaveSettings?([
+        let values: [String: Any] = [
             "width": width,
             "height": height,
             "framerate": framerate,
@@ -687,7 +771,12 @@ struct StreamSettingsView: View {
             "framePacing": framePacing,
             "btMouse": btMouse,
             "statsOverlay": statsOverlay
-        ])
+        ]
+        if selectedHost.isEmpty {
+            model.onSaveSettings?(values)
+        } else if hostOwn {
+            _ = model.hostSettingsRequest?("save", selectedHost, values)
+        }
     }
 }
 

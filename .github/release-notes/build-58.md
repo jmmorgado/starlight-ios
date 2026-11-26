@@ -8,3 +8,9 @@ Starlight now recognises a PC running [Rubylight](https://github.com/RamazanKara
 - **Handoff:** continuing a stream on another device moves the game there (Continue Here), at that device's resolution.
 - **Guests:** while you play a game on a Rubylight PC, a device that asks to join brings up Guests in the stream menu, with Let In and Deny (by touch or controller). Guests lists who plays with you: change what each may do (View Only, Controller, or Controller, Keyboard & Mouse), Kick or Block them. Needs "When another device joins the running game" set to Ask or Let in on the PC.
 - **Joining:** the start screen says whose permission you're waiting for ("Asking iPhone to let you join…").
+- **Launcher notice:** when Steam (or Epic Games, EA app, Ubisoft Connect) holds up a game on a Rubylight PC, updating or asking you to sign in, Starlight says so on the start screen, or in a banner at the top once the stream shows.
+
+## Stream settings per PC
+
+- **Settings For:** Stream Settings can now be set for one PC. Choose the PC and turn on Own Settings for This PC: its resolution, frame rate, bitrate, codec, HDR, frame pacing, Optimize Game Settings and Play Audio on PC start from the shared settings and apply only to it, including from the stream menu. Controls and the statistics overlay stay the same for every PC.
+- **This PC:** a PC running Rubylight shows its server and the features it offers this device (Continue Here and Join, Guests). Other PCs show nothing extra.

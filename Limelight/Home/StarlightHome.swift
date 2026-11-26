@@ -102,6 +102,10 @@ final class StarlightHomeController: NSObject {
     @objc var onSaveSettings: (([String: Any]) -> Void)? {
         didSet { model.onSaveSettings = onSaveSettings }
     }
+    /// Per-PC stream settings: (action "get" | "save" | "own" | "shared", PC uuid, values to save) → the PC's settings
+    @objc var hostSettingsRequest: ((String, String, [String: Any]?) -> [String: Any])? {
+        didSet { model.hostSettingsRequest = hostSettingsRequest }
+    }
     /// (action, params, reply) for the Edit Artwork screen: "info", "search", "options", "setMatch", "setImage"
     @objc var artworkRequest: ((String, [String: Any], @escaping ([String: Any]) -> Void) -> Void)? {
         didSet { model.artworkRequest = artworkRequest }
@@ -171,6 +175,11 @@ struct HostItem: Identifiable, Equatable {
     let refreshFailed: Bool
     /// Connecting: finding out whether the PC is there, waking it, or talking to it (background work)
     let busy: Bool
+    /// The streaming host software when Starlight knows it ("Rubylight"), and the extras it offers this device
+    let server: String
+    let features: [String]
+    /// The PC has stream settings of its own
+    let ownSettings: Bool
 
     init?(_ dict: [String: Any]) {
         guard let uuid = dict["uuid"] as? String else { return nil }
@@ -181,6 +190,9 @@ struct HostItem: Identifiable, Equatable {
         showHidden = dict["showHidden"] as? Bool ?? false
         permissionDenied = dict["permissionDenied"] as? Bool ?? false
         address = dict["address"] as? String ?? ""
+        server = dict["server"] as? String ?? ""
+        features = dict["features"] as? [String] ?? []
+        ownSettings = dict["ownSettings"] as? Bool ?? false
         refreshing = dict["refreshing"] as? Bool ?? false
         refreshFailed = dict["refreshFailed"] as? Bool ?? false
         busy = dict["busy"] as? Bool ?? false
@@ -386,6 +398,7 @@ final class HomeModel: ObservableObject {
     var onArtworkCommand: ((String, String) -> Void)?
     var settingsProvider: (() -> [String: Any])?
     var onSaveSettings: (([String: Any]) -> Void)?
+    var hostSettingsRequest: ((String, String, [String: Any]?) -> [String: Any])?
     var artworkRequest: ((String, [String: Any], @escaping ([String: Any]) -> Void) -> Void)?
 
     // Navigation state
