@@ -757,6 +757,9 @@ static NSMutableSet* hostList;
     _streamConfig.hostUUID = app.host.uuid;
     _streamConfig.hostName = app.host.name;
     _streamConfig.appUUID = app.uuid;
+#if !TARGET_OS_TV
+    _streamConfig.nativeGuests = [self hostHasNativeFeature:@"session.guests" host:app.host];
+#endif
     // Same rule as when the stream switches screens mid-stream (StreamFrameViewController)
     UIScreen* tvScreen = nil;
     if ([[NSUserDefaults standardUserDefaults] integerForKey:@"StarlightExternalDisplayMode"] == 1) {
@@ -1684,6 +1687,7 @@ static NSMutableSet* hostList;
         if ([action isEqualToString:@"join"]) {
             Log(LOG_I, @"Joining %@ on %@ beside the device playing it", app.name, host.name);
             _streamConfig.forceResume = YES;
+            _streamConfig.joiningDevice = [self nativePlayInfoForApp:app onHost:host][@"runningOn"];
         }
         [self performStreamSegue];
     }

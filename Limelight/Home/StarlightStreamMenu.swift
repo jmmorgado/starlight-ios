@@ -82,6 +82,16 @@ final class StarlightStreamMenu: NSObject {
     @objc var onSettings: (([String: Any], Bool) -> Void)? {
         didSet { state.onSettings = onSettings }
     }
+
+    /// Rubylight: the PC's guest list (GET /session/guests). A new request to join opens the menu on Guests.
+    @objc func setGuests(_ info: [String: Any]) {
+        state.loadGuests(info)
+    }
+
+    /// Guest actions: ("approve" | "deny" | "kick" | "revoke" | "permission", guest id, permission or "")
+    @objc var onGuestAction: ((String, String, String) -> Void)? {
+        didSet { state.onGuestAction = onGuestAction }
+    }
 }
 
 final class StreamMenuState: ObservableObject {
@@ -93,7 +103,7 @@ final class StreamMenuState: ObservableObject {
         var destructive = false
     }
 
-    enum Page { case main, settings, controls }
+    enum Page { case main, settings, controls, guests }
 
     /// Changing these needs the stream to reconnect
     struct VideoValues: Equatable {
@@ -137,6 +147,118 @@ final class StreamMenuState: ObservableObject {
     @Published var confirmQuit = false
     @Published var focus = 0
     var onAction: ((String) -> Void)?
+
+    // MARK: Guests (Rubylight)
+
+    struct Guest: Identifiable, Equatable {
+        let id: String
+        let name: String
+        var permission: String
+        var waiting: Bool
+        var streaming: Bool
+    }
+
+    /// The PC offers guests and this device may manage them (it plays the game)
+    @Published private(set) var guestsAvailable = false
+    @Published private(set) var guestRequests: [Guest] = []
+    @Published private(set) var guests: [Guest] = []
+    private var seenRequests = Set<String>()
+    var onGuestAction: ((String, String, String) -> Void)?
+
+    static let guestPermissions = ["view", "controller", "controller-keyboard-mouse"]
+    static func permissionName(_ permission: String) -> String {
+        switch permission {
+        case "view": return "View Only"
+        case "controller-keyboard-mouse": return "Controller, Keyboard & Mouse"
+        default: return "Controller"
+        }
+    }
+
+    func loadGuests(_ info: [String: Any]) {
+        func id(_ value: Any?) -> String? {
+            if let n = value as? NSNumber { return n.stringValue }
+            if let s = value as? String, !s.isEmpty { return s }
+            return nil
+        }
+        let manage = (info["manage"] as? NSNumber)?.boolValue ?? false
+        let waiting: [Guest] = (info["waiting"] as? [[String: Any]] ?? []).compactMap {
+            guard let gid = id($0["id"]) else { return nil }
+            return Guest(id: gid, name: $0["name"] as? String ?? "A device", permission: "", waiting: true, streaming: false)
+        }
+        let joined: [Guest] = (info["guests"] as? [[String: Any]] ?? []).compactMap {
+            guard let gid = id($0["id"]) else { return nil }
+            return Guest(id: gid, name: $0["name"] as? String ?? "A device",
+                         permission: $0["permission"] as? String ?? "controller",
+                         waiting: false, streaming: ($0["streaming"] as? NSNumber)?.boolValue ?? false)
+        }
+        let available = manage
+        if available != guestsAvailable { guestsAvailable = available }
+        if waiting != guestRequests { withAnimation(Self.pageSpring) { guestRequests = waiting } }
+        if joined != guests { withAnimation(Self.pageSpring) { guests = joined } }
+
+        // Someone new asks to join: bring up Guests so the player can answer (by touch or controller)
+        let newRequests = Set(waiting.map(\.id)).subtracting(seenRequests)
+        seenRequests.formUnion(waiting.map(\.id))
+        if manage && !newRequests.isEmpty {
+            UINotificationFeedbackGenerator().notificationOccurred(.warning)
+            if isOpen {
+                if page != .guests { go(to: .guests, forward: true, focus: 0) }
+            } else {
+                open()
+                page = .guests
+                focus = 0
+            }
+        }
+    }
+
+    /// Focus order on the Guests page: Let in / Deny for each request, then each guest's permission, Kick and Block
+    var guestFocusIDs: [String] {
+        guestRequests.flatMap { ["approve:\($0.id)", "deny:\($0.id)"] }
+            + guests.flatMap { ["perm:\($0.id)", "kick:\($0.id)", "block:\($0.id)"] }
+    }
+
+    func guestAction(_ focusID: String, delta: Int = 1) {
+        let parts = focusID.split(separator: ":", maxSplits: 1).map(String.init)
+        guard parts.count == 2 else { return }
+        let (kind, gid) = (parts[0], parts[1])
+        switch kind {
+        case "approve": onGuestAction?("approve", gid, "")
+        case "deny": onGuestAction?("deny", gid, "")
+        case "kick": onGuestAction?("kick", gid, "")
+        case "block": onGuestAction?("revoke", gid, "")
+        case "perm":
+            guard let index = guests.firstIndex(where: { $0.id == gid }) else { return }
+            let options = Self.guestPermissions
+            let current = options.firstIndex(of: guests[index].permission) ?? 1
+            let next = options[(current + delta + options.count) % options.count]
+            guests[index].permission = next
+            onGuestAction?("permission", gid, next)
+        default: break
+        }
+    }
+
+    func leaveGuests() {
+        go(to: .main, forward: false, focus: mainFocusIDs.firstIndex(of: "guests") ?? 0)
+    }
+
+    private func navigateGuests(_ action: String) {
+        let ids = guestFocusIDs
+        let count = ids.count
+        if action == "back" { leaveGuests(); return }
+        guard count > 0 else { return }
+        focus = min(focus, count - 1)
+        let id = ids[focus]
+        switch action {
+        case "up": focus = (focus - 1 + count) % count
+        case "down": focus = (focus + 1) % count
+        case "left":
+            if id.hasPrefix("perm:") { guestAction(id, delta: -1) } else if focus > 0 { focus -= 1 }
+        case "right":
+            if id.hasPrefix("perm:") { guestAction(id, delta: 1) } else if focus < count - 1 { focus += 1 }
+        case "select": guestAction(id)
+        default: break
+        }
+    }
 
     // MARK: Page navigation
 
@@ -265,6 +387,11 @@ final class StreamMenuState: ObservableObject {
         if settingsLoaded {
             list.append(Item(id: "controls", title: "Controls", symbol: "gamecontroller"))
         }
+        if guestsAvailable {
+            let waiting = guestRequests.count
+            let title = waiting > 0 ? "Guests · \(waiting) waiting" : (guests.isEmpty ? "Guests" : "Guests · \(guests.count)")
+            list.append(Item(id: "guests", title: title, symbol: "person.2.fill", prominent: waiting > 0))
+        }
         if pipAvailable {
             list.append(Item(id: "pip", title: "Picture in Picture", symbol: "pip.enter"))
         }
@@ -294,6 +421,8 @@ final class StreamMenuState: ObservableObject {
             go(to: .settings, forward: true, focus: 0)
         case "controls":
             go(to: .controls, forward: true, focus: 0)
+        case "guests":
+            go(to: .guests, forward: true, focus: 0)
         case "askQuit":
             withAnimation(Self.pageSpring) {
                 confirmQuit = true
@@ -316,6 +445,10 @@ final class StreamMenuState: ObservableObject {
         }
         if page == .controls {
             navigateControls(action)
+            return
+        }
+        if page == .guests {
+            navigateGuests(action)
             return
         }
         let ids = mainFocusIDs
@@ -661,6 +794,90 @@ struct StreamMenuView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     }
 
+    // MARK: Guests page (Rubylight)
+
+    private var guestsPanel: some View {
+        let ids = state.guestFocusIDs
+        let focusedID: String? = device.controllerConnected && ids.indices.contains(state.focus) ? ids[state.focus] : nil
+        return VStack(alignment: .leading, spacing: 10) {
+            Button { state.leaveGuests() } label: {
+                Label("Guests", systemImage: "chevron.left")
+                    .font(.system(size: 20, weight: .bold))
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Back to the menu")
+
+            ScrollView(showsIndicators: false) {
+                VStack(alignment: .leading, spacing: 8) {
+                    if !state.guestRequests.isEmpty {
+                        sectionTitle("Asking to join")
+                        ForEach(state.guestRequests) { guest in
+                            VStack(alignment: .leading, spacing: 8) {
+                                Label(guest.name, systemImage: "person.crop.circle.badge.questionmark")
+                                    .font(.system(size: 15, weight: .semibold))
+                                    .lineLimit(1)
+                                HStack(spacing: 8) {
+                                    guestButton("Let In", id: "approve:\(guest.id)", prominent: true, destructive: false, focusedID: focusedID)
+                                    guestButton("Deny", id: "deny:\(guest.id)", prominent: false, destructive: true, focusedID: focusedID)
+                                }
+                            }
+                            .padding(12)
+                            .background(Color.white.opacity(0.07), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+                        }
+                    }
+                    sectionTitle("Playing with you")
+                    if state.guests.isEmpty {
+                        Text("Nobody yet. Another device can join this game with Join.")
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                            .padding(.horizontal, 4)
+                    }
+                    ForEach(state.guests) { guest in
+                        VStack(alignment: .leading, spacing: 8) {
+                            HStack {
+                                Label(guest.name, systemImage: guest.streaming ? "person.fill" : "person")
+                                    .font(.system(size: 15, weight: .semibold))
+                                    .lineLimit(1)
+                                Spacer(minLength: 4)
+                                if !guest.streaming {
+                                    Text("Away").font(.caption).foregroundStyle(.secondary)
+                                }
+                            }
+                            settingRow(StreamMenuState.SettingRow(id: "perm:\(guest.id)", title: "Can",
+                                                                  value: StreamMenuState.permissionName(guest.permission)),
+                                       focused: focusedID == "perm:\(guest.id)",
+                                       adjust: { state.guestAction("perm:\(guest.id)", delta: $0) })
+                            HStack(spacing: 8) {
+                                guestButton("Kick", id: "kick:\(guest.id)", prominent: false, destructive: false, focusedID: focusedID)
+                                guestButton("Block", id: "block:\(guest.id)", prominent: false, destructive: true, focusedID: focusedID)
+                            }
+                        }
+                        .padding(12)
+                        .background(Color.white.opacity(0.07), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+                    }
+                    Text("Guests see your screen and play with their own controller. Block keeps a device out until the game ends.")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                        .padding(.horizontal, 4)
+                }
+                .padding(.vertical, 2)
+            }
+        }
+        .padding(20)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+    }
+
+    private func guestButton(_ title: String, id: String, prominent: Bool, destructive: Bool, focusedID: String?) -> some View {
+        Button { state.guestAction(id) } label: {
+            Text(title)
+                .font(.system(size: 15, weight: .semibold))
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 4)
+        }
+        .modifier(StreamMenuButtonStyle(prominent: prominent, destructive: destructive))
+        .overlay(focusRing(Capsule(), lineWidth: 3, visible: focusedID == id))
+    }
+
     private func sectionTitle(_ title: String) -> some View {
         Text(title.uppercased())
             .font(.caption.weight(.semibold))
@@ -669,8 +886,9 @@ struct StreamMenuView: View {
             .padding(.top, 4)
     }
 
-    private func settingRow(_ row: StreamMenuState.SettingRow, focused: Bool) -> some View {
-        HStack(spacing: 8) {
+    private func settingRow(_ row: StreamMenuState.SettingRow, focused: Bool, adjust: ((Int) -> Void)? = nil) -> some View {
+        let change: (Int) -> Void = adjust ?? { state.adjust(row.id, by: $0) }
+        return HStack(spacing: 8) {
             Text(row.title)
                 .font(.system(size: 15, weight: .medium))
                 .lineLimit(1)
@@ -682,7 +900,7 @@ struct StreamMenuView: View {
                     .labelsHidden()
                     .tint(starlightGold)
             } else {
-                Button { state.adjust(row.id, by: -1) } label: { Image(systemName: "chevron.left") }
+                Button { change(-1) } label: { Image(systemName: "chevron.left") }
                     .buttonStyle(.plain)
                     .foregroundStyle(.secondary)
                     .accessibilityLabel("Previous \(row.title)")
@@ -690,7 +908,7 @@ struct StreamMenuView: View {
                     .font(.system(size: 14, weight: .semibold).monospacedDigit())
                     .lineLimit(1)
                     .minimumScaleFactor(0.7)
-                Button { state.adjust(row.id, by: 1) } label: { Image(systemName: "chevron.right") }
+                Button { change(1) } label: { Image(systemName: "chevron.right") }
                     .buttonStyle(.plain)
                     .foregroundStyle(.secondary)
                     .accessibilityLabel("Next \(row.title)")
@@ -701,7 +919,7 @@ struct StreamMenuView: View {
         .background(Color.white.opacity(focused ? 0.16 : 0.07), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
         .overlay(focusRing(RoundedRectangle(cornerRadius: 14, style: .continuous), lineWidth: 2, visible: focused))
         .contentShape(Rectangle())
-        .onTapGesture { if !row.isToggle { state.select(row.id) } }
+        .onTapGesture { if !row.isToggle { if adjust != nil { change(1) } else { state.select(row.id) } } }
         .id(row.id)
         .accessibilityElement(children: .combine)
     }
@@ -728,6 +946,8 @@ struct StreamMenuView: View {
             settingsPanel
         } else if state.page == .controls {
             controlsPanel
+        } else if state.page == .guests {
+            guestsPanel
         } else {
             mainPanel
         }

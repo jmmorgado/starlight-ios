@@ -7,6 +7,7 @@
 //
 
 #import "StreamFrameViewController.h"
+#import "HttpManager.h"
 #import "MainFrameViewController.h"
 #import "VideoDecoderRenderer.h"
 #import "StreamManager.h"
@@ -49,6 +50,8 @@
     TemporarySettings *_settings;
     NSTimer *_inactivityTimer;
     NSTimer *_statsUpdateTimer;
+    NSTimer *_guestsTimer;
+    BOOL _guestsRequestInFlight;
     UITapGestureRecognizer *_menuTapGestureRecognizer;
     UITapGestureRecognizer *_menuDoubleTapGestureRecognizer;
     UITapGestureRecognizer *_playPauseTapGestureRecognizer;
@@ -165,7 +168,13 @@
     
     _stageLabel = [[UILabel alloc] init];
     [_stageLabel setUserInteractionEnabled:NO];
-    [_stageLabel setText:[NSString stringWithFormat:@"Starting %@...", self.streamConfig.appName]];
+    if (self.streamConfig.joiningDevice.length > 0) {
+        // Rubylight may ask the player first (it waits up to 45 s for an answer)
+        [_stageLabel setText:[NSString stringWithFormat:@"Asking %@ to let you join...", self.streamConfig.joiningDevice]];
+    }
+    else {
+        [_stageLabel setText:[NSString stringWithFormat:@"Starting %@...", self.streamConfig.appName]];
+    }
     [_stageLabel sizeToFit];
     _stageLabel.textAlignment = NSTextAlignmentCenter;
     _stageLabel.textColor = [UIColor whiteColor];
@@ -693,6 +702,9 @@
     
     [_statsUpdateTimer invalidate];
     _statsUpdateTimer = nil;
+#if !TARGET_OS_TV
+    [self stopGuestsPolling];
+#endif
     
     [self.navigationController popToRootViewControllerAnimated:YES];
 }
@@ -820,6 +832,96 @@
 #if !TARGET_OS_TV
 #pragma mark - Stream menu (Starlight)
 
+#pragma mark - Guests (Rubylight)
+
+- (HttpManager*)streamHttpManager {
+    return [[HttpManager alloc] initWithAddress:self.streamConfig.host httpsPort:self.streamConfig.httpsPort
+                                     serverCert:self.streamConfig.serverCert];
+}
+
+// Every 2 s while this device streams a game on a Rubylight PC that offers guests
+- (void)startGuestsPolling {
+    if (!self.streamConfig.nativeGuests || _guestsTimer != nil) {
+        return;
+    }
+    __weak StreamFrameViewController* weakSelf = self;
+    _guestsTimer = [NSTimer scheduledTimerWithTimeInterval:2.0 repeats:YES block:^(NSTimer* timer) {
+        [weakSelf refreshGuests];
+    }];
+    [self refreshGuests];
+}
+
+- (void)stopGuestsPolling {
+    [_guestsTimer invalidate];
+    _guestsTimer = nil;
+}
+
+- (void)refreshGuests {
+    if (_guestsRequestInFlight || !_connectionReady) {
+        return;
+    }
+    _guestsRequestInFlight = YES;
+    HttpManager* hMan = [self streamHttpManager];
+    dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
+        NSInteger code = 0;
+        NSDictionary* info = [hMan nativeRequest:@"GET" path:@"/session/guests" body:nil timeout:4 statusCode:&code errorMessage:nil];
+        dispatch_async(dispatch_get_main_queue(), ^{
+            self->_guestsRequestInFlight = NO;
+            if (code != 200 || info == nil || self->_guestsTimer == nil) {
+                if (code == 404) {
+                    [self stopGuestsPolling];
+                }
+                return;
+            }
+            // A request opens the menu: make sure it's on the screen you're looking at
+            if (![self streamMenuVisible] && [info[@"waiting"] isKindOfClass:[NSArray class]] && [info[@"waiting"] count] > 0) {
+                [self prepareStreamMenuOn:[self streamMenuHost]];
+            }
+            if (self->_streamMenu == nil) {
+                [self prepareStreamMenuOn:[self streamMenuHost]];
+            }
+            [self->_streamMenu setGuests:info];
+        });
+    });
+}
+
+- (void)guestAction:(NSString*)action guest:(NSString*)guestId permission:(NSString*)permission {
+    NSString* path = [NSString stringWithFormat:@"/session/guests/%@", action];
+    NSMutableDictionary* body = [NSMutableDictionary dictionary];
+    // Guest ids are numbers on the wire when they look like numbers
+    NSScanner* scanner = [NSScanner scannerWithString:guestId];
+    long long numeric = 0;
+    if ([scanner scanLongLong:&numeric] && scanner.isAtEnd) {
+        body[@"id"] = @(numeric);
+    }
+    else {
+        body[@"id"] = guestId;
+    }
+    if (permission.length > 0) {
+        body[@"permission"] = permission;
+    }
+    Log(LOG_I, @"Guests: %@ %@ %@", action, guestId, permission);
+    HttpManager* hMan = [self streamHttpManager];
+    dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
+        NSInteger code = 0;
+        NSString* message = nil;
+        NSDictionary* info = [hMan nativeRequest:@"POST" path:path body:body timeout:6 statusCode:&code errorMessage:&message];
+        dispatch_async(dispatch_get_main_queue(), ^{
+            if (code >= 200 && code < 300 && info != nil) {
+                [self->_streamMenu setGuests:info];
+            }
+            else {
+                Log(LOG_W, @"Guest action %@ failed (%ld): %@", action, (long)code, message ?: @"no answer");
+                UIAlertController* alert = [UIAlertController alertControllerWithTitle:@"Couldn't Do That"
+                                                                               message:message.length > 0 ? message : @"The PC didn't answer. Try again."
+                                                                        preferredStyle:UIAlertControllerStyleAlert];
+                [alert addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:nil]];
+                [[self alertPresenter] presentViewController:alert animated:YES completion:nil];
+            }
+        });
+    });
+}
+
 - (void)streamMenuRequested {
     if ([self streamMenuVisible]) {
         [self hideStreamMenu];
@@ -849,6 +951,9 @@
         };
         _streamMenu.onSettings = ^(NSDictionary<NSString*, id>* values, BOOL reconnect) {
             [weakSelf streamMenuSettingsChanged:values reconnect:reconnect];
+        };
+        _streamMenu.onGuestAction = ^(NSString* action, NSString* guestId, NSString* permission) {
+            [weakSelf guestAction:action guest:guestId permission:permission];
         };
     }
     [_streamMenu setStatsVisible:(_statsUpdateTimer != nil)];
@@ -1020,6 +1125,9 @@
         // Handoff: connected, so no more retries; offer this stream to the user's other devices
         self.streamConfig.handoffRetryUntil = nil;
         [self advertiseHandoff];
+        
+        // Rubylight: watch for devices asking to join this game
+        [self startGuestsPolling];
         
         // The stream may have changed screens while connecting
         self->_connectionReady = YES;

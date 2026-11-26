@@ -23,6 +23,10 @@
 @property NSDate* handoffRetryUntil;
 // Ask the PC to resume the running game (Rubylight: join another device's game, or after Continue here)
 @property BOOL forceResume;
+// Rubylight: the PC lets this device manage guests who join its game (feature session.guests)
+@property BOOL nativeGuests;
+// Rubylight Join: the name of the device whose game this one asks to join (the start screen says so)
+@property NSString* joiningDevice;
 @property NSString* rtspSessionUrl;
 @property int serverCodecModeSupport;
 @property int width;
