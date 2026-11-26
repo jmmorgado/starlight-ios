@@ -160,7 +160,7 @@ struct GameDetailView: View {
                             } else {
                             Button { model.launch(game) } label: {
                                 HStack(spacing: 8) {
-                                    Label(game.running ? "Resume" : "Play", systemImage: "play.fill")
+                                    Label(game.playTitle, systemImage: game.playAction == "join" ? "person.2.fill" : "play.fill")
                                     if device.controllerConnected {
                                         Image(systemName: PadGlyph.play)
                                             .font(.system(size: 16, weight: .regular))
@@ -382,7 +382,7 @@ struct GameDetailView: View {
                     if game.running {
                         HStack(spacing: 6) {
                             Circle().fill(.green).frame(width: 8, height: 8)
-                            Text("Running on PC").font(.system(size: 12, weight: .semibold))
+                            Text(game.runningBadge).font(.system(size: 12, weight: .semibold))
                         }
                         .padding(.horizontal, 10)
                         .padding(.vertical, 5)

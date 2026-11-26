@@ -205,6 +205,25 @@ struct GameItem: Identifiable, Equatable {
     let steamAppId: Int?
     /// The app's UUID on the PC (Vibepollo), when it sends one
     let uuid: String?
+    /// Rubylight: the device the running game is on ("this device", "iPhone do João"…), nil elsewhere
+    let runningOn: String?
+    /// Rubylight: the main button for the running game, "resume", "continue" (Continue here) or "join"
+    let playAction: String?
+
+    /// The main button's title
+    var playTitle: String {
+        switch playAction {
+        case "join": return "Join"
+        case "continue": return "Continue Here"
+        default: return running ? "Resume" : "Play"
+        }
+    }
+
+    /// The green badge: on Rubylight the device it runs on, elsewhere the PC
+    var runningBadge: String { "Running on " + (runningOn ?? "PC") }
+
+    /// Rubylight, another device streams it: Join is the main button, Continue here goes in •••
+    var canContinueHere: Bool { playAction == "join" }
 
     /// Identifies the game on its PC across app-list refreshes: the UUID, else the app id
     var stableKey: String { uuid ?? app }
@@ -240,6 +259,8 @@ struct GameItem: Identifiable, Equatable {
         logoPath = GameItem.nonEmpty(dict["logoPath"])
         artStamp = (dict["artStamp"] as? NSNumber)?.doubleValue ?? 0
         uuid = GameItem.nonEmpty(dict["uuid"])
+        runningOn = GameItem.nonEmpty(dict["runningOn"])
+        playAction = GameItem.nonEmpty(dict["playAction"])
         let steamId = (dict["steamAppId"] as? NSNumber)?.intValue ?? 0
         steamAppId = steamId > 0 ? steamId : nil
         if let seconds = dict["lastPlayed"] as? Double, seconds > 0 {

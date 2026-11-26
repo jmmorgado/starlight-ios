@@ -180,6 +180,60 @@
     }
 }
 
+- (NSDictionary*) nativeRequest:(NSString*)method path:(NSString*)path body:(NSDictionary*)body
+                        timeout:(int)timeout statusCode:(NSInteger*)statusCode errorMessage:(NSString**)errorMessage {
+    if (statusCode != NULL) {
+        *statusCode = 0;
+    }
+    if (_serverCert == nil || ![self ensureHttpsUrlPopulated:YES]) {
+        return nil;
+    }
+    NSString* urlString = [NSString stringWithFormat:@"%@/api/native/v1%@", _baseHTTPSURL, path];
+    NSMutableURLRequest* request = [NSMutableURLRequest requestWithURL:[NSURL URLWithString:urlString]];
+    request.timeoutInterval = timeout;
+    request.HTTPMethod = method;
+    if ([method isEqualToString:@"POST"]) {
+        request.HTTPBody = [NSJSONSerialization dataWithJSONObject:(body ?: @{}) options:0 error:nil];
+        [request setValue:@"application/json" forHTTPHeaderField:@"Content-Type"];
+    }
+
+    __block NSData* responseData = nil;
+    __block NSInteger code = 0;
+    dispatch_semaphore_t done = dispatch_semaphore_create(0);
+    NSURLSession* urlSession = [NSURLSession sessionWithConfiguration:[NSURLSessionConfiguration ephemeralSessionConfiguration] delegate:self delegateQueue:nil];
+    [[urlSession dataTaskWithRequest:request completionHandler:^(NSData* data, NSURLResponse* response, NSError* error) {
+        if (error == nil) {
+            responseData = data;
+            if ([response isKindOfClass:[NSHTTPURLResponse class]]) {
+                code = ((NSHTTPURLResponse*)response).statusCode;
+            }
+        }
+        else {
+            Log(LOG_D, @"Native API %@ %@ failed: %@", method, path, error);
+        }
+        dispatch_semaphore_signal(done);
+    }] resume];
+    dispatch_semaphore_wait(done, DISPATCH_TIME_FOREVER);
+    [urlSession invalidateAndCancel];
+
+    if (statusCode != NULL) {
+        *statusCode = code;
+    }
+    if (responseData == nil) {
+        return nil;
+    }
+    id json = [NSJSONSerialization JSONObjectWithData:responseData options:0 error:nil];
+    NSDictionary* dict = [json isKindOfClass:[NSDictionary class]] ? json : nil;
+    if ((code < 200 || code >= 300) && errorMessage != NULL) {
+        id error = dict[@"error"];
+        if ([error isKindOfClass:[NSDictionary class]] && [error[@"message"] isKindOfClass:[NSString class]]) {
+            *errorMessage = error[@"message"];
+        }
+    }
+    Log(LOG_D, @"Native API %@ %@ -> %ld", method, path, (long)code);
+    return dict;
+}
+
 - (NSURLRequest*) createRequestFromString:(NSString*) urlString timeout:(int)timeout {
     NSURL* url = [[NSURL alloc] initWithString:urlString];
     NSMutableURLRequest* request = [NSMutableURLRequest requestWithURL:url];

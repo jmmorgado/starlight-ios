@@ -18,6 +18,11 @@
 // A game another device started on a Vibepollo PC (which reports itself free to
 // this device): the id of our copy of it, from the app list. Not stored.
 @property (atomic, nullable, retain) NSString * remoteRunningGame;
+// Rubylight: NativeApiVersion from /serverinfo (0 = none: Vibepollo, Sunshine, Apollo…), the features
+// it lists for this device and its latest /session answer. Not stored.
+@property (atomic) int nativeApiVersion;
+@property (atomic, nullable, retain) NSSet<NSString*> * nativeFeatures;
+@property (atomic, nullable, retain) NSDictionary * nativeSession;
 @property (atomic) unsigned short httpsPort;
 @property (atomic) BOOL isNvidiaServerSoftware;
 

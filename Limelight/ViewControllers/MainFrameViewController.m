@@ -85,6 +85,7 @@
     NSTimer* _homeRefreshTimer;
     NSUInteger _homeRefreshTicks;
     NSMutableSet<NSString*>* _runningCheckHosts;
+    NSMutableSet<NSString*>* _nativeCheckHosts;
     NSString* _homeHostUUID;
     NSString* _pendingQuitHostAddress;
     NSMutableSet<NSString*>* _permissionDeniedHosts;
@@ -1400,6 +1401,13 @@ static NSMutableSet* hostList;
             }
             // Started on the other device: Vibepollo only lists it in this device's app list
             [self checkRemoteRunningGameOnHost:host completion:^(BOOL listed) {
+                // On Rubylight, also learn its features (Continue here) before deciding
+                if (host.nativeApiVersion >= 1) {
+                    [self refreshNativeStateForHost:host completion:^(BOOL nativeOk) {
+                        [self handoffResumeApp:app onHost:host serverAnswered:listed];
+                    }];
+                    return;
+                }
                 [self handoffResumeApp:app onHost:host serverAnswered:listed];
             }];
         });
@@ -1409,7 +1417,11 @@ static NSMutableSet* hostList;
 - (void)handoffResumeApp:(TemporaryApp*)app onHost:(TemporaryHost*)host serverAnswered:(BOOL)ok {
     NSString* running = [host runningGame];
     [self pushHomeState];
-    if (ok && [running isEqualToString:app.id]) {
+    if (ok && [running isEqualToString:app.id] && [self hostHasNativeFeature:@"session.continue_here" host:host]) {
+        // Rubylight: take the game over, so it plays here at this device's own resolution
+        [self continueHereApp:app onHost:host handoff:YES];
+    }
+    else if (ok && [running isEqualToString:app.id]) {
         // Resume it here, with this device's settings; the other device may take a few seconds to let go
         Log(LOG_I, @"Handoff: resuming %@ on %@", app.name, host.name);
         [_appManager stopRetrieving];
@@ -1656,9 +1668,23 @@ static NSMutableSet* hostList;
     }
 #endif
     if (runningApp == nil || [runningApp.id isEqualToString:app.id]) {
+#if !TARGET_OS_TV
+        // Rubylight: another device's game is joined (it streams) or moved here (nobody streams)
+        NSString* action = [self nativePlayInfoForApp:app onHost:host][@"action"];
+        if ([action isEqualToString:@"continue"]) {
+            [self continueHereApp:app onHost:host handoff:NO];
+            return;
+        }
+#else
+        NSString* action = nil;
+#endif
         // Start (or resume) straight away, keeping the start screen up until the stream view appears
         [_appManager stopRetrieving];
         [self prepareToStreamApp:app];
+        if ([action isEqualToString:@"join"]) {
+            Log(LOG_I, @"Joining %@ on %@ beside the device playing it", app.name, host.name);
+            _streamConfig.forceResume = YES;
+        }
         [self performStreamSegue];
     }
     else {
@@ -2308,12 +2334,161 @@ static const NSUInteger kMaxQuickActions = 4;
 #if !TARGET_OS_TV
 - (void)homeRefreshTick {
     [self pushHomeState];
+    // Rubylight: who plays the running game, and where (every 2 s while Home is up, as the API asks)
+    [self refreshNativeStateForHost:[self hostWithUUID:[self homeCurrentHostUUID]] completion:nil];
     // Every 10 s: a game started from another device only shows in Vibepollo's app list
     if (++_homeRefreshTicks % 5 == 0) {
         [self checkRemoteRunningGameOnHost:[self hostWithUUID:[self homeCurrentHostUUID]]];
     }
 }
 #endif
+
+#pragma mark - Rubylight (native API)
+
+- (BOOL)hostHasNativeFeature:(NSString*)feature host:(TemporaryHost*)host {
+    return host.nativeApiVersion >= 1 && [host.nativeFeatures containsObject:feature];
+}
+
+// Rubylight only (NativeApiVersion in /serverinfo): reads the features it offers this device (once) and
+// its session: who owns the running game, whether a stream is up and on which device. Other hosts: nothing.
+- (void)refreshNativeStateForHost:(TemporaryHost*)host completion:(void (^)(BOOL ok))completion {
+    if (host == nil || host.uuid == nil || host.nativeApiVersion < 1 || _background || host.state != StateOnline ||
+        host.serverCert == nil) {
+        if (completion != nil) {
+            completion(NO);
+        }
+        return;
+    }
+    if (_nativeCheckHosts == nil) {
+        _nativeCheckHosts = [NSMutableSet set];
+    }
+    if (completion == nil && [_nativeCheckHosts containsObject:host.uuid]) {
+        return;
+    }
+    [_nativeCheckHosts addObject:host.uuid];
+    dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
+        HttpManager* hMan = [[HttpManager alloc] initWithHost:host];
+        NSInteger code = 0;
+        if (host.nativeFeatures == nil) {
+            NSDictionary* caps = [hMan nativeRequest:@"GET" path:@"/capabilities" body:nil timeout:5 statusCode:&code errorMessage:nil];
+            NSArray* features = [caps[@"features"] isKindOfClass:[NSArray class]] ? caps[@"features"] : nil;
+            if (code == 200 && features != nil) {
+                host.nativeFeatures = [NSSet setWithArray:features];
+                Log(LOG_I, @"%@ runs Rubylight (native API %d): %@", host.name, host.nativeApiVersion, [features componentsJoinedByString:@", "]);
+            }
+            else if (code == 404) {
+                // No native API after all
+                host.nativeApiVersion = 0;
+            }
+        }
+        NSDictionary* session = nil;
+        BOOL ok = NO;
+        if ([host.nativeFeatures containsObject:@"session"]) {
+            session = [hMan nativeRequest:@"GET" path:@"/session" body:nil timeout:5 statusCode:&code errorMessage:nil];
+            ok = (code == 200 && session != nil);
+        }
+        dispatch_async(dispatch_get_main_queue(), ^{
+            [self->_nativeCheckHosts removeObject:host.uuid];
+            if (ok) {
+                NSDictionary* old = host.nativeSession;
+                host.nativeSession = session;
+                // The game another device plays, by the host's own word (when its app list didn't say)
+                NSString* otherApp = [self nativeOtherDeviceAppIdOnHost:host];
+                if (otherApp != nil && [self appWithId:otherApp onHost:host] != nil) {
+                    host.remoteRunningGame = otherApp;
+                }
+                if (![old isEqualToDictionary:session]) {
+                    [self pushHomeState];
+                }
+            }
+            if (completion != nil) {
+                completion(ok);
+            }
+        });
+    });
+}
+
+- (NSString*)nativeOtherDeviceAppIdOnHost:(TemporaryHost*)host {
+    NSDictionary* session = host.nativeSession;
+    if (![session[@"owner"] isEqual:@"other_device"]) {
+        return nil;
+    }
+    NSDictionary* playing = [session[@"playing_on"] isKindOfClass:[NSDictionary class]] ? session[@"playing_on"] : nil;
+    NSDictionary* app = [playing[@"app"] isKindOfClass:[NSDictionary class]] ? playing[@"app"] : nil;
+    id appId = app[@"app_id"];
+    if ([appId isKindOfClass:[NSNumber class]]) {
+        return [appId stringValue];
+    }
+    if ([appId isKindOfClass:[NSString class]] && [appId length] > 0) {
+        return appId;
+    }
+    return host.remoteRunningGame;
+}
+
+// For the running game on a Rubylight PC: where it runs (the badge) and the main button.
+// action: "resume" (yours), "continue" (another device's, nobody streaming), "join" (another device streams it);
+// empty for other hosts and games that aren't running
+- (NSDictionary*)nativePlayInfoForApp:(TemporaryApp*)app onHost:(TemporaryHost*)host {
+    if (host.nativeApiVersion < 1 || host.nativeSession == nil || app.id == nil) {
+        return nil;
+    }
+    NSDictionary* session = host.nativeSession;
+    NSString* owner = [session[@"owner"] isKindOfClass:[NSString class]] ? session[@"owner"] : @"none";
+    NSString* state = [session[@"state"] isKindOfClass:[NSString class]] ? session[@"state"] : @"idle";
+    if ([owner isEqualToString:@"other_device"]) {
+        if (![app.id isEqualToString:[self nativeOtherDeviceAppIdOnHost:host]]) {
+            return nil;
+        }
+        NSDictionary* playing = [session[@"playing_on"] isKindOfClass:[NSDictionary class]] ? session[@"playing_on"] : nil;
+        NSString* device = [playing[@"device"] isKindOfClass:[NSString class]] ? playing[@"device"] : @"";
+        BOOL streaming = [state isEqualToString:@"streaming"] || [state isEqualToString:@"launching"] || [state isEqualToString:@"preparing"];
+        BOOL canMove = [self hostHasNativeFeature:@"session.continue_here" host:host];
+        NSString* action = streaming ? @"join" : (canMove ? @"continue" : @"resume");
+        return @{ @"runningOn": device.length > 0 ? device : @"another device", @"action": action };
+    }
+    if ([owner isEqualToString:@"you"] && [app.id isEqualToString:[host runningGame]]) {
+        return @{ @"runningOn": @"this device", @"action": @"resume" };
+    }
+    return nil;
+}
+
+// Continue here: the PC hands this device the running game (it becomes the owner, with a display of its
+// own at its own resolution; another device's stream ends), then the usual resume
+- (void)continueHereApp:(TemporaryApp*)app onHost:(TemporaryHost*)host handoff:(BOOL)handoff {
+    Log(LOG_I, @"Continue here: %@ on %@%@", app.name, host.name, handoff ? @" (Handoff)" : @"");
+    [self showLaunchOverlayForApp:app];
+    _launchStatusLabel.text = @"Moving the game here...";
+    [_appManager stopRetrieving];
+    dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
+        HttpManager* hMan = [[HttpManager alloc] initWithHost:host];
+        NSInteger code = 0;
+        NSString* message = nil;
+        // A press while the other device's launch is still settling answers session_busy: try again for a few seconds
+        for (int attempt = 0; attempt < 6; attempt++) {
+            message = nil;
+            [hMan nativeRequest:@"POST" path:@"/session/continue-here" body:@{} timeout:20 statusCode:&code errorMessage:&message];
+            if (code != 409 || ![message length] || attempt == 5) {
+                break;
+            }
+            [NSThread sleepForTimeInterval:1.5];
+        }
+        dispatch_async(dispatch_get_main_queue(), ^{
+            if (code >= 200 && code < 300) {
+                [self prepareToStreamApp:app];
+                self->_streamConfig.forceResume = YES;
+                // The other device may take a moment to let go of the stream
+                self->_streamConfig.handoffRetryUntil = [NSDate dateWithTimeIntervalSinceNow:10];
+                [self performStreamSegue];
+            }
+            else {
+                Log(LOG_W, @"Continue here refused (%ld): %@", (long)code, message ?: @"no answer");
+                [self hideLaunchOverlay];
+                [self showPendingLaunchError:message.length > 0 ? message : [NSString stringWithFormat:@"%@ didn't answer. Try again in a moment.", host.name]
+                                       title:@"Can't Continue Here"];
+            }
+        });
+    });
+}
 
 // Vibepollo shows the running game only to the device that started it: every other paired
 // device is told the PC is free and gets a resume-only copy of the game in its app list.
@@ -2411,7 +2586,10 @@ static const NSUInteger kMaxQuickActions = 4;
             NSString* logo = art[@"logo"];
             double artStamp = [art[@"stamp"] doubleValue];
             NSNumber* played = lastPlayed[[NSString stringWithFormat:@"%@|%@", current.uuid, app.id]];
-            [apps addObject:@{ @"host": current.uuid,
+            NSDictionary* native = [self nativePlayInfoForApp:app onHost:current];
+            [apps addObject:@{ @"runningOn": native[@"runningOn"] ?: @"",
+                               @"playAction": native[@"action"] ?: @"",
+                               @"host": current.uuid,
                                @"hostName": current.name ?: @"",
                                @"app": app.id,
                                @"uuid": app.uuid ?: @"",
@@ -2465,7 +2643,11 @@ static const NSUInteger kMaxQuickActions = 4;
         return;
     }
     
-    if ([action isEqualToString:@"pin"]) {
+    if ([action isEqualToString:@"continueHere"]) {
+        // Rubylight: take over the game another device is playing
+        [self continueHereApp:app onHost:host handoff:NO];
+    }
+    else if ([action isEqualToString:@"pin"]) {
         [self togglePinForApp:app];
     }
     else if ([action isEqualToString:@"copyLink"]) {

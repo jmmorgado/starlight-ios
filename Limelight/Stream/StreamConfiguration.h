@@ -21,6 +21,8 @@
 @property NSString* hostName;
 @property NSString* appUUID;
 @property NSDate* handoffRetryUntil;
+// Ask the PC to resume the running game (Rubylight: join another device's game, or after Continue here)
+@property BOOL forceResume;
 @property NSString* rtspSessionUrl;
 @property int serverCodecModeSupport;
 @property int width;

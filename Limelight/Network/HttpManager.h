@@ -31,6 +31,12 @@
 - (NSURLRequest*) newAppAssetRequestWithAppId:(NSString*)appId;
 - (void) executeRequestSynchronously:(HttpRequest*)request;
 
+// Rubylight's native API (/api/native/v1 on the HTTPS port, with the paired certificate).
+// Returns the decoded JSON object (nil on a network error or a body that isn't JSON). statusCode gets
+// the HTTP status (0 on a network error); errorMessage gets the host's error message on a non-2xx answer.
+- (NSDictionary*) nativeRequest:(NSString*)method path:(NSString*)path body:(NSDictionary*)body
+                        timeout:(int)timeout statusCode:(NSInteger*)statusCode errorMessage:(NSString**)errorMessage;
+
 @end
 
 

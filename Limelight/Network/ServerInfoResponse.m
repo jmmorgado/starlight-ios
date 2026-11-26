@@ -22,6 +22,17 @@
     host.uuid = [[self getStringTag:TAG_UNIQUE_ID] trim];
     host.mac = [[self getStringTag:TAG_MAC_ADDRESS] trim];
     host.currentGame = [[self getStringTag:TAG_CURRENT_GAME] trim];
+    // Rubylight's native API: missing on other hosts; 0 means "pair first" (plain HTTP), which
+    // shouldn't hide what an earlier HTTPS answer said
+    NSString* nativeApi = [[self getStringTag:@"NativeApiVersion"] trim];
+    if (nativeApi == nil) {
+        host.nativeApiVersion = 0;
+        host.nativeFeatures = nil;
+        host.nativeSession = nil;
+    }
+    else if ([nativeApi intValue] > 0) {
+        host.nativeApiVersion = [nativeApi intValue];
+    }
     
     NSInteger httpsPort;
     if ([self getIntTag:TAG_HTTPS_PORT value:&httpsPort]) {

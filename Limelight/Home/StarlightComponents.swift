@@ -234,6 +234,13 @@ struct GameMenuItems: View {
 
     @ViewBuilder
     private var installedItems: some View {
+        if game.canContinueHere {
+            // Rubylight: take the game over from the device playing it
+            Button { model.action("continueHere", game) } label: {
+                Label("Continue Here", systemImage: "arrow.down.forward.and.arrow.up.backward")
+            }
+            Divider()
+        }
         Button { model.action("pin", game) } label: {
             Label(game.pinned ? "Unpin" : "Pin", systemImage: game.pinned ? "pin.slash" : "pin")
         }

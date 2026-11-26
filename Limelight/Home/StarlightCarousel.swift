@@ -531,7 +531,7 @@ struct HomeCarousel: View {
             if game.running {
                 HStack(spacing: 6) {
                     Circle().fill(.green).frame(width: 8, height: 8)
-                    Text("Running on PC").font(.system(size: 12, weight: .semibold))
+                    Text(game.runningBadge).font(.system(size: 12, weight: .semibold))
                 }
                 .padding(.horizontal, 10)
                 .padding(.vertical, 5)
@@ -654,7 +654,7 @@ private struct CarouselPlayButton: View {
         Button { model.launch(game) } label: {
             HStack(spacing: 8) {
                 Image(systemName: "play.fill")
-                Text(game.running ? "Resume" : "Play")
+                Text(game.playTitle)
                 if device.controllerConnected {
                     Image(systemName: PadGlyph.play)
                         .opacity(0.55)

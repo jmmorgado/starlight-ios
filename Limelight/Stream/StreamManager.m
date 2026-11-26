@@ -82,7 +82,7 @@
     
     // resumeApp and launchApp handle calling launchFailed
     NSString* sessionUrl;
-    if ([serverState hasSuffix:@"_SERVER_BUSY"]) {
+    if (_config.forceResume || [serverState hasSuffix:@"_SERVER_BUSY"]) {
         // App already running, resume it
         if (![self resumeApp:hMan receiveSessionUrl:&sessionUrl]) {
             return;
